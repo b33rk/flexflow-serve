@@ -200,6 +200,9 @@ include(variant)
 # optional
 include(optional)
 
+# flashinfer
+list(APPEND FLEXFLOW_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/deps/flashinfer/include)
+
 if (FF_GPU_BACKEND STREQUAL "cuda")
   list(APPEND FF_CC_FLAGS
     -DFF_USE_CUDA)

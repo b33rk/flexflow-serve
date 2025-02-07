@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+#ifdef USE_FLASHINFER
 #include "flexflow/ops/kernels/gemm_impl.h"
 #include "flexflow/utils/cuda_helper.h"
 #include <memory>
@@ -557,3 +557,4 @@ void GemmEngine::gemm_internal(cublasOperation_t transa,
 #endif
 }
 } // namespace Internal
+#endif

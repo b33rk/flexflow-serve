@@ -13,8 +13,10 @@
  * limitations under the License.
  */
 
+#ifdef USE_FLASHINFER
 #include "flashinfer/decode_attention_decl.cuh"
 #include "flashinfer/prefill_attention_decl.cuh"
+#endif
 
 #include "flexflow/request_manager.h"
 #include "flexflow/utils/cuda_helper.h"
@@ -23,6 +25,7 @@ namespace FlexFlow {
 
 using namespace Legion;
 
+#ifdef USE_FLASHINFER
 using flashinfer::BatchDecodeHandler;
 using flashinfer::BatchPrefillHandler;
 using flashinfer::LogitsPostHook;
@@ -30,6 +33,7 @@ using flashinfer::paged_kv_t;
 using flashinfer::PageStorage;
 using flashinfer::PosEncodingMode;
 using flashinfer::QKVLayout;
+#endif
 
 void RequestManager::load_tokens_task(
     Task const *task,
@@ -89,6 +93,7 @@ void RequestManager::load_tokens_task(
                             stream));
 }
 
+#ifdef USE_FLASHINFER
 // q_indptr: the start offset of q in the batch for each request,
 //           the length is `num_requests + 1`: [0, num_q_0, num_q_0 + num_q_1,
 //           ..., num_q_0 + num_q_1 + ... + num_q_{num_requests - 1}]
@@ -147,6 +152,7 @@ __global__ void
   kv_last_page_len[request_idx] = (kv_len - 1) % kPagesize + 1;
   qk_indptr[request_idx + 1] = qk_lens;
 }
+#endif
 
 void RequestManager::load_batch_config_task(
     Task const *task,
@@ -227,7 +233,7 @@ void RequestManager::load_batch_config_task(
                               stream));
   }
   
-
+#ifdef USE_FLASHINFER
   // load attention metadata
   if (batch_config->get_mode() == INC_DECODING_MODE) {
     int batch_size = batch_config->num_active_requests();
@@ -256,8 +262,8 @@ void RequestManager::load_batch_config_task(
       // prepare attention forward handler
       {
         static int32_t  q_indptr_h[BatchConfig::MAX_NUM_REQUESTS + 1],
-                        kv_indptr_h[BatchConfig::MAX_NUM_REQUESTS + 1],
-                        kv_last_page_len_h[BatchConfig::MAX_NUM_REQUESTS];
+                        kv_indptr_h[BatchConfig::MAX_NUM_REQUESTS + 1];
+                        // kv_last_page_len_h[BatchConfig::MAX_NUM_REQUESTS];
         q_indptr_h[0] = 0;
         kv_indptr_h[0] = 0;
         for (int req_idx = 0, indptr_idx = 0; req_idx < batch_config->max_requests_per_batch(); req_idx++) {
@@ -266,7 +272,7 @@ void RequestManager::load_batch_config_task(
             int kv_len = batch_config->requestsInfo[req_idx].num_tokens_in_batch + batch_config->requestsInfo[req_idx].first_token_depth_in_request;
             q_indptr_h[indptr_idx + 1] = q_indptr_h[indptr_idx] + q_len;
             kv_indptr_h[indptr_idx + 1] = kv_indptr_h[indptr_idx] + round_up_pages(kv_len);
-            kv_last_page_len_h[indptr_idx] = (kv_len - 1) % kPagesize + 1;
+            // kv_last_page_len_h[indptr_idx] = (kv_len - 1) % kPagesize + 1;
             indptr_idx++;
           }
         }
@@ -298,6 +304,8 @@ void RequestManager::load_batch_config_task(
   } else {
     assert(false && "Not implemented");
   }
+#endif
+
 }
 
 void RequestManager::load_positions_task(

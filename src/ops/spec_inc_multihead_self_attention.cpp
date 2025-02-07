@@ -719,7 +719,7 @@ void inference_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
   // phase 1: Implement kernel to compute KQV for input tokens
   // TODO WARNING: this is commented out only because we are fixing the inc_attn
   // first
-  compute_qkv_kernel(
+  apply_scaling_and_rotary(
       m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), stream);
   // phase 2: Update key/val cache
   update_kv_cache_kernel<DT>(m, bc, stream);

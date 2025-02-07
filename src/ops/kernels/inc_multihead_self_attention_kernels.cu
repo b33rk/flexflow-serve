@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#ifdef USE_FLASHINFER
 #include "flexflow/batch_config.h"
 #include <cassert>
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
@@ -276,3 +277,4 @@ template void Kernels::IncMultiHeadAttention::produce_output<half>(
 
 
 }; // namespace FlexFlow
+#endif

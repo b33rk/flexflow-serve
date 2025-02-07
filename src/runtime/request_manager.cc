@@ -205,9 +205,9 @@ bool RequestManager::load_request_token_ids(Request &request) {
                request.peft_finetuning_info.max_training_steps &&
            "Gradient accumulation steps should be less than or equal to max "
            "training steps");
-  }
   assert(get_num_ssms() == 0 && "Small speculative models not supported for "
                                 "PEFT finetuning requests");
+  }
   return true;
 }
 

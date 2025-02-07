@@ -17,12 +17,16 @@
 #define _FLEXFLOW_CONFIG_H_
 #include "ffconst.h"
 #include "flexflow/batch_config.h"
+#ifdef USE_FLASHINFER
 #include "flexflow/attention_config.h"
 #include "flexflow/ops/kernels/gemm_impl.h"
+#endif
 #include "legion.h"
 #include <cstring>
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
+#ifdef USE_FLASHINFER
 #include <cublasLt.h>
+#endif
 #include <cublas_v2.h>
 #include <cudnn.h>
 #elif defined(FF_USE_HIP_ROCM)
@@ -92,8 +96,10 @@ struct FFHandler {
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
   cudnnHandle_t dnn;
   cublasHandle_t blas;
+#ifdef USE_FLASHINFER
   cublasLtHandle_t blasLt;
   // Internal::GemmEngine *gemm_engine;
+#endif
 #else
   miopenHandle_t dnn;
   hipblasHandle_t blas;
@@ -101,9 +107,11 @@ struct FFHandler {
   void *workSpace;
   size_t workSpaceSize;
   CombinedBatchConfigMetaStruct *batch_config_metadata;
+#ifdef USE_FLASHINFER
   AttentionMetaData *incr_attention_metadata;
   AttentionMetaData *tree_search_attention_metadata;
   AttentionMetaData *tree_verify_attention_metadata;
+#endif
 
   // request info + token info + topolopgy mask info
   size_t batch_config_metadata_size = sizeof(CombinedBatchConfigMetaStruct);

@@ -14,6 +14,7 @@ namespace FlexFlow {
 namespace Kernels {
 namespace IncMultiHeadAttention {
 
+#ifdef USE_FLASHINFER
 // kv layout: [num_pages, 2, page_size, num_kv_heads, head_dim]
 __device__ __forceinline__ size_t get_k_entry_offset(int const req_idx,
                                                      int const token_idx,
@@ -44,6 +45,7 @@ return ((req_idx * max_num_pages + token_idx / kPagesize) * kPagesize  +
          num_heads *
          head_dim;
 }
+#endif
 
 template <typename DT>
 void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
@@ -57,12 +59,13 @@ void compute_attention_kernel_generation(IncMultiHeadSelfAttentionMeta const *m,
                                          ffStream_t stream);
 
 template <typename DT>
-void compute_qkv_kernel(IncMultiHeadSelfAttentionMeta const *m,
+void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
                         BatchConfig const *bc,
                         int shard_id,
                         DT *output_ptr,
                         ffStream_t stream);
 
+#ifdef USE_FLASHINFER
 // [For the tokens in batch]
 // Update the kv cache, and compact the q array.
 // Source: qkv projeciton array of tokens in the batch.
@@ -78,6 +81,8 @@ void produce_output(IncMultiHeadSelfAttentionMeta const *m,
                     BatchConfig const *bc,
                     DT *output_ptr,
                     ffStream_t stream);
+
+#endif
 
 template <typename DT>
 __global__ void apply_position_bias_qkprd(DT *input_ptr,

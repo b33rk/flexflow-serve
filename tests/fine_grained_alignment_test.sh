@@ -2,13 +2,14 @@
 set -x
 set -e
 
-MODEL_NAME=${MODEL_NAME:-"JackFram/llama-160m"}
+MODEL_NAME=${MODEL_NAME:-"meta-llama/Llama-3.2-1B-Instruct"}
 MEMORY_PER_GPU=${MEMORY_PER_GPU:-14000}
 ZCOPY_MEMORY=${ZCOPY_MEMORY:-40000}
-TP_DEGREE=${TP_DEGREE:-2}
-PP_DEGREE=${PP_DEGREE:-2}
+TP_DEGREE=${TP_DEGREE:-1}
+PP_DEGREE=${PP_DEGREE:-1}
 CACHE_PATH=${FF_CACHE_PATH:-"~/.cache/flexflow"}
 NUM_STEPS=${NUM_STEPS:-2}
+FULL_PRECISION=${FULL_PRECISION:-true}
 
 cleanup() {
     eval rm -rf "${CACHE_PATH}/debug" ./fine_grained_alignment_config.json ./inference/output/fine_grained_alignment_test_ff.txt ./inference/output/fine_grained_alignment_test_hf.txt
@@ -29,7 +30,7 @@ mkdir -p ./inference/output
 
 # Enable backtrace in case we run into a segfault or assertion failure
 export LEGION_BACKTRACE=1
-export FF_DEBG_NO_WEIGHTS=0
+export FF_DEBG_NO_WEIGHTS=1
 FUSION=true
 
 
@@ -53,8 +54,7 @@ python ./tests/inference/huggingface_inference.py \
     --max-length "${MAX_LENGTH}" \
     --prompt-file ../../inference/prompt/test.json \
     --output-file ../../inference/output/fine_grained_alignment_test_hf.txt \
-    --use-full-precision \
-    --inference-debugging
+    --inference-debugging ${FULL_PRECISION:+--use-full-precision}
 
 NUM_GPUS=$((TP_DEGREE * PP_DEGREE))
 json_config=$(cat <<-END
@@ -67,12 +67,12 @@ json_config=$(cat <<-END
         "data_parallelism_degree": 1,
         "tensor_parallelism_degree": ${TP_DEGREE},
         "pipeline_parallelism_degree": ${PP_DEGREE},
-        "inference_debugging": true,
+        "inference_debugging": ${FULL_PRECISION},
         "fusion": ${FUSION},
         "refresh_cache": false,
         "llm_model": "${MODEL_NAME}",
         "cache_path": "${CACHE_PATH}",
-        "full_precision": true,
+        "full_precision": false,
         "prompt": "./inference/prompt/test.json",
         "max_length": $MAX_LENGTH,
         "output_file": "./inference/output/fine_grained_alignment_test_ff.txt"

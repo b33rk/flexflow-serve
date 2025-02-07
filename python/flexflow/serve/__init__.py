@@ -58,6 +58,7 @@ def init(
     benchmarking: Optional[bool] = None,
     inference_debugging: Optional[bool] = None,
     fusion: Optional[bool] = None,
+    log_instance_cration: Optional[bool] = None,
 ):
     """
     Configure FlexFlow Serve and start the runtime.
@@ -87,6 +88,7 @@ def init(
     - benchmarking: whether to run benchmaking only, without loading real weights, defaults to False
     - inference_debugging: whether to run inference in debugging mode, saving all inputs/outputs/weights to file, defaults to False
     - fusion: whether to enable the FlexFlow operator fusion optimization, defaults to True
+    - log_instance_creation: whether to log the creation of FlexFlow instances, defaults to False
 
     The configurations are passed down to the FlexFlow runtime (implemented in C++) via command line arguments.
 
@@ -127,6 +129,8 @@ def init(
     :type inference_debugging: Optional[bool], optional
     :param fusion: whether to enable the FlexFlow operator fusion optimization, defaults to True
     :type fusion: Optional[bool], optional
+    :param log_instance_cration: whether to log the creation of FlexFlow instances, defaults to False
+    :type log_instance_cration: Optional[bool], optional
 
     :raises ValueError: this function will raise an exception if the user passes both a configs_dict and some named parameters
     :raises TypeError: this function will raise an exception if the configs_dict is not a dictionary
@@ -153,6 +157,7 @@ def init(
             benchmarking is not None,
             inference_debugging is not None,
             fusion is not None,
+            log_instance_cration is not None,
         ]
     ):
         raise ValueError("Cannot pass both configs_dict and individual args")
@@ -180,6 +185,7 @@ def init(
             "benchmarking": benchmarking,
             "inference_debugging": inference_debugging,
             "fusion": fusion,
+            "log_instance_cration": log_instance_cration,
         }
 
     # Check that mandatory configs are present
@@ -230,5 +236,7 @@ def init(
         configs_dict["inference_debugging"] = False
     if configs_dict.get("fusion", None) is None:
         configs_dict["fusion"] = True
+    if configs_dict.get("log_instance_cration", None) is None:
+        configs_dict["log_instance_cration"] = False
 
     init_flexflow_runtime(configs_dict)

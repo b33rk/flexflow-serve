@@ -64,7 +64,7 @@ def main():
     cuda_availble = torch.cuda.is_available()
     device = "cuda" if args.gpu and cuda_availble else "cpu"
     # Get Model
-    model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True).to(device)
+    model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, attn_implementation="eager").to(device)
     # Get Tokenizer
     hf_config = AutoConfig.from_pretrained(args.model_name, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)

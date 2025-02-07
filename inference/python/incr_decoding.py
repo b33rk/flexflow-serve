@@ -116,11 +116,12 @@ def main():
             results = llm.generate(prompts, max_length=configs.max_length)
     else:
         if "max_length" not in configs_dict:
-            result = llm.generate("Three tips for staying healthy are: ")
+            results = llm.generate("Three tips for staying healthy are: ")
         else:
-            result = llm.generate(
+            results = llm.generate(
                 "Three tips for staying healthy are: ", max_length=configs.max_length
             )
+    print("Final output:", results[0].output_text)
 
     llm.stop_server()
 
