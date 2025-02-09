@@ -37,11 +37,8 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
       STRING "Choose the type of build." FORCE)
 endif()
 
-# option for using Python
-option(FF_USE_PYTHON "Enable Python" ON)
-if (FF_USE_PYTHON)
-  find_package(Python3 COMPONENTS Interpreter Development)
-endif()
+# Python
+find_package(Python3 COMPONENTS Interpreter Development)
 
 if(INSTALL_DIR)
   message(STATUS "INSTALL_DIR: ${INSTALL_DIR}")
@@ -401,14 +398,27 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 endif()
 
 # python related
-if (FF_USE_PYTHON)
-  find_package(Python COMPONENTS Interpreter Development)
-  # create flexflow_cffi_header.py
+find_package(Python COMPONENTS Interpreter Development)
+# create flexflow_cffi_header.py
+add_custom_command(TARGET flexflow
+  PRE_BUILD	
+  COMMAND ${FLEXFLOW_ROOT}/python/flexflow_cffi_build.py --ffhome-dir ${FLEXFLOW_ROOT} --output-dir ${FLEXFLOW_ROOT}/python/flexflow/core
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  COMMENT "Creating flexflow_cffi_header.py..."
+)
+if (NOT FF_BUILD_FROM_PYPI)
+  # generate the Legion Python bindings library. When building from pip, we need to do this post-install to prevent Legion from overwriting the path to the Legion shared library
+  add_custom_command(TARGET flexflow
+    POST_BUILD	
+    COMMAND CMAKE_BUILD_DIR=${Legion_BINARY_DIR}/runtime CMAKE_INSTALL_PREFIX=${Legion_BINARY_DIR} ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/deps/legion/bindings/python/setup.py build --build-lib=${Legion_BINARY_DIR}/bindings/python ${Legion_PYTHON_EXTRA_INSTALL_ARGS}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/deps/legion/bindings/python
+  )
+  # create set_python_envs.sh script
   add_custom_command(TARGET flexflow
     PRE_BUILD	
-    COMMAND ${FLEXFLOW_ROOT}/python/flexflow_cffi_build.py --ffhome-dir ${FLEXFLOW_ROOT} --output-dir ${FLEXFLOW_ROOT}/python/flexflow/core
+    COMMAND ${Python_EXECUTABLE} ${FLEXFLOW_ROOT}/python/flexflow_python_build.py --build-dir ${CMAKE_BINARY_DIR}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Creating flexflow_cffi_header.py..."
+    COMMENT "Creating set_python_envs.sh interpreter..."
   )
 endif()
 
@@ -455,24 +465,24 @@ set(LIB_DEST "lib")
 install(FILES ${FLEXFLOW_HDR} DESTINATION ${INCLUDE_DEST})
 install(TARGETS flexflow DESTINATION ${LIB_DEST})
 # install python
-if (FF_USE_PYTHON)
-  find_package(Python COMPONENTS Interpreter Development)
-  execute_process(COMMAND ${Python_EXECUTABLE} -c "import site, os; print([pkg for func in (site.getsitepackages(), site.getusersitepackages()) for pkg in ([func] if isinstance(func, str) else func) if os.access(pkg, os.W_OK)][0])" OUTPUT_VARIABLE PY_DEST OUTPUT_STRIP_TRAILING_WHITESPACE)
-  if (NOT FF_BUILD_FROM_PYPI)
-    install(
-      DIRECTORY ${FLEXFLOW_ROOT}/python/flexflow/
-      DESTINATION ${PY_DEST}/flexflow
-      FILES_MATCHING 
-      PATTERN "*.py")
-  else()
-    # pip automatically installs all *.py files in the python/flexflow folder, but because flexflow_cffi_header.py is generated at build time, we have to install it manually.
-    install(
-      PROGRAMS ${FLEXFLOW_ROOT}/python/flexflow/core/flexflow_cffi_header.py
-      DESTINATION ${PY_DEST}/flexflow/core
-    )
-    # Use setup.py script to re-install the Python bindings library with the right library paths. 
-    # Need to put the instructions in a subfolder because of issue below:
-    # https://stackoverflow.com/questions/43875499/do-post-processing-after-make-install-in-cmake
-    add_subdirectory(cmake/pip_install)
-  endif()
+
+find_package(Python COMPONENTS Interpreter Development)
+execute_process(COMMAND ${Python_EXECUTABLE} -c "import site, os; print([pkg for func in (site.getsitepackages(), site.getusersitepackages()) for pkg in ([func] if isinstance(func, str) else func) if os.access(pkg, os.W_OK)][0])" OUTPUT_VARIABLE PY_DEST OUTPUT_STRIP_TRAILING_WHITESPACE)
+if (NOT FF_BUILD_FROM_PYPI)
+  install(
+    DIRECTORY ${FLEXFLOW_ROOT}/python/flexflow/
+    DESTINATION ${PY_DEST}/flexflow
+    FILES_MATCHING 
+    PATTERN "*.py")
+else()
+  # pip automatically installs all *.py files in the python/flexflow folder, but because flexflow_cffi_header.py is generated at build time, we have to install it manually.
+  install(
+    PROGRAMS ${FLEXFLOW_ROOT}/python/flexflow/core/flexflow_cffi_header.py
+    DESTINATION ${PY_DEST}/flexflow/core
+  )
+  # Use setup.py script to re-install the Python bindings library with the right library paths. 
+  # Need to put the instructions in a subfolder because of issue below:
+  # https://stackoverflow.com/questions/43875499/do-post-processing-after-make-install-in-cmake
+  add_subdirectory(cmake/pip_install)
 endif()
+

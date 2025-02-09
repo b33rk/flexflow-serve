@@ -1,12 +1,9 @@
-name: "docker-build"
+name: "Docker Build & Deploy"
 on:
   pull_request:
   push:
     branches:
       - "inference"
-  schedule:
-    # At 00:00 on day-of-month 1, 14, and 28.
-    - cron: "0 0 1,14,28 * *" 
   workflow_dispatch:
 
 # Cancel outdated workflows if they are still running
@@ -15,23 +12,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  rocm-builder-start:
-    name: Start an AWS instance to build the ROCM Docker images
-    runs-on: ubuntu-latest
-    if: ${{ ( github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ) && github.ref_name == 'inference' }}
-    env: 
-      ROCM_BUILDER_INSTANCE_ID: ${{ secrets.ROCM_BUILDER_INSTANCE_ID }}
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-2
-
-      - name: Start EC2 instance
-        run: aws ec2 start-instances --instance-ids $ROCM_BUILDER_INSTANCE_ID
-
   docker-build-rocm:
     name: Build and Install FlexFlow in a Docker Container (ROCm backend)
     runs-on: ubuntu-20.04
@@ -54,26 +34,9 @@ jobs:
       - name: Check availability of flexflow modules in Python
         run: docker run --entrypoint /bin/bash flexflow-${FF_GPU_BACKEND}-${hip_version}:latest -c "python -c 'import flexflow.core; import flexflow.serve as ff; exit()'"
 
-  keep-runner-registered:
-    name: Keep runner alive
-    if: ${{ github.event_name == 'schedule' }}
-    runs-on: [self-hosted, rocm_builder]
-    defaults:
-      run:
-        shell: bash -l {0} # required to use an activated conda environment
-    env: 
-      CONDA: "3"    
-    needs: rocm-builder-start
-    steps:
-      - name: Keep alive
-        run: |
-          echo "Keep self-hosted runner registered with Github"
-          sleep 10m  
-
   docker-build-and-publish-rocm:
     name: Build and Deploy FlexFlow Docker Containers (ROCm backend)
-    needs: rocm-builder-start
-    runs-on: [self-hosted, rocm_builder]
+    runs-on: "runs-on=${{ github.run_id }}/runner=rocm-builder"
     if: ${{ ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' ) && github.ref_name == 'inference' }}
     strategy:
       matrix:
@@ -154,32 +117,14 @@ jobs:
           ./docker/publish.sh flexflow-environment
           ./docker/publish.sh flexflow
 
-  rocm-builder-stop:
-    needs: [docker-build-and-publish-rocm, keep-runner-registered]
-    if: ${{ always() && ( github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ) && github.ref_name == 'inference' }}
-    runs-on: ubuntu-latest
-    name: Stop the AWS instance we used to build the ROCM Docker images
-    env:
-      ROCM_BUILDER_INSTANCE_ID: ${{ secrets.ROCM_BUILDER_INSTANCE_ID }}
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-2
-
-      - name: Start EC2 instance
-        run: aws ec2 stop-instances --instance-ids $ROCM_BUILDER_INSTANCE_ID
-
   notify-slack:
     name: Notify Slack in case of failure
     runs-on: ubuntu-20.04
     needs: [docker-build-cuda, docker-build-and-publish-rocm]
-    if: ${{ failure() && github.event_name == 'workflow_dispatch' && github.repository_owner == 'flexflow' }}
+    if: ${{ failure() && github.repository_owner == 'flexflow' && ( github.event_name == 'push' || github.event_name == 'workflow_dispatch' ) && github.ref_name == 'inference' }} 
     steps:
       - name: Send Slack message
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
-          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"Weekly FlexFlow Docker images build failed! <https://github.com/flexflow/flexflow-serve/actions/runs/$GITHUB_RUN_ID|(See here).> :x: \"}" $SLACK_WEBHOOK
+          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"flexflow-serve Docker images build failed! <https://github.com/flexflow/flexflow-serve/actions/runs/$GITHUB_RUN_ID|(See here).> :x: \"}" $SLACK_WEBHOOK

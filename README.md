@@ -1,5 +1,5 @@
 # FlexFlow Serve: Low-Latency, High-Performance LLM Serving
-![build](https://github.com/flexflow/flexflow/workflows/build/badge.svg?branch=inference) ![gpu tests](https://github.com/flexflow/flexflow/workflows/gpu-ci/badge.svg?branch=inference) ![multinode gpu tests](https://github.com/flexflow/flexflow/workflows/multinode-test/badge.svg?branch=master) ![docker](https://github.com/flexflow/flexflow/workflows/docker-build/badge.svg?branch=inference) ![pip](https://github.com/flexflow/flexflow/workflows/pip-install/badge.svg?branch=inference) ![shell-check](https://github.com/flexflow/flexflow/workflows/Shell%20Check/badge.svg?branch=inference) ![clang-format](https://github.com/flexflow/flexflow/workflows/clang-format%20Check/badge.svg?branch=inference) [![Documentation Status](https://readthedocs.org/projects/flexflow/badge/?version=latest)](https://flexflow.readthedocs.io/en/latest/?badge=latest)
+![Build Test](https://github.com/flexflow/flexflow-serve/actions/workflows/build.yml/badge.svg?branch=inference) ![GPU-based Tests](https://github.com/flexflow/flexflow-serve/actions/workflows/gpu-ci.yml/badge.svg?branch=inference) ![Docker Build & Deploy](https://github.com/flexflow/flexflow-serve/actions/workflows/docker-build.yml/badge.svg?branch=inference) ![PIP Install Test](https://github.com/flexflow/flexflow-serve/actions/workflows/pip-install.yml/badge.svg?branch=inference) ![Shell Check](https://github.com/flexflow/flexflow-serve/actions/workflows/shell-check.yml/badge.svg?branch=inference) ![Clang format](https://github.com/flexflow/flexflow-serve/actions/workflows/clang-format-check.yml/badge.svg?branch=inference) [![Documentation Status](https://readthedocs.org/projects/flexflow-serve/badge/?version=latest)](https://flexflow-serve.readthedocs.io/en/latest/?badge=latest)
 
 
 ---
@@ -14,7 +14,7 @@ existing systems by 1.3-2.0x for single-node, multi-GPU inference and by
 1.4-2.4x for multi-node, multi-GPU inference.
 
 <p align="center">
-<img src="https://github.com/flexflow/FlexFlow/blob/inference/img/performance.png?raw=true" alt="Performance comparison" height="320"/>
+<img src="https://github.com/flexflow/flexflow-serve/blob/inference/img/performance.png?raw=true" alt="Performance comparison" height="320"/>
 </p>
 
 
@@ -27,7 +27,7 @@ existing systems by 1.3-2.0x for single-node, multi-GPU inference and by
   * CUDA version: 11.1 – 12.x
   * NVIDIA compute capability: 6.0 or higher
 * Python: 3.6 or higher
-* Package dependencies: [see here](https://github.com/flexflow/FlexFlow/blob/inference/requirements.txt)
+* Package dependencies: [see here](https://github.com/flexflow/flexflow-serve/blob/inference/requirements.txt)
 
 ### Install with pip
 You can install FlexFlow Serve using pip:
@@ -150,7 +150,7 @@ If you'd like to use the C++ interface (mostly used for development and benchmar
 <br>
 
 #### Downloading models
-Before running FlexFlow Serve, you should manually download the LLM and SSM(s) model of interest using the [inference/utils/download_hf_model.py](https://github.com/flexflow/FlexFlow/blob/inference/inference/utils/download_hf_model.py) script (see example below). By default, the script will download all of a model's assets (weights, configs, tokenizer files, etc...) into the cache folder `~/.cache/flexflow`. If you would like to use a different folder, you can request that via the parameter `--cache-folder`.
+Before running FlexFlow Serve, you should manually download the LLM and SSM(s) model of interest using the [inference/utils/download_hf_model.py](https://github.com/flexflow/flexflow-serve/blob/inference/inference/utils/download_hf_model.py) script (see example below). By default, the script will download all of a model's assets (weights, configs, tokenizer files, etc...) into the cache folder `~/.cache/flexflow`. If you would like to use a different folder, you can request that via the parameter `--cache-folder`.
 
 ```bash
 python3 ./inference/utils/download_hf_model.py <HF model 1> <HF model 2> ...
@@ -188,7 +188,7 @@ which largely reduces the end-to-end inference latency and computational require
 for serving generative LLMs while provably preserving model quality.
 
 <p align="center">
-<img src="https://github.com/flexflow/FlexFlow/blob/inference/img/spec_infer_demo.gif?raw=true" alt="A Speculative Inference Demo" width="630"/>
+<img src="https://github.com/flexflow/flexflow-serve/blob/inference/img/spec_infer_demo.gif?raw=true" alt="A Speculative Inference Demo" width="630"/>
 </p>
 
 ### Supported LLMs and SSMs

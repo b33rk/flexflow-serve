@@ -1,26 +1,8 @@
-name: "gpu-ci"
+name: "GPU-based Tests"
 on:
-  schedule:
-    - cron: "0 0 1,14,28 * *" # At 00:00 on day-of-month 1, 14, and 28.
   push:
     branches:
       - "inference"
-    paths:
-      - "cmake/**"
-      - "config/**"
-      - "deps/**"
-      - "python/**"
-      - "setup.py"
-      - "include/**"
-      - "inference/**"
-      - "src/**"
-      - "tests/inference/**"
-      - "conda/flexflow.yml"
-      - ".github/workflows/gpu-ci.yml"
-      - "tests/cpp_gpu_tests.sh"
-      - "tests/inference_tests.sh"
-      - "tests/training_tests.sh"
-      - "tests/python_interface_test.sh"
   workflow_dispatch:
 
 concurrency:
@@ -28,66 +10,106 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gpu-ci-concierge:
-    name: GPU CI Concierge
-    runs-on: ubuntu-20.04
-    env:
-      FLEXFLOW_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: Checkout Git Repository
-        uses: actions/checkout@v3
-
-      - name: Wait for daemon to be done
-        run: |
-          pip3 install pip --upgrade
-          pip3 install pyopenssl --upgrade
-          pip3 install urllib3 --upgrade
-          pip3 install pygithub
-          python3 .github/workflows/helpers/gpu_ci_helper.py
-
-  keep-runner-registered:
-    name: Keep runner alive
-    if: ${{ github.event_name == 'schedule' }}
-    runs-on: [self-hosted, gpu]
-    defaults:
-      run:
-        shell: bash -l {0} # required to use an activated conda environment
-    env: 
-      CONDA: "3"    
-    needs: gpu-ci-concierge
-    container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-12.1:latest
-      options: --gpus all --shm-size=8192m
-    steps:
-      - name: Keep alive
-        run: |
-          echo "Keep self-hosted runner registered with Github"
-          sleep 10m
-  
   python-interface-check:
     name: Check Python Interface
-    if: ${{ github.event_name != 'schedule' }}
-    runs-on: [self-hosted, gpu]
+    runs-on: "runs-on=${{ github.run_id }}/runner=gpu-nvidia"
     defaults:
       run:
         shell: bash -l {0} # required to use an activated conda environment
-    env: 
-      CONDA: "3"    
-    needs: gpu-ci-concierge
-    container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-12.1:latest
-      options: --gpus all --shm-size=8192m
+    env:
+      CUDA_PATH: /usr/local/cuda
+      CONDA: "3"
+      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
     steps:
-      - name: Install updated git version
-        run: sudo add-apt-repository ppa:git-core/ppa -y && sudo apt update -y && sudo apt install -y --no-install-recommends git
-
+      - name: Set Path
+        run: echo "/opt/amazon/openmpi/bin:/opt/amazon/efa/bin:/opt/conda/bin:/usr/local/cuda/bin:/usr/local/cuda/include" >> $GITHUB_PATH
+      
+      # - name: Check GPU/CUDA availability
+      #   run: |
+      #     printenv CUDA_PATH
+      #     printenv PATH
+      #     printenv LD_LIBRARY_PATH
+      #     nvidia-smi
+      #     nvcc --version
+      # - name: Display disk space
+      #   run: df -h
+      
       - name: Checkout Git Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
+      
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
           
       - name: Install conda and FlexFlow dependencies
-        uses: conda-incubator/setup-miniconda@v2
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniconda-version: "latest"
+          activate-environment: flexflow
+          environment-file: conda/flexflow.yml
+          auto-activate-base: false
+          auto-update-conda: false
+          
+      - name: Build FlexFlow
+        run: |
+          mkdir build
+          cd build
+          ../config/config.linux
+          make -j
+
+      - name: Check FlexFlow Python interface (before installation)
+        run: ./tests/python_interface_test.sh before-installation
+
+      - name: Install FlexFlow
+        run: |
+          cd build
+          ../config/config.linux
+          make install
+
+      - name: Check FlexFlow Python interface (after installation)
+        run: ./tests/python_interface_test.sh after-installation
+
+  inference-tests:
+    name: Inference Tests
+    runs-on: "runs-on=${{ github.run_id }}/runner=gpu-nvidia"
+    defaults:
+      run:
+        shell: bash -l {0} # required to use an activated conda environment
+    env:
+      CUDA_PATH: /usr/local/cuda
+      CONDA: "3"
+      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+    steps:
+      - name: Set Path
+        run: echo "/opt/amazon/openmpi/bin:/opt/amazon/efa/bin:/opt/conda/bin:/usr/local/cuda/bin:/usr/local/cuda/include" >> $GITHUB_PATH
+      
+      # - name: Check GPU/CUDA availability
+      #   run: |
+      #     printenv CUDA_PATH
+      #     printenv PATH
+      #     printenv LD_LIBRARY_PATH
+      #     nvidia-smi
+      #     nvcc --version
+      # - name: Display disk space
+      #   run: df -h
+
+      - name: Checkout Git Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          
+      - name: Install conda and FlexFlow dependencies
+        uses: conda-incubator/setup-miniconda@v3
         with:
           miniconda-version: "latest"
           activate-environment: flexflow
@@ -95,108 +117,24 @@ jobs:
           auto-activate-base: false
           auto-update-conda: false
 
-      - name: Install conda and Pytorch dependencies for pytorch alignment test
-        run: |
-          conda env create -f conda/flexflow.yml
-
       - name: Build FlexFlow
         run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
           mkdir build
           cd build
           ../config/config.linux
           make -j
-
-      - name: Check FlexFlow Python interface (before installation)
-        run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-          ./tests/python_interface_test.sh before-installation
-
-      - name: Install FlexFlow
-        run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          cd build
-          ../config/config.linux
-          make install
-          ldconfig
-
-      - name: Check FlexFlow Python interface (after installation)
-        run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-          ./tests/python_interface_test.sh after-installation
-
-      - name: Run flexflow alignment with pytorch
-        run: |
-          # run alingment tests
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-          ./tests/align/test_all_operators.sh
-
-  inference-tests:
-    name: Inference Tests
-    if: ${{ github.event_name != 'schedule' }}
-    runs-on: [self-hosted, gpu]
-    defaults:
-      run:
-        shell: bash -l {0} # required to use an activated conda environment
-    env: 
-      CONDA: "3"
-      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
-    needs: gpu-ci-concierge
-    container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-12.1:latest
-      options: --gpus all --shm-size=8192m
-    steps:
-      - name: Install updated git version
-        run: sudo add-apt-repository ppa:git-core/ppa -y && sudo apt update -y && sudo apt install -y --no-install-recommends git
-
-      - name: Checkout Git Repository
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-          
-      - name: Install conda and FlexFlow dependencies
-        uses: conda-incubator/setup-miniconda@v2
-        with:
-          miniconda-version: "latest"
-          activate-environment: flexflow
-          environment-file: conda/flexflow.yml
-          auto-activate-base: false
-
-      - name: Build FlexFlow
-        run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          mkdir build
-          cd build
-          ../config/config.linux
-          make -j
-
-      - name: Run PEFT tests
-        run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          export CUDNN_DIR=/usr/local/cuda
-          export CUDA_DIR=/usr/local/cuda
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-
-          source ./build/set_python_envs.sh
-          ./tests/peft_test.sh
       
       - name: Run inference tests
         env:
           CPP_INFERENCE_TESTS: ${{ vars.CPP_INFERENCE_TESTS }}
         run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          export CUDNN_DIR=/usr/local/cuda
-          export CUDA_DIR=/usr/local/cuda
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-          
-          # GPT tokenizer test
-          # ./tests/gpt_tokenizer_test.sh
-
-          # Inference tests
           source ./build/set_python_envs.sh
           ./tests/inference_tests.sh
+      
+      - name: Run PEFT tests
+        run: |
+          source ./build/set_python_envs.sh
+          ./tests/peft_test.sh
       
       - name: Save inference output as an artifact
         if: always()
@@ -205,7 +143,7 @@ jobs:
           tar -zcvf output.tar.gz ./output
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: output
@@ -215,58 +153,3 @@ jobs:
       - name: Clear cache
         if: always()
         run: sudo rm -rf ~/.cache 
-
-  training-tests:
-    name: Training Tests
-    if: ${{ github.event_name != 'schedule' }}
-    runs-on: [self-hosted, gpu]
-    # skip this time-consuming test for PRs to the inference branch
-    # if: ${{ github.event_name != 'pull_request' || github.base_ref != 'inference' }}
-    defaults:
-      run:
-        shell: bash -l {0} # required to use an activated conda environment
-    env: 
-      CONDA: "3"
-    needs: inference-tests
-    container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-12.1:latest
-      options: --gpus all --shm-size=8192m
-    steps:
-      - name: Install updated git version
-        run: sudo add-apt-repository ppa:git-core/ppa -y && sudo apt update -y && sudo apt install -y --no-install-recommends git
-      
-      - name: Checkout Git Repository
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-      
-      - name: Install conda and FlexFlow dependencies
-        uses: conda-incubator/setup-miniconda@v2
-        with:
-          miniconda-version: "latest"
-          activate-environment: flexflow
-          environment-file: conda/flexflow.yml
-          auto-activate-base: false
-
-      - name: Build and Install FlexFlow
-        run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          pip install . --verbose
-
-      - name: Check FlexFlow Python interface (pip)
-        run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-          ./tests/python_interface_test.sh after-installation
-
-      - name: Run multi-gpu tests
-        run: |
-          export PATH=$CONDA_PREFIX/bin:$PATH
-          export CUDNN_DIR=/usr/local/cuda
-          export CUDA_DIR=/usr/local/cuda
-          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
-          # C++ tests
-          ./tests/cpp_gpu_tests.sh 4
-          # Python tests
-          ./tests/training_tests.sh 4
-

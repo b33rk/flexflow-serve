@@ -108,7 +108,7 @@ RUN  if [ "$FF_GPU_BACKEND" = "hip_cuda" ] || [ "$FF_GPU_BACKEND" = "hip_rocm" ]
 RUN rm -rf /var/lib/apt/lists/*
 
 # Install python packages and other dependencies
-RUN conda install -c conda-forge cmake make pillow cmake-build-extension pybind11 numpy pandas keras-preprocessing
+RUN conda install -c conda-forge cmake make pillow cmake-build-extension numpy pandas keras-preprocessing
 # Install Pytorch
 COPY docker/flexflow-environment/install_pytorch.sh /usr/local/bin/install_pytorch.sh
 RUN if [ "$FF_GPU_BACKEND" == "cuda" ] ; then \

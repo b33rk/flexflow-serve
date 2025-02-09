@@ -1,4 +1,4 @@
-name: "pip-install"
+name: "PIP Install Test"
 on:
   pull_request:
     paths:
