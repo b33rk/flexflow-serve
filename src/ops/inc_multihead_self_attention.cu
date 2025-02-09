@@ -343,8 +343,10 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                               1,
                               m->num_q_heads/m->num_kv_heads,
                               1);
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods";
-      save_tensor(static_cast<DT const*>(m->qk_prods), num_new_tokens*total_tokens*m->num_q_heads, fpath.c_str());
+      if (m->inference_debugging) {
+        std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods";
+        save_tensor(static_cast<DT const*>(m->qk_prods), num_new_tokens*total_tokens*m->num_q_heads, fpath.c_str());
+      }
     }
     // Step 2: Add alibi position bias to qk production
     {
@@ -385,8 +387,10 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                                                 entries_above_diagonal,
                                                 static_cast<DT>(-INFINITY));
       }
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods.masked";
-      save_tensor(static_cast<DT const*>(m->qk_prods), num_new_tokens*total_tokens*m->num_q_heads, fpath.c_str());
+      if (m->inference_debugging) {
+        std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods.masked";
+        save_tensor(static_cast<DT const*>(m->qk_prods), num_new_tokens*total_tokens*m->num_q_heads, fpath.c_str());
+      }
     }
 
     // Step 4: Compute Softmax(QK.T/sqrt(d_k))
@@ -431,8 +435,10 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                                      &softmax_beta,
                                      m->qk_tensor,
                                      C_softmax));
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax";
-      save_tensor(static_cast<DT const*>(m->qk_prods_softmax), num_new_tokens*total_tokens*m->num_q_heads, fpath.c_str());
+      if (m->inference_debugging) {
+        std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax";
+        save_tensor(static_cast<DT const*>(m->qk_prods_softmax), num_new_tokens*total_tokens*m->num_q_heads, fpath.c_str());
+      }
       // Copy C_softmax to m->softmax_activation_buffer if we need to compute
       // PEFT backward
       if (bc->requestsInfo[req_idx].finetuning_request) {
@@ -499,8 +505,10 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                             m->num_q_heads/m->num_kv_heads,
                             1,
                             1);
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax";
-      save_tensor(static_cast<DT const*>(attn_heads), num_new_tokens * m->num_q_heads * m->vProjSize, fpath.c_str());
+      if (m->inference_debugging) {
+        std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax";
+        save_tensor(static_cast<DT const*>(attn_heads), num_new_tokens * m->num_q_heads * m->vProjSize, fpath.c_str());
+      }
     }
     num_processed_prompt_tokens += num_new_tokens;
   }
@@ -1324,8 +1332,7 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
 
   if (bc->num_generation_tokens > 0) {
     // phase 3: Compute attention score for generation tokens
-    compute_attention_kernel_generation<DT>(
-        m, bc, output_ptr, stream);
+    compute_attention_kernel_generation<DT>(m, bc, output_ptr, stream);
   }
 
   if (bc->num_tokens > bc->num_generation_tokens) {

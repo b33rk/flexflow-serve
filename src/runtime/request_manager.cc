@@ -929,17 +929,17 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
                 << ") latency(" << std::fixed << std::setprecision(3) << (profile_info.finish_time - profile_info.start_time)/1e3
                 << ") ttft(" << std::fixed << std::setprecision(3) << (profile_info.first_token_time - profile_info.registration_time)/1e3
                 << ")\n";
-      // if (request.benchmarking_tokens <= 0) {
-      //   outputFile << "token IDs: ";
-      //   for (int i = 0; i < request.tokens.size(); i++) {
-      //     outputFile << request.tokens[i];
-      //     if (i < request.tokens.size() - 1) {
-      //       outputFile << ",";
-      //     }
-      //   }
-      //   outputFile << std::endl;
-      //   outputFile << output;
-      // }
+      if (request.benchmarking_tokens <= 0) {
+        outputFile << "token IDs: ";
+        for (int i = 0; i < request.tokens.size(); i++) {
+          outputFile << request.tokens[i];
+          if (i < request.tokens.size() - 1) {
+            outputFile << ",";
+          }
+        }
+        outputFile << std::endl;
+        outputFile << output;
+      }
       outputFile.close();
     } else {
       std::cout << "Unable to open the output file: " << output_filepath
