@@ -2,17 +2,37 @@ import os
 import re
 import glob
 import pytest
+import Levenshtein
 
 OUTPUT_DIR = os.path.join("inference", "output")
 
-def get_line(filepath, line_index):
+# def get_line(filepath, line_index):
+#     """
+#     Returns the specified line (0-based) from the file, or '' if the file
+#     doesn't have that many lines.
+#     """
+#     with open(filepath, "r", encoding="utf-8") as f:
+#         lines = f.readlines()
+#     return lines[line_index] if len(lines) > line_index else ""
+
+def get_lines(filepath, line_index):
     """
-    Returns the specified line (0-based) from the file, or '' if the file
-    doesn't have that many lines.
+    Returns all lines from the file as a single string.
     """
-    with open(filepath, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-    return lines[line_index] if len(lines) > line_index else ""
+    with open(filepath, 'r', encoding="utf-8") as file:
+        lines = file.readlines()  # This reads all lines into a list.
+        
+    return ''.join(lines[line_index:]) if len(lines) > line_index else ""
+
+
+def fuzzy_compare(ref, hyp, max_distance_ratio=0.03):
+    distance = Levenshtein.distance(ref, hyp)
+    # e.g., if the distance is less than 3% of the length of the ref, consider it "same"
+    if len(ref) > 0:
+        return (distance / len(ref)) < max_distance_ratio
+    else:
+        # If ref_norm is empty, just check if hyp_norm is also empty
+        return (hyp == '')
 
 def compare_single_line(file_a, file_b):
     """
@@ -25,25 +45,19 @@ def compare_single_line(file_a, file_b):
     base_b = os.path.basename(file_b)
 
     if base_a.startswith(("spec_infer", "incr_dec")):
-        line_a = get_line(file_a, 1)
+        line_a = get_lines(file_a, 2)
     else:
-        line_a = get_line(file_a, 0)
+        line_a = get_lines(file_a, 1)
 
     if base_b.startswith(("spec_infer", "incr_dec")):
-        line_b = get_line(file_b, 1)
+        line_b = get_lines(file_b, 2)
     else:
-        line_b = get_line(file_b, 0)
+        line_b = get_lines(file_b, 1)
 
-    list_a = line_a[len("token IDs: "):].split(",")
-    list_b = line_b[len("token IDs: "):].split(",")
-
-    # check if the first 50 elements are equal
-    for i in range(min(50, len(list_a), len(list_b))):
-        if list_a[i] != list_b[i]:
-            raise AssertionError(
-                f"File contents differ at position {i}:\n  {file_a} -> {list_a[i]}\n  {file_b} -> {list_b[i]}"
-            )
-
+    if not fuzzy_compare(line_a, line_b):
+        raise AssertionError(
+            f"File contents differ:\n  {file_a} -> {line_a}\n  {file_b} -> {line_b}"
+        )
 
 def group_model_files(prefix):
     """

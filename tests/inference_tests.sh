@@ -66,6 +66,7 @@ done
 
 ##############  Check alignment between results ##############
 echo "Checking alignment of results..."
+pip install Levenshtein
 pytest -v ./tests/inference/test_inference_output.py
 
 
