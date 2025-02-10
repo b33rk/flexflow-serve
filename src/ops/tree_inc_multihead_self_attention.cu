@@ -404,62 +404,32 @@ void commit_tokens(TreeIncMultiHeadSelfAttentionMeta const *m,
 }
 
 template <typename DT>
-__global__ void update_tree_branch_kv_cache(
-    DT const *devQKVProjArray,
-    DT *kCache_ptr,
-    DT *vCache_ptr,
-    TreeVerifyBatchConfig::PerTokenInfo const *tokenInfos,
-    int qProjSize,
-    int kProjSize,
-    int vProjSize,
-    int num_tokens_in_branch,
-    int processed_tokens_in_batch,
-    int total_tokens_in_batch,
-    int max_seq_len,
-    int hidden_size) {
-  CUDA_KERNEL_LOOP(i, num_tokens_in_branch * hidden_size) {
-
-    int token_idx = i / (hidden_size);
-    int offset = i % hidden_size;
-
-    token_idx += processed_tokens_in_batch; // get index in the whole batch
-    size_t val_idx =
-        token_idx * QKV_WEIGHT_NUM * hidden_size + hidden_size + offset;
-
-    DT kVal = devQKVProjArray[val_idx];
-    DT vVal = devQKVProjArray[val_idx + hidden_size];
-
-    int const req_id = tokenInfos[token_idx].request_index;
-    int const tok_id = tokenInfos[token_idx].abs_depth_in_request;
-    kCache_ptr[req_id * (hidden_size * max_seq_len) + tok_id * hidden_size +
-               offset] = kVal;
-    vCache_ptr[req_id * (hidden_size * max_seq_len) + tok_id * hidden_size +
-               offset] = vVal;
-  }
-}
-
-template <typename DT>
 __global__ void update_tree_branch_kv_cache_fused(
     DT const *devQKVProjArray,
     DT *kCache_ptr,
     DT *vCache_ptr,
     TreeVerifyBatchConfig::PerTokenInfo const *tokenInfos,
     BatchConfig::PerRequestInfo *request_infos,
-    int qProjSize,
-    int kProjSize,
-    int vProjSize,
+    int head_dim,
+    int num_q_heads,
+    int num_kv_heads,
     int num_new_tokens,
-    int max_seq_len,
-    int hidden_size) {
-  CUDA_KERNEL_LOOP(i, num_new_tokens * hidden_size) {
+    int max_seq_len) {
 
-    int token_idx = i / hidden_size;
-    int offset = i % hidden_size;
-    size_t val_idx =
-        token_idx * QKV_WEIGHT_NUM * hidden_size + hidden_size + offset;
+  CUDA_KERNEL_LOOP(i, num_new_tokens * head_dim * num_kv_heads) {
+    // devQKVProjArray: [head_dim, tot_num_heads, num_tokens]
+    // kCache_ptr: [head_dim, num_kv_heads, max_seq_len, max_batch_size]
+    // vCache_ptr: [head_dim, num_kv_heads, max_seq_len, max_batch_size]
+    int token_idx = i / (head_dim * num_kv_heads);
+    int head_idx = (i / head_dim) % num_kv_heads;
+    int offset = i % head_dim;
 
-    DT kVal = devQKVProjArray[val_idx];
-    DT vVal = devQKVProjArray[val_idx + hidden_size];
+    int tot_num_heads = num_q_heads + 2 * num_kv_heads;
+
+    int key_src_idx = token_idx * head_dim * tot_num_heads +
+                         head_dim * num_q_heads +
+                         head_dim * head_idx + offset;
+    int val_src_idx = key_src_idx + head_dim * num_kv_heads;
 
     int const req_id = tokenInfos[token_idx].request_index;
     // int const tok_id = tokenInfos[token_idx].abs_depth_in_request;
@@ -469,19 +439,13 @@ __global__ void update_tree_branch_kv_cache_fused(
     int const first_token_depth =
         request_infos[req_id].first_token_depth_in_request;
 
-    // if(i % hidden_size == 0){
-    //   printf("update token request id: %d, %d, %d  real id %d, value%.10f\n",
-    //   req_id, token_idx, request_token_offset,(token_idx + first_token_depth
-    //   - request_token_offset), kVal);
-    // }
-    kCache_ptr[req_id * (hidden_size * max_seq_len) +
-               (token_idx + first_token_depth - request_token_offset) *
-                   hidden_size +
-               offset] = kVal;
-    vCache_ptr[req_id * (hidden_size * max_seq_len) +
-               (token_idx + first_token_depth - request_token_offset) *
-                   hidden_size +
-               offset] = vVal;
+    int dst_idx = req_id * (head_dim * num_kv_heads * max_seq_len) +
+                      (token_idx + first_token_depth - request_token_offset) * head_dim * num_kv_heads + 
+                      head_idx * head_dim + 
+                      offset;
+    
+    kCache_ptr[dst_idx] = devQKVProjArray[key_src_idx];
+    vCache_ptr[dst_idx] = devQKVProjArray[val_src_idx];
   }
 }
 
@@ -543,8 +507,10 @@ void compute_attention_kernel_fused(TreeIncMultiHeadSelfAttentionMeta const *m,
 
   // update the kv cache
   //  update K-V cache
+  int head_dim = m->hidden_size / m->num_q_heads;
+  assert(head_dim == m->qProjSize);
   int num_new_tokens = bc->num_active_tokens();
-  int parallelism = m->hidden_size * num_new_tokens;
+  int parallelism = head_dim * m->num_kv_heads * num_new_tokens;
   update_tree_branch_kv_cache_fused<<<GET_BLOCKS(parallelism),
                                       min(CUDA_NUM_THREADS, parallelism),
                                       0,
@@ -555,12 +521,11 @@ void compute_attention_kernel_fused(TreeIncMultiHeadSelfAttentionMeta const *m,
       m->token_infos,
       m->request_infos,
       m->qProjSize,
-      m->kProjSize,
-      m->vProjSize,
+      m->num_q_heads,
+      m->num_kv_heads,
       num_new_tokens,
       BatchConfig::max_sequence_length() +
-          BatchConfig::max_spec_tree_token_num(),
-      m->hidden_size);
+          BatchConfig::max_spec_tree_token_num());
 
   dim3 grid(m->num_q_heads, bc->num_active_requests());
   int const per_head_size = m->qProjSize;
