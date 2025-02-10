@@ -83,7 +83,6 @@ struct InferenceReqProfileInfo {
   long long timestamp;
 };
 
-
 struct Request {
   enum Status {
     PENDING = 101,   // loading prompt
@@ -268,8 +267,9 @@ public:
                                            InferenceResult const &result);
   void process_finetuning_req_bwd_progress(BatchConfig const &old_bc);
   void process_work_from_old_batch(BatchConfig const &old_bc,
-                                     InferenceResult const &result);
-  void record_decoding_req_profiling_info(BatchConfig const &old_fwd_bc, int req_idx);
+                                   InferenceResult const &result);
+  void record_decoding_req_profiling_info(BatchConfig const &old_fwd_bc,
+                                          int req_idx);
   void record_step_profile_info(BatchConfig const &old_bc);
   void save_profiling_info_to_csv(std::string output_folder,
                                   std::string dataset_name,
@@ -282,11 +282,12 @@ public:
   BatchConfig prepare_next_bwd_batch(BatchConfig &new_bc);
   BatchConfig prepare_next_fwd_batch(BatchConfig const &old_bc,
                                      InferenceResult const &result);
-  BatchConfigFuture prepare_next_batch(BatchConfigFuture const &old_bc,
-                                       InferenceResultFuture const &result,
-                                       std::vector<FinetuningBwdFuture> const &bwd_f,
-                                       Legion::Context ctx,
-                                       Legion::Runtime *runtime);
+  BatchConfigFuture
+      prepare_next_batch(BatchConfigFuture const &old_bc,
+                         InferenceResultFuture const &result,
+                         std::vector<FinetuningBwdFuture> const &bwd_f,
+                         Legion::Context ctx,
+                         Legion::Runtime *runtime);
   BeamSearchBatchConfig
       prepare_next_batch_beam(BeamSearchBatchConfig const &old_bc,
                               BeamInferenceResult const &result);
@@ -381,8 +382,8 @@ public:
       std::vector<Legion::PhysicalRegion> const &regions,
       Legion::Context ctx,
       Legion::Runtime *runtime);
-  
-  int run_idx=0;
+
+  int run_idx = 0;
 
 private:
   // configuration parameters
@@ -442,7 +443,7 @@ private:
 
   std::vector<StepProfileInfo> step_profile_infos;
   std::vector<InferenceReqProfileInfo> inf_req_profile_infos;
-  int step_idx=0;
+  int step_idx = 0;
 
 private:
   struct ProfileInfo {

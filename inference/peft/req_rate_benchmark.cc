@@ -22,9 +22,9 @@
 #include "models/starcoder.h"
 #include <wordexp.h>
 
+#include <cmath>
 #include <iostream>
 #include <vector>
-#include <cmath>
 
 #include <nlohmann/json.hpp>
 
@@ -141,7 +141,8 @@ std::vector<Request> make_warmup_inf_requests(int num_inf_request) {
   return warmup_requests;
 }
 
-std::vector<Request> make_warmup_ft_requests(int num_finetuning_steps, PEFTModelID *peft_model_id) {
+std::vector<Request> make_warmup_ft_requests(int num_finetuning_steps,
+                                             PEFTModelID *peft_model_id) {
   std::vector<Request> warmup_requests;
   Request finetuning_req;
   finetuning_req.req_type = RequestType::REQ_FINETUNING;
@@ -149,15 +150,17 @@ std::vector<Request> make_warmup_ft_requests(int num_finetuning_steps, PEFTModel
   finetuning_req.max_length = 1024;
   finetuning_req.warmup = true;
   finetuning_req.arrival_time_us = 0;
-  finetuning_req.peft_model_id = (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
+  finetuning_req.peft_model_id =
+      (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
   finetuning_req.peft_finetuning_info.max_training_steps = num_finetuning_steps;
   warmup_requests.push_back(finetuning_req);
   return warmup_requests;
 }
 
-std::vector<Request> load_trace(std::string trace_file_path, double &arrival_rate_sec) {
+std::vector<Request> load_trace(std::string trace_file_path,
+                                double &arrival_rate_sec) {
   std::vector<Request> requests;
-  
+
   std::ifstream file_handle(trace_file_path);
   assert(file_handle.good() && "Prompt file does not exist.");
   nlohmann::ordered_json prompt_json =
@@ -168,7 +171,7 @@ std::vector<Request> load_trace(std::string trace_file_path, double &arrival_rat
   file_handle.close();
   auto &metadata = prompt_json["metadata"];
   arrival_rate_sec = metadata["arrival_rate"];
-  
+
   for (auto &entry : prompt_json["entries"]) {
     int prompt_length = entry["prompt_length"];
     int response_length = entry["response_length"];
@@ -178,7 +181,7 @@ std::vector<Request> load_trace(std::string trace_file_path, double &arrival_rat
     Request inference_req;
     // inference_req.prompt = text;
     inference_req.benchmarking_tokens = prompt_length;
-    inference_req.arrival_time_us = (long long int) (arrival_time_sec*1e6);
+    inference_req.arrival_time_us = (long long int)(arrival_time_sec * 1e6);
     // inference_req.add_special_tokens = false;
     inference_req.max_new_tokens = response_length;
     requests.push_back(inference_req);
@@ -186,14 +189,16 @@ std::vector<Request> load_trace(std::string trace_file_path, double &arrival_rat
   return requests;
 }
 
-std::vector<Request> make_ft_request(int finetuning_entry_size, PEFTModelID *peft_model_id) {
+std::vector<Request> make_ft_request(int finetuning_entry_size,
+                                     PEFTModelID *peft_model_id) {
   std::vector<Request> requests;
 
   Request finetuning_req;
   finetuning_req.req_type = RequestType::REQ_FINETUNING;
   finetuning_req.benchmarking_tokens = finetuning_entry_size;
   finetuning_req.max_length = finetuning_entry_size;
-  finetuning_req.peft_model_id = (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
+  finetuning_req.peft_model_id =
+      (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
   finetuning_req.peft_finetuning_info.max_training_steps = 1000000;
   finetuning_req.warmup = false;
   requests.push_back(finetuning_req);
@@ -265,8 +270,10 @@ void FlexFlow::top_level_task(Task const *task,
   //   std::cerr << "Running PEFT script with PEFT not enabled" << std::endl;
   //   assert(false);
   // }
-  assert(enable_peft == !peft_model_name.empty() && "PEFT enabled, but no PEFT model id passed, or viceversa");
-  assert(enable_peft == enable_peft_finetuning && "PEFT enabled, but PEFT finetuning is not enabled (or viceversa)");
+  assert(enable_peft == !peft_model_name.empty() &&
+         "PEFT enabled, but no PEFT model id passed, or viceversa");
+  assert(enable_peft == enable_peft_finetuning &&
+         "PEFT enabled, but PEFT finetuning is not enabled (or viceversa)");
 
   json model_config = json::parse(config_file_handle,
                                   /*parser_callback_t */ nullptr,
@@ -349,8 +356,8 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_sequence_length(max_sequence_length);
   rm->register_tokenizer(
       model_type, bos_token_id, eos_token_ids, tokenizer_filepath);
-  std::string output_filepath = join_path(
-      {file_paths.output_folder_path, "output.log"});
+  std::string output_filepath =
+      join_path({file_paths.output_folder_path, "output.log"});
   rm->register_output_filepath(output_filepath);
   rm->set_enable_peft_finetuning(enable_peft_finetuning);
   rm->set_max_finetuning_sequence_length(1024);
@@ -392,16 +399,16 @@ void FlexFlow::top_level_task(Task const *task,
   } else {
     assert(false && "unknow model type");
   }
-  int tot_num_layers_in_model = model.current_transformer_layer_id+1;
+  int tot_num_layers_in_model = model.current_transformer_layer_id + 1;
   rm->set_num_transformer_layers(tot_num_layers_in_model);
 
   // Start background server
   rm->start_background_server(&model);
 
-  
   PEFTModelID *peft_model_id_finetuning;
   if (enable_peft_finetuning) {
-    peft_model_id_finetuning = model.register_peft_adapter(peft_config_finetuning);
+    peft_model_id_finetuning =
+        model.register_peft_adapter(peft_config_finetuning);
   }
 
   double arrival_rate_sec = 0.0;
@@ -409,22 +416,26 @@ void FlexFlow::top_level_task(Task const *task,
   // Run workload
   {
     std::vector<Request> warmup_inf_requests = make_warmup_inf_requests(10);
-    std::vector<Request> warmup_ft_requests; 
+    std::vector<Request> warmup_ft_requests;
     if (enable_peft_finetuning) {
-      warmup_ft_requests = make_warmup_ft_requests(1000, peft_model_id_finetuning);
-    } 
-    std::vector<GenerationResult> warmup_results = model.generate_online(warmup_inf_requests, warmup_ft_requests);
+      warmup_ft_requests =
+          make_warmup_ft_requests(1000, peft_model_id_finetuning);
+    }
+    std::vector<GenerationResult> warmup_results =
+        model.generate_online(warmup_inf_requests, warmup_ft_requests);
     rm->set_inference_finished(false); // reset inference finished flag
     std::cout << "----------warmup finished--------------" << std::endl;
     if (num_layers_per_finetuning_step > 0) {
       rm->set_num_layers_per_finetuning_step(num_layers_per_finetuning_step);
     }
-    std::vector<Request> inf_requests = load_trace(file_paths.prompt_file_path, arrival_rate_sec);
+    std::vector<Request> inf_requests =
+        load_trace(file_paths.prompt_file_path, arrival_rate_sec);
     std::vector<Request> ft_req;
     if (enable_peft_finetuning && num_layers_per_finetuning_step > 0) {
       ft_req = make_ft_request(1024, peft_model_id_finetuning);
     }
-    std::vector<GenerationResult> results = model.generate_online(inf_requests, ft_req);
+    std::vector<GenerationResult> results =
+        model.generate_online(inf_requests, ft_req);
   }
 
   // terminate the request manager by stopping the background thread
@@ -439,7 +450,8 @@ void FlexFlow::top_level_task(Task const *task,
   // set dataset name to "wildchat" if the prompt file path contains "wildchat"
   if (file_paths.prompt_file_path.find("wildchat") != std::string::npos) {
     dataset_name = "wildchat";
-  } else if (file_paths.prompt_file_path.find("sharegpt") != std::string::npos) {
+  } else if (file_paths.prompt_file_path.find("sharegpt") !=
+             std::string::npos) {
     dataset_name = "sharegpt";
   } else {
     dataset_name = "unknown";
@@ -452,7 +464,7 @@ void FlexFlow::top_level_task(Task const *task,
                                  max_requests_per_batch,
                                  max_tokens_per_batch,
                                  arrival_rate_sec, // arrival rate
-                                 10); // num_warmup_requests
+                                 10);              // num_warmup_requests
 
   if (peft_model_id_finetuning != nullptr) {
     free(peft_model_id_finetuning);

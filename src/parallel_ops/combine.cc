@@ -499,7 +499,8 @@ bool Combine::peft_bwd_task(Task const *task,
   assert(task->regions.size() == 2);
   CombineMeta const *m = *((CombineMeta **)task->local_args);
   BatchConfig const *bc = BatchConfig::from_future(task->futures[0]);
-  // if (!bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id)) {
+  // if
+  // (!bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id)) {
   //   return;
   // }
   // TODO: figure out why m->output_type[0] or m->input_type[0] are not working

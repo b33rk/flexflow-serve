@@ -52,8 +52,8 @@ __global__ void compute_attention_kernel_fused_kernel(
     BatchConfig::BitMask *causalMask,
     bool *request_completed,
     int qk_smem_sz) {
-  
-  int total_num_heads = num_q_heads + 2*num_kv_heads;
+
+  int total_num_heads = num_q_heads + 2 * num_kv_heads;
 
   // q, k
   using Q_vec = typename VEC_K<DT, THREADS_PER_KEY>::Type;
@@ -127,8 +127,10 @@ __global__ void compute_attention_kernel_fused_kernel(
   // The number of keys per warp.
   constexpr int K_PER_WARP = WARP_SIZE / THREADS_PER_KEY;
 
-  DT const *k_cache_batch = key_cache + 
-                            batch_config_request_id * (per_head_size * num_kv_heads) * max_seq_length +
+  DT const *k_cache_batch = key_cache +
+                            batch_config_request_id *
+                                (per_head_size * num_kv_heads) *
+                                max_seq_length +
                             ki;
 
   int ti_end =
@@ -156,9 +158,9 @@ __global__ void compute_attention_kernel_fused_kernel(
       for (int ii = 0; ii < K_VECS_PER_THREAD; ++ii) {
         int jj = ii * THREADS_PER_KEY * K_VEC_SIZE;
         if (ti < tlength) {
-          k[ii] = *reinterpret_cast<K_vec const *>(k_cache_batch +
-                                                  ti_circ * (per_head_size * num_kv_heads) +
-                                                  kv_head_idx * per_head_size + jj);
+          k[ii] = *reinterpret_cast<K_vec const *>(
+              k_cache_batch + ti_circ * (per_head_size * num_kv_heads) +
+              kv_head_idx * per_head_size + jj);
         }
       }
       float qk = scale * Qk_dot<DT, THREADS_PER_KEY>::dot(q_vecs[ki_o], k);
@@ -260,7 +262,8 @@ __global__ void compute_attention_kernel_fused_kernel(
 
     // The base pointer for the value in the cache buffer.
     DT const *v_cache_batch = value_cache +
-                              batch_config_request_id * max_seq_length * (per_head_size * num_kv_heads) +
+                              batch_config_request_id * max_seq_length *
+                                  (per_head_size * num_kv_heads) +
                               vi;
 
     if (Dh == Dh_MAX || vi < Dh) {
@@ -269,7 +272,8 @@ __global__ void compute_attention_kernel_fused_kernel(
         int const ti_circ = ti % max_seq_length;
         // int const real_cache_idx = topology.real_token_pos[sub_req_idx][ti];
         V_vec v = *reinterpret_cast<V_vec const *>(
-            v_cache_batch + ti_circ * (per_head_size * num_kv_heads) + kv_head_idx * per_head_size);
+            v_cache_batch + ti_circ * (per_head_size * num_kv_heads) +
+            kv_head_idx * per_head_size);
 
         if (ti < tlength) {
           bool const mask =
@@ -316,9 +320,11 @@ __global__ void compute_attention_kernel_fused_kernel(
     // Output the final values.
     if (vo == 0 && (Dh == Dh_MAX || vi < Dh)) {
       convert_from_float(
-        *reinterpret_cast<V_vec *>(output_ptr + (first_token_idx + qi) * (per_head_size * num_q_heads) +
-                             head_idx * per_head_size + vi),
-                         out);
+          *reinterpret_cast<V_vec *>(output_ptr +
+                                     (first_token_idx + qi) *
+                                         (per_head_size * num_q_heads) +
+                                     head_idx * per_head_size + vi),
+          out);
       // if (blockIdx.y == 0 && blockIdx.x == 0 && tidx == 0 && qi == 1) {
       //   printf("tree attn final value, %.9f, %.9f, %.9f, %.9f, %d, %d\n",
       //          out.x,
@@ -359,16 +365,14 @@ __global__ void commit_tokens_kernel(
 
     int tot_num_heads = num_q_heads + 2 * num_kv_heads;
     int key_src_idx = token_idx_in_last_batch * head_dim * tot_num_heads +
-                         head_dim * num_q_heads +
-                         head_dim * head_idx + offset;
+                      head_dim * num_q_heads + head_dim * head_idx + offset;
     int val_src_idx = key_src_idx + head_dim * num_kv_heads;
 
     int const req_id = committedTokenInfos[token_idx].request_index;
     int const tok_id = committedTokenInfos[token_idx].token_depth;
     int dst_idx = req_id * (head_dim * num_kv_heads * max_seq_len) +
-                      tok_id * head_dim * num_kv_heads + 
-                      head_idx * head_dim + 
-                      offset;
+                  tok_id * head_dim * num_kv_heads + head_idx * head_dim +
+                  offset;
 
     kCache_ptr[dst_idx] = devQKVProjArray[key_src_idx];
     vCache_ptr[dst_idx] = devQKVProjArray[val_src_idx];
@@ -427,8 +431,7 @@ __global__ void update_tree_branch_kv_cache_fused(
     int tot_num_heads = num_q_heads + 2 * num_kv_heads;
 
     int key_src_idx = token_idx * head_dim * tot_num_heads +
-                         head_dim * num_q_heads +
-                         head_dim * head_idx + offset;
+                      head_dim * num_q_heads + head_dim * head_idx + offset;
     int val_src_idx = key_src_idx + head_dim * num_kv_heads;
 
     int const req_id = tokenInfos[token_idx].request_index;
@@ -440,10 +443,10 @@ __global__ void update_tree_branch_kv_cache_fused(
         request_infos[req_id].first_token_depth_in_request;
 
     int dst_idx = req_id * (head_dim * num_kv_heads * max_seq_len) +
-                      (token_idx + first_token_depth - request_token_offset) * head_dim * num_kv_heads + 
-                      head_idx * head_dim + 
-                      offset;
-    
+                  (token_idx + first_token_depth - request_token_offset) *
+                      head_dim * num_kv_heads +
+                  head_idx * head_dim + offset;
+
     kCache_ptr[dst_idx] = devQKVProjArray[key_src_idx];
     vCache_ptr[dst_idx] = devQKVProjArray[val_src_idx];
   }
@@ -578,7 +581,8 @@ void inference_kernel(TreeIncMultiHeadSelfAttentionMeta *m,
                   stream);
 
   // phase 1: Apply scaling and rotary embedding
-  Kernels::IncMultiHeadAttention::apply_scaling_and_rotary(m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), stream);
+  Kernels::IncMultiHeadAttention::apply_scaling_and_rotary(
+      m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), stream);
 
   // phase 2: No need to update key/val cache
   compute_attention_kernel_fused<DT>(m, bc, output_ptr, stream);

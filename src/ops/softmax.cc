@@ -15,10 +15,10 @@
 
 #include "flexflow/ops/softmax.h"
 #include "flexflow/model.h"
+#include "flexflow/ops/fused.h"
 #include "flexflow/ops/kernels/softmax_kernels.h"
 #include "flexflow/utils/hash_utils.h"
 #include "legion/legion_utilities.h"
-#include "flexflow/ops/fused.h"
 
 namespace FlexFlow {
 // declare Legion names
@@ -167,7 +167,7 @@ Softmax::Softmax(FFModel &model,
                  char const *name)
     : Softmax(model, params.layer_guid, input, params.dim, params.name) {}
 
-struct SoftMaxInitMeta{
+struct SoftMaxInitMeta {
   Softmax *softmax;
   bool is_last_op;
 };
@@ -184,7 +184,7 @@ void Softmax::init_inference(FFModel const &ff,
   MachineView const *view = mv ? mv : &batch_outputs[0]->machine_view;
   size_t machine_view_hash = view->hash();
   set_argumentmap_for_init_inference(ff, argmap, batch_outputs[0]);
-  
+
   int last_op = ff.operators.size() - 1;
   assert(ff.operators[last_op]->op_type == OP_ARGMAX ||
          ff.operators[last_op]->op_type == OP_ARG_TOPK ||
@@ -197,9 +197,10 @@ void Softmax::init_inference(FFModel const &ff,
   if (ff.operators[last_op] == this) {
     is_last_op = true;
   } else if (ff.operators[last_op]->op_type == OP_FUSED) {
-    FusedOp *fused_op = static_cast<FusedOp*>(ff.operators[last_op]);
+    FusedOp *fused_op = static_cast<FusedOp *>(ff.operators[last_op]);
     // for (int i = 0; i < fused_op->numOperators; i++) {
-    //   std::cout << "Operator " << i << " " << fused_op->operators[i]->name << std::endl;
+    //   std::cout << "Operator " << i << " " << fused_op->operators[i]->name <<
+    //   std::endl;
     // }
     is_last_op = fused_op->operators[fused_op->numOperators - 1] == this;
   }
@@ -306,7 +307,8 @@ OpMeta *Softmax::init_task(Task const *task,
   } else {
     domain = input_domain;
   }
-  SoftmaxMeta *m = new SoftmaxMeta(handle, softmax, domain, is_last_op, gpu_mem_allocator);
+  SoftmaxMeta *m =
+      new SoftmaxMeta(handle, softmax, domain, is_last_op, gpu_mem_allocator);
   // checkCUDNN(cudnnCreateTensorDescriptor(&m->outputTensor));
   std::strcpy(m->op_name, softmax->name);
   m->layer_guid = softmax->layer_guid;
@@ -414,7 +416,7 @@ FutureMap Softmax::inference(FFModel const &ff,
   size_t machine_view_hash = view->hash();
   /* std::cout << "Softmax op machine_view: " << *(MachineView const *)mv
             << std::endl; */
-  
+
   assert(ff.config.computationMode == COMP_MODE_INFERENCE);
   int last_op = ff.operators.size() - 1;
   assert(ff.operators[last_op]->op_type == OP_ARGMAX ||
@@ -449,7 +451,7 @@ FutureMap Softmax::inference(FFModel const &ff,
   launcher.add_field(1, FID_DATA);
   // if this is the last operator, we add the region below in order to copy the
   // output to the grad tensor
-  
+
   // if (ff.operators[last_op] == this) {
   //   launcher.add_region_requirement(
   //       RegionRequirement(batch_outputs[0]->part_grad,
@@ -589,19 +591,22 @@ bool Softmax::measure_operator_cost(Simulator *sim,
   //   return false;
   // }
 
-  // SoftmaxMeta *m = new SoftmaxMeta(sim->handler, this, sub_output.get_domain());
+  // SoftmaxMeta *m = new SoftmaxMeta(sim->handler, this,
+  // sub_output.get_domain());
 
   // sim->free_all();
-  // float *input_ptr = (float *)sim->allocate(sub_input.get_volume(), DT_FLOAT);
-  // GenericTensorAccessorR input_acc(DT_FLOAT, sub_input.get_domain(), input_ptr);
-  // assert(input_ptr != NULL);
-  // cost_metrics.inputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
+  // float *input_ptr = (float *)sim->allocate(sub_input.get_volume(),
+  // DT_FLOAT); GenericTensorAccessorR input_acc(DT_FLOAT,
+  // sub_input.get_domain(), input_ptr); assert(input_ptr != NULL);
+  // cost_metrics.inputs_memory +=
+  // cost_metrics.total_mem_diff_from(sim->offset);
 
-  // float *output_ptr = (float *)sim->allocate(sub_output.get_volume(), DT_FLOAT);
-  // GenericTensorAccessorW output_acc(
+  // float *output_ptr = (float *)sim->allocate(sub_output.get_volume(),
+  // DT_FLOAT); GenericTensorAccessorW output_acc(
   //     DT_FLOAT, sub_output.get_domain(), output_ptr);
   // assert(output_ptr != NULL);
-  // cost_metrics.outputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
+  // cost_metrics.outputs_memory +=
+  // cost_metrics.total_mem_diff_from(sim->offset);
 
   // std::function<void()> forward, backward;
   // forward = [&] { forward_kernel_wrapper(m, input_acc, output_acc); };
@@ -611,7 +616,8 @@ bool Softmax::measure_operator_cost(Simulator *sim,
   //   GenericTensorAccessorW input_grad_acc(
   //       DT_FLOAT, sub_input.get_domain(), input_grad_ptr);
   //   assert(input_grad_ptr != NULL);
-  //   cost_metrics.inputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
+  //   cost_metrics.inputs_memory +=
+  //   cost_metrics.total_mem_diff_from(sim->offset);
 
   //   float *output_grad_ptr =
   //       (float *)sim->allocate(sub_output.get_volume(), DT_FLOAT);

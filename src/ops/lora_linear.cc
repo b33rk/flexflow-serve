@@ -750,10 +750,10 @@ void save_peft_to_file(DT const *weight_ptr,
 }
 
 void Kernels::LoraLinear::save_peft_weights_if_needed(LoraLinearMeta *m,
-                                 BatchConfig const *bc,
-                                 int in_dim,
-                                 int out_dim,
-                                 int shard_id) {
+                                                      BatchConfig const *bc,
+                                                      int in_dim,
+                                                      int out_dim,
+                                                      int shard_id) {
   std::string lora_layername = std::string(m->op_name);
   std::string searchString = "lora";
   size_t found = lora_layername.find(searchString);

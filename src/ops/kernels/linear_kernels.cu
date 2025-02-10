@@ -43,12 +43,14 @@ LinearMeta::LinearMeta(FFHandler handler,
   size_t out_dim =
       li->outputs[0]->dims[0].size / li->outputs[0]->dims[0].degree;
   allocated_peft_buffer_size =
-      enable_peft_finetuning ? (data_type_size(data_type) *
-                                BatchConfig::max_finetuning_sequence_length() * out_dim)
-                             : 0;
+      enable_peft_finetuning
+          ? (data_type_size(data_type) *
+             BatchConfig::max_finetuning_sequence_length() * out_dim)
+          : 0;
   size_t totalSize =
       data_type_size(data_type) * batch_size + allocated_peft_buffer_size;
-  gpu_mem_allocator.create_legion_instance(reserveInst, totalSize, "LinearMeta");
+  gpu_mem_allocator.create_legion_instance(
+      reserveInst, totalSize, "LinearMeta");
   // Allocate an all-one's vector
   one_ptr = gpu_mem_allocator.allocate_instance_untyped(
       data_type_size(data_type) * batch_size);
@@ -245,9 +247,9 @@ void inference_kernel_wrapper(LinearMeta *m,
       assert(bc->requestsInfo[i].peft_model_id != PEFTModelID::NO_ID);
       assert(!bc->requestsInfo[i].finetuning_backward_phase);
 
-      size_t activation_size_needed = data_type_size(m->output_type[0]) *
-                                      BatchConfig::max_finetuning_sequence_length() *
-                                      out_dim;
+      size_t activation_size_needed =
+          data_type_size(m->output_type[0]) *
+          BatchConfig::max_finetuning_sequence_length() * out_dim;
       assert(m->allocated_peft_buffer_size == activation_size_needed);
 
       int num_peft_tokens = bc->requestsInfo[i].num_tokens_in_batch;
@@ -636,7 +638,8 @@ void peft_bwd_kernel(LinearMeta const *m,
   }
 
   if (input_grad_ptr != NULL) {
-    // printf("\t\tRunning GEMM (layer %i) with m=%d, n=%d, k=%d\n", m->layer_guid.transformer_layer_id, in_dim, num_peft_tokens, out_dim);
+    // printf("\t\tRunning GEMM (layer %i) with m=%d, n=%d, k=%d\n",
+    // m->layer_guid.transformer_layer_id, in_dim, num_peft_tokens, out_dim);
     checkCUDA(cublasGemmEx(m->handle.blas,
                            CUBLAS_OP_N,
                            CUBLAS_OP_N,

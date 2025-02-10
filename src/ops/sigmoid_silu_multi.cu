@@ -30,9 +30,10 @@ SigmoidSiluMultiMeta::SigmoidSiluMultiMeta(FFHandler handle,
     size_t in_dim =
         ssm->inputs[0]->dims[0].size / ssm->inputs[0]->dims[0].degree;
     allocated_peft_buffer_size = 2 * data_type_size(input_type[0]) *
-                                 BatchConfig::max_finetuning_sequence_length() * in_dim;
-    gpu_mem_allocator.create_legion_instance(reserveInst,
-                                             allocated_peft_buffer_size, "SigmoidSiluMultiMeta");
+                                 BatchConfig::max_finetuning_sequence_length() *
+                                 in_dim;
+    gpu_mem_allocator.create_legion_instance(
+        reserveInst, allocated_peft_buffer_size, "SigmoidSiluMultiMeta");
     input_activation =
         gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
   }
@@ -125,7 +126,8 @@ void SigmoidSiluMulti::inference_kernel_wrapper(
     int first_token_offset = bc->requestsInfo[i].first_token_offset_in_batch;
     size_t input_tensor_size =
         data_type_size(m->input_type[0]) * num_peft_tokens * in_dim;
-    assert(m->allocated_peft_buffer_size == 2 * (data_type_size(m->input_type[0]) * max_peft_tokens * in_dim));
+    assert(m->allocated_peft_buffer_size ==
+           2 * (data_type_size(m->input_type[0]) * max_peft_tokens * in_dim));
     // copy input activation
     if (m->input_type[0] == DT_FLOAT) {
       checkCUDA(

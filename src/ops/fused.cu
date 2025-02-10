@@ -96,7 +96,8 @@ __host__ void
 
   assert(metas->numOperators == fused->numOperators);
   assert(regions.size() == task->regions.size());
-  assert((int)regions.size() == fused->numInputs + fused->numWeights + fused->numOutputs);
+  assert((int)regions.size() ==
+         fused->numInputs + fused->numWeights + fused->numOutputs);
   GenericTensorAccessorR input_accessor[MAX_NUM_INPUTS];
   GenericTensorAccessorR weight_accessor[MAX_NUM_WEIGHTS];
   GenericTensorAccessorW output_accessor[MAX_NUM_OUTPUTS];
@@ -679,8 +680,9 @@ __host__ bool FusedOp::peft_bwd_task(Task const *task,
   if (bc->num_finetuning_bwd_tokens() == 0) {
     return false;
   }
-  
-  // printf("PEFT BWD task. Num bwd tokens: %d, last layer: %d, first layer: %d\n", bc->num_finetuning_bwd_tokens(),
+
+  // printf("PEFT BWD task. Num bwd tokens: %d, last layer: %d, first layer:
+  // %d\n", bc->num_finetuning_bwd_tokens(),
   //                   bc->requestsInfo[bc->finetuning_request_index()].peft_bwd_last_layer,
   //        bc->requestsInfo[bc->finetuning_request_index()].peft_bwd_first_layer);
 
@@ -816,7 +818,8 @@ __host__ bool FusedOp::peft_bwd_task(Task const *task,
                in_dim * batch_size);
         LinearMeta *m = (LinearMeta *)metas->meta[op];
         // std::string opname = Linear::get_op_name_without_uid(m);
-        // printf("\t PEFT applies to LINEAR layer %s with %d PEFT tokens: %s\n",
+        // printf("\t PEFT applies to LINEAR layer %s with %d PEFT tokens:
+        // %s\n",
         //        opname.c_str(),
         //        bc->num_finetuning_bwd_tokens(),
         //        bc->peft_bwd_applies_to_this_layer(
@@ -873,7 +876,8 @@ __host__ bool FusedOp::peft_bwd_task(Task const *task,
             shard_id,
             my_input_grad_accessor[0],
             my_output_grad_accessor[0]);
-        Kernels::LoraLinear::save_peft_weights_if_needed(m, bc, in_dim, out_dim, shard_id);
+        Kernels::LoraLinear::save_peft_weights_if_needed(
+            m, bc, in_dim, out_dim, shard_id);
         break;
       }
       case OP_EW_ADD:
@@ -1073,7 +1077,8 @@ __host__ bool FusedOp::peft_bwd_task(Task const *task,
                 m->layer_guid.transformer_layer_id)) {
           break;
         }
-        Kernels::Softmax::peft_bwd_kernel_wrapper(m, bc, my_input_grad_accessor[0]);
+        Kernels::Softmax::peft_bwd_kernel_wrapper(
+            m, bc, my_input_grad_accessor[0]);
         break;
       }
       case OP_ALLREDUCE: {
@@ -1129,7 +1134,8 @@ __host__ bool FusedOp::peft_bwd_task(Task const *task,
       }
       assert(task->index_point.get_dim() == 1);
       int shard_id = task->index_point.point_data[0];
-      if (bc->peft_bwd_applies_to_this_layer(metas->meta[op]->layer_guid.transformer_layer_id)) {
+      if (bc->peft_bwd_applies_to_this_layer(
+              metas->meta[op]->layer_guid.transformer_layer_id)) {
         FusedOp::save_inference_tensors_to_file(metas->meta[op],
                                                 shard_id,
                                                 bc,

@@ -41,9 +41,10 @@ RMSNormMeta::RMSNormMeta(FFHandler handler,
   size_t norm_ptr_size = num_elements;
   size_t in_dim = rms->inputs[0]->dims[0].size / rms->inputs[0]->dims[0].degree;
   allocated_peft_buffer_size =
-      enable_peft_finetuning ? (data_type_size(data_type) *
-                                BatchConfig::max_finetuning_sequence_length() * in_dim)
-                             : 0;
+      enable_peft_finetuning
+          ? (data_type_size(data_type) *
+             BatchConfig::max_finetuning_sequence_length() * in_dim)
+          : 0;
   size_t totalSize =
       (rms_ptr_size + norm_ptr_size) * data_type_size(data_type) +
       allocated_peft_buffer_size;
@@ -220,15 +221,17 @@ void inference_kernel_wrapper(RMSNormMeta *m,
     assert(bc->requestsInfo[i].peft_model_id != PEFTModelID::NO_ID);
     assert(!bc->requestsInfo[i].finetuning_backward_phase);
     int in_dim = input.domain.hi()[0] - input.domain.lo()[0] + 1;
-    if (m->allocated_peft_buffer_size != data_type_size(m->input_type[0]) *
-               BatchConfig::max_finetuning_sequence_length() * in_dim) {
-      std::cout << "allocated_peft_buffer_size = " << m->allocated_peft_buffer_size
-                << ", expected = " << data_type_size(m->input_type[0]) *
-                                     BatchConfig::max_finetuning_sequence_length() * in_dim
+    if (m->allocated_peft_buffer_size !=
+        data_type_size(m->input_type[0]) *
+            BatchConfig::max_finetuning_sequence_length() * in_dim) {
+      std::cout << "allocated_peft_buffer_size = "
+                << m->allocated_peft_buffer_size << ", expected = "
+                << data_type_size(m->input_type[0]) *
+                       BatchConfig::max_finetuning_sequence_length() * in_dim
                 << std::endl;
       std::cout << "in_dim = " << in_dim << std::endl;
-      std::cout << "max_sequence_length = " << BatchConfig::max_finetuning_sequence_length()
-                << std::endl;
+      std::cout << "max_sequence_length = "
+                << BatchConfig::max_finetuning_sequence_length() << std::endl;
       std::cout << "data_type_size = " << data_type_size(m->input_type[0])
                 << std::endl;
     }

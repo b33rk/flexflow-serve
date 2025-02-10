@@ -38,9 +38,12 @@ SoftmaxMeta::SoftmaxMeta(FFHandler handler,
   inference_debugging = softmax->inference_debugging;
   enable_peft_finetuning = softmax->enable_peft_finetuning;
   if (enable_peft_finetuning && is_last_op) {
-    allocated_peft_buffer_size = input_domain.get_volume() * data_type_size(softmax->data_type);
-    gpu_mem_allocator.create_legion_instance(reserveInst, allocated_peft_buffer_size, "SoftmaxMeta");
-    output_grad_ptr = gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
+    allocated_peft_buffer_size =
+        input_domain.get_volume() * data_type_size(softmax->data_type);
+    gpu_mem_allocator.create_legion_instance(
+        reserveInst, allocated_peft_buffer_size, "SoftmaxMeta");
+    output_grad_ptr =
+        gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
   } else {
     allocated_peft_buffer_size = 0;
     output_grad_ptr = nullptr;
@@ -152,7 +155,8 @@ void inference_kernel_wrapper(SoftmaxMeta const *m,
                                stream);
     if (is_last_op && m->enable_peft_finetuning) {
       assert(m->output_grad_ptr != nullptr);
-      assert(m->allocated_peft_buffer_size == output.domain.get_volume() * sizeof(float));
+      assert(m->allocated_peft_buffer_size ==
+             output.domain.get_volume() * sizeof(float));
       checkCUDA(cudaMemcpyAsync(m->output_grad_ptr,
                                 output.get_float_ptr(),
                                 output.domain.get_volume() * sizeof(float),
@@ -168,7 +172,8 @@ void inference_kernel_wrapper(SoftmaxMeta const *m,
                                stream);
     if (is_last_op && m->enable_peft_finetuning) {
       assert(m->output_grad_ptr != nullptr);
-      assert(m->allocated_peft_buffer_size == output.domain.get_volume() * sizeof(half));
+      assert(m->allocated_peft_buffer_size ==
+             output.domain.get_volume() * sizeof(half));
       checkCUDA(cudaMemcpyAsync(m->output_grad_ptr,
                                 output.get_half_ptr(),
                                 output.domain.get_volume() * sizeof(half),
@@ -207,17 +212,11 @@ void peft_bwd_kernel_wrapper(SoftmaxMeta const *m,
 
   int num_classes = input_grad.domain.hi()[0] - input_grad.domain.lo()[0] + 1;
   if (m->output_type[0] == DT_FLOAT) {
-    Internal::peft_bwd_kernel(m,
-                              bc,
-                              input_grad.get_float_ptr(),
-                              num_classes,
-                              stream);
+    Internal::peft_bwd_kernel(
+        m, bc, input_grad.get_float_ptr(), num_classes, stream);
   } else if (m->output_type[0] == DT_HALF) {
-    Internal::peft_bwd_kernel(m,
-                              bc,
-                              input_grad.get_half_ptr(),
-                              num_classes,
-                              stream);
+    Internal::peft_bwd_kernel(
+        m, bc, input_grad.get_half_ptr(), num_classes, stream);
   } else {
     assert(false && "Unsupported data type");
   }
@@ -354,7 +353,8 @@ void peft_bwd_kernel(SoftmaxMeta const *m,
       CUDA_NUM_THREADS,
       0,
       stream>>>(input_grad_ptr + tokens_previous_requests * num_classes,
-                static_cast<DT*>(m->output_grad_ptr) + tokens_previous_requests * num_classes,
+                static_cast<DT *>(m->output_grad_ptr) +
+                    tokens_previous_requests * num_classes,
                 static_cast<BatchConfig::TokenId const *>(m->handle.workSpace),
                 num_bwd_tokens,
                 num_classes);

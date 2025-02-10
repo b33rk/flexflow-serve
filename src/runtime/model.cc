@@ -4719,10 +4719,9 @@ void register_flexflow_internal_tasks(Runtime *runtime,
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime
-          ->register_task_variant<BatchConfig,
-                                  RequestManager::prepare_next_batch_task>(
-              registrar);
+      runtime->register_task_variant<BatchConfig,
+                                     RequestManager::prepare_next_batch_task>(
+          registrar);
     }
   }
   // RequestManager prepare_next_bwd_batch_task
@@ -5203,7 +5202,8 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     }
   }
   {
-    TaskVariantRegistrar registrar(EMBED_PEFT_BWD_TASK_ID, "Embedding PEFT BWD");
+    TaskVariantRegistrar registrar(EMBED_PEFT_BWD_TASK_ID,
+                                   "Embedding PEFT BWD");
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
@@ -5770,14 +5770,16 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<bool,
+      Runtime::preregister_task_variant<
+          bool,
           AddBiasResidualLayerNorm::peft_bwd_task>(
           registrar, "AddBiasResidualLayerNorm PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<bool, AddBiasResidualLayerNorm::peft_bwd_task>(
+      runtime->register_task_variant<bool,
+                                     AddBiasResidualLayerNorm::peft_bwd_task>(
           registrar);
     }
   }
@@ -5978,7 +5980,8 @@ void register_flexflow_internal_tasks(Runtime *runtime,
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<bool, ResidualRMSNorm::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, ResidualRMSNorm::peft_bwd_task>(
+          registrar);
     }
   }
   {
@@ -6809,14 +6812,16 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<bool,
+      Runtime::preregister_task_variant<
+          bool,
           IncMultiHeadSelfAttention::peft_bwd_task>(
           registrar, "IncMultiHeadSelfAttention PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<bool, IncMultiHeadSelfAttention::peft_bwd_task>(
+      runtime->register_task_variant<bool,
+                                     IncMultiHeadSelfAttention::peft_bwd_task>(
           registrar);
     }
   }
@@ -6943,7 +6948,8 @@ void register_flexflow_internal_tasks(Runtime *runtime,
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<bool, LoraLinear::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, LoraLinear::peft_bwd_task>(
+          registrar);
     }
   }
 

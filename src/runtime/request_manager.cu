@@ -105,16 +105,16 @@ void RequestManager::load_tokens_task(
 // qk_indptr: the start offset of custom_mask in the flattened mask for each
 //            request, the length is `num_requests + 1`. It can be calculated as
 //            accumulative `ceil(qk_len / 8)`.
-__global__ void
-    prepare_inference_params_kernel(int const num_requests,
-                                    BatchConfig::PerRequestInfo const *request_infos,
-                                    const bool *request_completed,
-                                    uint32_t const max_num_pages,
-                                    int32_t *q_indptr,
-                                    int32_t *kv_indptr,
-                                    int32_t *kv_indices,
-                                    int32_t *kv_last_page_len,
-                                    int32_t *qk_indptr) {
+__global__ void prepare_inference_params_kernel(
+    int const num_requests,
+    BatchConfig::PerRequestInfo const *request_infos,
+    bool const *request_completed,
+    uint32_t const max_num_pages,
+    int32_t *q_indptr,
+    int32_t *kv_indptr,
+    int32_t *kv_indices,
+    int32_t *kv_last_page_len,
+    int32_t *qk_indptr) {
   int const request_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (request_idx >= num_requests) {
     return;
@@ -232,7 +232,7 @@ void RequestManager::load_batch_config_task(
                               cudaMemcpyHostToDevice,
                               stream));
   }
-  
+
 #ifdef USE_FLASHINFER
   // load attention metadata
   if (batch_config->get_mode() == INC_DECODING_MODE) {
@@ -240,9 +240,14 @@ void RequestManager::load_batch_config_task(
     if (batch_size > 0 && handle.incr_attention_metadata->enabled()) {
       // calculate the attention meta data
       {
-        // BatchConfig::PerRequestInfo *request_infos = reinterpret_cast<BatchConfig::PerRequestInfo *>(static_cast<char *>(handle.batch_config_metadata) + sizeof(BatchConfig::tokensInfo));
-        // bool *request_available = reinterpret_cast<bool *>(static_cast<char *>(handle.batch_config_metadata) + sizeof(BatchConfig::tokensInfo) + sizeof(BatchConfig::requestsInfo));
-        uint32_t max_num_pages = round_up_pages(BatchConfig::max_sequence_length());
+        // BatchConfig::PerRequestInfo *request_infos =
+        // reinterpret_cast<BatchConfig::PerRequestInfo *>(static_cast<char
+        // *>(handle.batch_config_metadata) + sizeof(BatchConfig::tokensInfo));
+        // bool *request_available = reinterpret_cast<bool *>(static_cast<char
+        // *>(handle.batch_config_metadata) + sizeof(BatchConfig::tokensInfo) +
+        // sizeof(BatchConfig::requestsInfo));
+        uint32_t max_num_pages =
+            round_up_pages(BatchConfig::max_sequence_length());
         int parallelism = batch_size;
         prepare_inference_params_kernel<<<GET_BLOCKS(parallelism),
                                           min(CUDA_NUM_THREADS, parallelism),
@@ -261,30 +266,43 @@ void RequestManager::load_batch_config_task(
 
       // prepare attention forward handler
       {
-        static int32_t  q_indptr_h[BatchConfig::MAX_NUM_REQUESTS + 1],
-                        kv_indptr_h[BatchConfig::MAX_NUM_REQUESTS + 1];
-                        // kv_last_page_len_h[BatchConfig::MAX_NUM_REQUESTS];
+        static int32_t q_indptr_h[BatchConfig::MAX_NUM_REQUESTS + 1],
+            kv_indptr_h[BatchConfig::MAX_NUM_REQUESTS + 1];
+        // kv_last_page_len_h[BatchConfig::MAX_NUM_REQUESTS];
         q_indptr_h[0] = 0;
         kv_indptr_h[0] = 0;
-        for (int req_idx = 0, indptr_idx = 0; req_idx < batch_config->max_requests_per_batch(); req_idx++) {
+        for (int req_idx = 0, indptr_idx = 0;
+             req_idx < batch_config->max_requests_per_batch();
+             req_idx++) {
           if (!batch_config->request_completed[req_idx]) {
             int q_len = batch_config->requestsInfo[req_idx].num_tokens_in_batch;
-            int kv_len = batch_config->requestsInfo[req_idx].num_tokens_in_batch + batch_config->requestsInfo[req_idx].first_token_depth_in_request;
+            int kv_len =
+                batch_config->requestsInfo[req_idx].num_tokens_in_batch +
+                batch_config->requestsInfo[req_idx]
+                    .first_token_depth_in_request;
             q_indptr_h[indptr_idx + 1] = q_indptr_h[indptr_idx] + q_len;
-            kv_indptr_h[indptr_idx + 1] = kv_indptr_h[indptr_idx] + round_up_pages(kv_len);
+            kv_indptr_h[indptr_idx + 1] =
+                kv_indptr_h[indptr_idx] + round_up_pages(kv_len);
             // kv_last_page_len_h[indptr_idx] = (kv_len - 1) % kPagesize + 1;
             indptr_idx++;
           }
         }
 
-        if (handle.incr_attention_metadata->prompt_handler_collections.count(batch_size) == 0) {
-          handle.incr_attention_metadata->prompt_handler_collections[batch_size] = static_cast<void *>(new flashinfer::BatchPrefillHandler(true));
+        if (handle.incr_attention_metadata->prompt_handler_collections.count(
+                batch_size) == 0) {
+          handle.incr_attention_metadata
+              ->prompt_handler_collections[batch_size] =
+              static_cast<void *>(new flashinfer::BatchPrefillHandler(true));
         }
-        BatchPrefillHandler *prefill_handler = static_cast<BatchPrefillHandler *>(handle.incr_attention_metadata->prompt_handler_collections[batch_size]);
+        BatchPrefillHandler *prefill_handler =
+            static_cast<BatchPrefillHandler *>(
+                handle.incr_attention_metadata
+                    ->prompt_handler_collections[batch_size]);
 
         prefill_handler->SetCUDAStream(stream);
         prefill_handler->BeginForward<half, int32_t>(
-            static_cast<void *>(handle.incr_attention_metadata->float_workspace),
+            static_cast<void *>(
+                handle.incr_attention_metadata->float_workspace),
             handle.incr_attention_metadata->float_workspace_size,
             static_cast<void *>(handle.incr_attention_metadata->int_workspace),
             handle.incr_attention_metadata->int_workspace_size,
@@ -305,7 +323,6 @@ void RequestManager::load_batch_config_task(
     assert(false && "Not implemented");
   }
 #endif
-
 }
 
 void RequestManager::load_positions_task(

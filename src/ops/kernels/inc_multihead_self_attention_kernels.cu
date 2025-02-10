@@ -152,7 +152,7 @@ __global__ void
   int const q_hidden_size = num_q_heads * head_dim;
   int const temp_kv_hidden_size = num_q_heads * head_dim; // temporary hard code
   int const kv_hidden_size = num_kv_heads * head_dim;
-  
+
   int const thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
   int const token_idx = thread_idx / q_hidden_size;
   int const offset = thread_idx % q_hidden_size;
@@ -164,11 +164,14 @@ __global__ void
   int token_abs_idx = tokenInfos[token_idx].abs_depth_in_request;
 
   size_t from_idx = token_idx * (q_hidden_size + temp_kv_hidden_size * 2);
-  qTmp_ptr[token_idx * q_hidden_size + offset] = static_cast<DT>(qkv_proj_array[from_idx + offset]);
+  qTmp_ptr[token_idx * q_hidden_size + offset] =
+      static_cast<DT>(qkv_proj_array[from_idx + offset]);
 
   if (offset < kv_hidden_size) {
-    size_t to_k_idx = get_k_entry_offset(req_idx, token_abs_idx, max_num_pages, num_kv_heads, head_dim),
-           to_v_idx = get_v_entry_offset(req_idx, token_abs_idx, max_num_pages, num_kv_heads, head_dim);
+    size_t to_k_idx = get_k_entry_offset(
+               req_idx, token_abs_idx, max_num_pages, num_kv_heads, head_dim),
+           to_v_idx = get_v_entry_offset(
+               req_idx, token_abs_idx, max_num_pages, num_kv_heads, head_dim);
     assert(to_k_idx == to_v_idx);
     // key and value cache should be stored interleaved
     // int const stride = num_q_heads / num_kv_heads;
@@ -179,8 +182,11 @@ __global__ void
     //                         8 * max_num_pages *
     //                         kPagesize;
 
-    keyCache_ptr[to_k_idx + offset] = static_cast<half>(qkv_proj_array[from_idx + q_hidden_size + offset]);
-    valueCache_ptr[to_v_idx + offset] = static_cast<half>(qkv_proj_array[from_idx + q_hidden_size + temp_kv_hidden_size + offset]);
+    keyCache_ptr[to_k_idx + offset] =
+        static_cast<half>(qkv_proj_array[from_idx + q_hidden_size + offset]);
+    valueCache_ptr[to_v_idx + offset] =
+        static_cast<half>(qkv_proj_array[from_idx + q_hidden_size +
+                                         temp_kv_hidden_size + offset]);
   }
 }
 
@@ -231,27 +237,31 @@ void produce_output(IncMultiHeadSelfAttentionMeta const *m,
   produce_output_kernel<<<GET_BLOCKS(parallelism),
                           min(CUDA_NUM_THREADS, parallelism),
                           0,
-                          stream>>>(static_cast<DT const*>(m->outputTmp), output_ptr, parallelism);
+                          stream>>>(
+      static_cast<DT const *>(m->outputTmp), output_ptr, parallelism);
 }
-
 
 } // namespace IncMultiHeadAttention
 } // namespace Kernels
 
 using namespace Kernels::IncMultiHeadAttention;
 
-template __global__ void Kernels::IncMultiHeadAttention::apply_position_bias_qkprd(float *input_ptr,
-                                                  int num_tokens,
-                                                  int num_total_tokens,
-                                                  int num_heads,
-                                                  int global_num_q_heads,
-                                                  int shard_id);
-template __global__ void Kernels::IncMultiHeadAttention::apply_position_bias_qkprd(half *input_ptr,
-                                                  int num_tokens,
-                                                  int num_total_tokens,
-                                                  int num_heads,
-                                                  int global_num_q_heads,
-                                                  int shard_id);
+template __global__ void
+    Kernels::IncMultiHeadAttention::apply_position_bias_qkprd(
+        float *input_ptr,
+        int num_tokens,
+        int num_total_tokens,
+        int num_heads,
+        int global_num_q_heads,
+        int shard_id);
+template __global__ void
+    Kernels::IncMultiHeadAttention::apply_position_bias_qkprd(
+        half *input_ptr,
+        int num_tokens,
+        int num_total_tokens,
+        int num_heads,
+        int global_num_q_heads,
+        int shard_id);
 
 template void Kernels::IncMultiHeadAttention::update_qkv_in_batch<float>(
     IncMultiHeadSelfAttentionMeta const *m,
@@ -274,7 +284,6 @@ template void Kernels::IncMultiHeadAttention::produce_output<half>(
     BatchConfig const *bc,
     half *output_ptr,
     cudaStream_t stream);
-
 
 }; // namespace FlexFlow
 #endif

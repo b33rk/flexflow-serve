@@ -275,9 +275,9 @@ enum TaskIDs {
   RM_LOAD_POSITION_TASK_ID,
   RM_LOAD_BATCH_CONFIG_TASK_ID,
   RM_PREPARE_NEXT_BATCH_TASK_ID,
-//   RM_PROCESS_WORK_FROM_OLD_BATCHES_TASK_ID,
-//   RM_PREPARE_NEXT_FWD_BATCH_TASK_ID,
-//   RM_PREPARE_NEXT_BWD_BATCH_TASK_ID,
+  //   RM_PROCESS_WORK_FROM_OLD_BATCHES_TASK_ID,
+  //   RM_PREPARE_NEXT_FWD_BATCH_TASK_ID,
+  //   RM_PREPARE_NEXT_BWD_BATCH_TASK_ID,
   RM_PREPARE_NEXT_BATCH_INIT_TASK_ID,
   RM_PREPARE_NEXT_BATCH_BEAM_TASK_ID,
   RM_PREPARE_NEXT_BATCH_VERIFY_TASK_ID,
@@ -847,7 +847,9 @@ public:
   // Inference APIs
   // ========================================
   std::vector<GenerationResult> generate(std::vector<Request> const &requests);
-  std::vector<GenerationResult> generate_online(std::vector<Request> const &inference_requests, std::vector<Request> const &ft_requests);
+  std::vector<GenerationResult>
+      generate_online(std::vector<Request> const &inference_requests,
+                      std::vector<Request> const &ft_requests);
 
   Tensor create_tensor_legion_ordering(int num_dim,
                                        int const dims[],

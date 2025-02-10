@@ -50,9 +50,9 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
     BeamSearchBatchConfig::BeamSearchPerRequestInfo *beam_request_infos,
     BatchConfig::BitMask *causalMask,
     bool *request_completed) {
-  
-  int total_num_heads = num_q_heads + 2*num_kv_heads;
-  
+
+  int total_num_heads = num_q_heads + 2 * num_kv_heads;
+
   // q, k
   using Q_vec = typename VEC_K<DT, THREADS_PER_KEY>::Type;
   using K_vec = typename VEC_K<DT, THREADS_PER_KEY>::Type;
@@ -110,8 +110,7 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
   // first WARPS_PER_BLOCK for store qk_max, second WARPS_PER_BLOCK for sum
   __shared__ float red_smem[WARPS_PER_BLOCK * 2];
 
-  const DT *q_ptr = query +
-                    first_token_idx * per_head_size * total_num_heads +
+  const DT *q_ptr = query + first_token_idx * per_head_size * total_num_heads +
                     head_idx * per_head_size;
   __shared__ Q_vec q_vecs[THREADS_PER_KEY][K_VECS_PER_THREAD];
 
@@ -129,7 +128,9 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
   constexpr int K_PER_WARP = WARP_SIZE / THREADS_PER_KEY;
 
   DT const *k_cache_batch = key_cache +
-                            batch_config_request_id * (per_head_size * num_kv_heads) * max_seq_length +
+                            batch_config_request_id *
+                                (per_head_size * num_kv_heads) *
+                                max_seq_length +
                             ki;
 
   int ti_end =
@@ -155,9 +156,9 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
         int jj = ii * THREADS_PER_KEY * K_VEC_SIZE;
         if (ti < totalCacheSize) {
 
-          k[ii] = *reinterpret_cast<K_vec const *>(k_cache_batch +
-                                                  ti_circ * (per_head_size * num_kv_heads) +
-                                                  kv_head_idx * per_head_size + jj);
+          k[ii] = *reinterpret_cast<K_vec const *>(
+              k_cache_batch + ti_circ * (per_head_size * num_kv_heads) +
+              kv_head_idx * per_head_size + jj);
         }
       }
       float qk = scale * Qk_dot<DT, THREADS_PER_KEY>::dot(q_vecs[ki_o], k);
@@ -254,7 +255,8 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
 
     // The base pointer for the value in the cache buffer.
     DT const *v_cache_batch = value_cache +
-                              batch_config_request_id * max_seq_length * (per_head_size * num_kv_heads) +
+                              batch_config_request_id * max_seq_length *
+                                  (per_head_size * num_kv_heads) +
                               vi;
 
     if (Dh == Dh_MAX || vi < Dh) {
@@ -263,7 +265,8 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
         int const ti_circ = ti % max_seq_length;
 
         V_vec v = *reinterpret_cast<V_vec const *>(
-            v_cache_batch + ti_circ * (per_head_size * num_kv_heads) + kv_head_idx * per_head_size);
+            v_cache_batch + ti_circ * (per_head_size * num_kv_heads) +
+            kv_head_idx * per_head_size);
 
         bool const mask = (ti >= bitmask.non_tree_cache_size &&
                            (!(bitmask.mask[ti - bitmask.non_tree_cache_size] &
@@ -305,9 +308,11 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
     // Output the final values.
     if (vo == 0 && (Dh == Dh_MAX || vi < Dh)) {
       convert_from_float(
-          *reinterpret_cast<V_vec *>(output_ptr + (first_token_idx + qi) * (per_head_size * num_q_heads) +
-                             head_idx * per_head_size + vi),
-                         out);
+          *reinterpret_cast<V_vec *>(output_ptr +
+                                     (first_token_idx + qi) *
+                                         (per_head_size * num_q_heads) +
+                                     head_idx * per_head_size + vi),
+          out);
     }
   }
 }
@@ -338,8 +343,7 @@ __global__ void spec_inc_store_kv_cache(
 
     int tot_num_heads = num_q_heads + 2 * num_kv_heads;
     int key_src_idx = token_idx * head_dim * tot_num_heads +
-                         head_dim * num_q_heads +
-                         head_dim * head_idx + offset;
+                      head_dim * num_q_heads + head_dim * head_idx + offset;
     int val_src_idx = key_src_idx + head_dim * num_kv_heads;
 
     int const req_id = tokenInfos[token_idx].request_index;
@@ -352,9 +356,8 @@ __global__ void spec_inc_store_kv_cache(
                           bitmask.tree_size - 1 - bitmask.this_layer_size +
                           token_idx - request_token_offset;
     int dst_idx = req_id * (head_dim * num_kv_heads * max_seq_len) +
-                      cache_idx * head_dim * num_kv_heads + 
-                      head_idx * head_dim + 
-                      offset;
+                  cache_idx * head_dim * num_kv_heads + head_idx * head_dim +
+                  offset;
 
     kCache_ptr[dst_idx] = devQKVProjArray[key_src_idx];
     vCache_ptr[dst_idx] = devQKVProjArray[val_src_idx];
@@ -372,7 +375,7 @@ void update_kv_cache_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
   assert(head_dim == m->qProjSize);
   int curr_depth = bc->beamRequestsInfo[0].current_depth;
   if (num_tokens > 0) {
-    int parallelism = head_dim*tot_num_heads * num_tokens;
+    int parallelism = head_dim * tot_num_heads * num_tokens;
     spec_inc_store_kv_cache<<<GET_BLOCKS(parallelism),
                               min(CUDA_NUM_THREADS, parallelism),
                               0,
@@ -481,11 +484,13 @@ void compute_attention_kernel_prompt(SpecIncMultiHeadSelfAttentionMeta const *m,
 
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
   int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
-  int max_seq_len = BatchConfig::max_sequence_length() + BatchConfig::max_spec_tree_token_num();
+  int max_seq_len = BatchConfig::max_sequence_length() +
+                    BatchConfig::max_spec_tree_token_num();
 
   int num_processed_prompt_tokens = 0;
   for (int req_idx = 0; req_idx < bc->max_requests_per_batch(); req_idx++) {
-    if (bc->request_completed[req_idx] || (!bc->requestsInfo[req_idx].prompt_phase) ||
+    if (bc->request_completed[req_idx] ||
+        (!bc->requestsInfo[req_idx].prompt_phase) ||
         (bc->requestsInfo[req_idx].num_tokens_in_batch == 0)) {
       continue;
     }
@@ -526,30 +531,45 @@ void compute_attention_kernel_prompt(SpecIncMultiHeadSelfAttentionMeta const *m,
       // To get query projection, skip over Q entries from previous requests
       DT const *A = static_cast<DT *>(m->devQKVProjArray) +
                     bc->requestsInfo[req_idx].first_token_offset_in_batch *
-                    m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads);
+                        m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads);
       // matrix B: key cache
       // matrix B's layout: [kProjSize, num_kv_heads, total_tokens]
       // To get B, skip over K entries from previous requests (all heads +
       // padding)
-      DT const *B = static_cast<DT *>(m->keyCache) + req_idx * (m->kProjSize * m->num_kv_heads * max_seq_len);
+      DT const *B = static_cast<DT *>(m->keyCache) +
+                    req_idx * (m->kProjSize * m->num_kv_heads * max_seq_len);
       // matrix C: qk_prods (current req only)
       // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
       DT *C = static_cast<DT *>(m->qk_prods);
-      Kernels::IncMultiHeadAttention::run_batched_matmul<DT>(m, m->handle.blas,
-                                                              CUBLAS_OP_T, CUBLAS_OP_N,
-                                                              m_, n, k,
-                                                              &alpha,
-                                                              A, cublas_data_type, lda, strideA,
-                                                              B, cublas_data_type, ldb, strideB,
-                                                              &beta,
-                                                              C, cublas_data_type, ldc, strideC,
-                                                              m->num_q_heads,
-                                                              compute_type,
-                                                              CUBLAS_GEMM_DEFAULT_TENSOR_OP,
-                                                              stream,
-                                                              1,
-                                                              m->num_q_heads/m->num_kv_heads,
-                                                              1);
+      Kernels::IncMultiHeadAttention::run_batched_matmul<DT>(
+          m,
+          m->handle.blas,
+          CUBLAS_OP_T,
+          CUBLAS_OP_N,
+          m_,
+          n,
+          k,
+          &alpha,
+          A,
+          cublas_data_type,
+          lda,
+          strideA,
+          B,
+          cublas_data_type,
+          ldb,
+          strideB,
+          &beta,
+          C,
+          cublas_data_type,
+          ldc,
+          strideC,
+          m->num_q_heads,
+          compute_type,
+          CUBLAS_GEMM_DEFAULT_TENSOR_OP,
+          stream,
+          1,
+          m->num_q_heads / m->num_kv_heads,
+          1);
     }
 
     // Step 2: Add alibi position bias to qk production
@@ -559,15 +579,16 @@ void compute_attention_kernel_prompt(SpecIncMultiHeadSelfAttentionMeta const *m,
       DT *C = static_cast<DT *>(m->qk_prods);
       if (*m->position_bias) {
         size_t parallelism = m->num_q_heads * total_tokens * num_new_tokens;
-        Kernels::IncMultiHeadAttention::apply_position_bias_qkprd<<<GET_BLOCKS(parallelism),
-                                    min((size_t)CUDA_NUM_THREADS, parallelism),
-                                    0,
-                                    stream>>>(C,
-                                              num_new_tokens,
-                                              total_tokens,
-                                              m->num_q_heads,
-                                              m->global_num_q_heads,
-                                              shard_id);
+        Kernels::IncMultiHeadAttention::apply_position_bias_qkprd<<<
+            GET_BLOCKS(parallelism),
+            min((size_t)CUDA_NUM_THREADS, parallelism),
+            0,
+            stream>>>(C,
+                      num_new_tokens,
+                      total_tokens,
+                      m->num_q_heads,
+                      m->global_num_q_heads,
+                      shard_id);
       }
     }
 
@@ -581,14 +602,15 @@ void compute_attention_kernel_prompt(SpecIncMultiHeadSelfAttentionMeta const *m,
         DT *C = static_cast<DT *>(m->qk_prods);
         size_t parallelism = m->num_q_heads * num_new_tokens * total_tokens;
         spec_fill_entries_above_diagonal<<<GET_BLOCKS(parallelism),
-                                          min((size_t)CUDA_NUM_THREADS,
-                                              parallelism),
-                                          0,
-                                          stream>>>(C,
-                                                    num_new_tokens,
-                                                    total_tokens,
-                                                    m->num_q_heads,
-                                                    static_cast<DT>(-INFINITY));
+                                           min((size_t)CUDA_NUM_THREADS,
+                                               parallelism),
+                                           0,
+                                           stream>>>(
+            C,
+            num_new_tokens,
+            total_tokens,
+            m->num_q_heads,
+            static_cast<DT>(-INFINITY));
       }
     }
     // Step 4: Compute Softmax(QK.T/sqrt(d_k))
@@ -626,16 +648,16 @@ void compute_attention_kernel_prompt(SpecIncMultiHeadSelfAttentionMeta const *m,
       // softmax operation is computed per spatial location (H,W) per image (N)
       // across dimension C.
       checkCUDNN(cudnnSoftmaxForward(m->handle.dnn,
-                                    CUDNN_SOFTMAX_ACCURATE,
-                                    CUDNN_SOFTMAX_MODE_CHANNEL,
-                                    &softmax_alpha,
-                                    m->qk_tensor,
-                                    C,
-                                    &softmax_beta,
-                                    m->qk_tensor,
-                                    C_softmax));
+                                     CUDNN_SOFTMAX_ACCURATE,
+                                     CUDNN_SOFTMAX_MODE_CHANNEL,
+                                     &softmax_alpha,
+                                     m->qk_tensor,
+                                     C,
+                                     &softmax_beta,
+                                     m->qk_tensor,
+                                     C_softmax));
     }
-    
+
     // Step 5: Matmul softmax(QK.T/sqrt(d_k)) by V. Implemented as V @
     // softmax(QK.T/sqrt(d_k)).T
     {
@@ -656,7 +678,8 @@ void compute_attention_kernel_prompt(SpecIncMultiHeadSelfAttentionMeta const *m,
       // matrix A's layout: [vProjSize, num_kv_heads, total_tokens]
       // To get A, skip over V.T entries from previous requests (all heads +
       // padding)
-      DT *A = static_cast<DT *>(m->valueCache) + req_idx * (m->vProjSize * m->num_kv_heads * max_seq_len);
+      DT *A = static_cast<DT *>(m->valueCache) +
+              req_idx * (m->vProjSize * m->num_kv_heads * max_seq_len);
       // matrix B: qk_prods_softmax (current req only)
       // matrix B's layout: [num_new_tokens, total_tokens, num_q_heads]
       // To get B, skip over softmax(QK.T/sqrt(d_k)) entries from previous
@@ -670,33 +693,49 @@ void compute_attention_kernel_prompt(SpecIncMultiHeadSelfAttentionMeta const *m,
       DT *C = static_cast<DT *>(attn_heads) +
               (bc->requestsInfo[req_idx].first_token_offset_in_batch) *
                   m->num_q_heads * m->vProjSize;
-      Kernels::IncMultiHeadAttention::run_batched_matmul<DT>(m, m->handle.blas,
-                                                            CUBLAS_OP_N, CUBLAS_OP_T,
-                                                            m_, n, k,
-                                                            &alpha,
-                                                            A, cublas_data_type, lda, strideA,
-                                                            B, cublas_data_type, ldb, strideB,
-                                                            &beta,
-                                                            C, cublas_data_type, ldc, strideC,
-                                                            m->num_q_heads,
-                                                            compute_type,
-                                                            CUBLAS_GEMM_DEFAULT_TENSOR_OP,
-                                                            stream,
-                                                            m->num_q_heads/m->num_kv_heads,
-                                                            1,
-                                                            1);
+      Kernels::IncMultiHeadAttention::run_batched_matmul<DT>(
+          m,
+          m->handle.blas,
+          CUBLAS_OP_N,
+          CUBLAS_OP_T,
+          m_,
+          n,
+          k,
+          &alpha,
+          A,
+          cublas_data_type,
+          lda,
+          strideA,
+          B,
+          cublas_data_type,
+          ldb,
+          strideB,
+          &beta,
+          C,
+          cublas_data_type,
+          ldc,
+          strideC,
+          m->num_q_heads,
+          compute_type,
+          CUBLAS_GEMM_DEFAULT_TENSOR_OP,
+          stream,
+          m->num_q_heads / m->num_kv_heads,
+          1,
+          1);
     }
 
     num_processed_prompt_tokens += num_new_tokens;
   }
 
-  if (num_processed_prompt_tokens != (bc->num_active_tokens() - bc->num_generation_tokens)) {
+  if (num_processed_prompt_tokens !=
+      (bc->num_active_tokens() - bc->num_generation_tokens)) {
     bc->print();
     printf("num_processed_prompt_tokens: %i\n", num_processed_prompt_tokens);
     printf("bc->num_active_tokens(): %i\n", bc->num_active_tokens());
     printf("bc->num_generation_tokens: %i\n", bc->num_generation_tokens);
   }
-  assert(num_processed_prompt_tokens == (bc->num_active_tokens() - bc->num_generation_tokens));
+  assert(num_processed_prompt_tokens ==
+         (bc->num_active_tokens() - bc->num_generation_tokens));
 }
 
 template <typename DT>
@@ -718,11 +757,12 @@ void inference_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
                   cudaMemcpyDeviceToDevice,
                   stream);
   // phase 1: Apply scaling and rotary embedding
-  Kernels::IncMultiHeadAttention::apply_scaling_and_rotary(m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), stream);
-  
+  Kernels::IncMultiHeadAttention::apply_scaling_and_rotary(
+      m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), stream);
+
   // phase 2: Update key/val cache
   update_kv_cache_kernel<DT>(m, bc, stream);
-  
+
   if (bc->num_generation_tokens > 0) {
     compute_spec_inc_attention_kernel_generation<DT>(m, bc, output_ptr, stream);
   }

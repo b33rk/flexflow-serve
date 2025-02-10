@@ -185,9 +185,11 @@ FFHandler
   // std::cout << "handle.incr_attention_metadata->mem_size(): "
   //           << handle.incr_attention_metadata->mem_size() << std::endl;
   // std::cout << "handle.tree_search_attention_metadata->mem_size(): "
-  //           << handle.tree_search_attention_metadata->mem_size() << std::endl;
+  //           << handle.tree_search_attention_metadata->mem_size() <<
+  //           std::endl;
   // std::cout << "handle.tree_verify_attention_metadata->mem_size(): "
-  //           << handle.tree_verify_attention_metadata->mem_size() << std::endl;
+  //           << handle.tree_verify_attention_metadata->mem_size() <<
+  //           std::endl;
   // std::cout << "handle.gemm_engine->workspace_size: "
   //           << handle.gemm_engine->workspace_size << std::endl;
   if (handle.batch_config_metadata_size +
@@ -198,7 +200,8 @@ FFHandler
     Memory gpu_mem = get_proc_mem(Machine::get_machine(), task->target_proc);
     Realm::Rect<1, coord_t> bounds(
         Realm::Point<1, coord_t>(0),
-        Realm::Point<1, coord_t>(handle.batch_config_metadata_size +
+        Realm::Point<1, coord_t>(
+            handle.batch_config_metadata_size +
             handle.incr_attention_metadata->mem_size() +
             handle.tree_search_attention_metadata->mem_size() +
             handle.tree_verify_attention_metadata->mem_size() - 1));
@@ -213,12 +216,16 @@ FFHandler
                                            Realm::ProfilingRequestSet())
         .wait();
     void *ptr = workspaceInst.pointer_untyped(0, sizeof(char));
-    handle.batch_config_metadata = static_cast<CombinedBatchConfigMetaStruct *>(ptr);
+    handle.batch_config_metadata =
+        static_cast<CombinedBatchConfigMetaStruct *>(ptr);
     handle.incr_attention_metadata->assign_address(
-        static_cast<void *>(static_cast<char *>(ptr) + handle.batch_config_metadata_size),
+        static_cast<void *>(static_cast<char *>(ptr) +
+                            handle.batch_config_metadata_size),
         handle.incr_attention_metadata->mem_size());
     handle.tree_search_attention_metadata->assign_address(
-        static_cast<void *>(static_cast<char *>(ptr) + handle.batch_config_metadata_size + handle.incr_attention_metadata->mem_size()),
+        static_cast<void *>(static_cast<char *>(ptr) +
+                            handle.batch_config_metadata_size +
+                            handle.incr_attention_metadata->mem_size()),
         handle.tree_search_attention_metadata->mem_size());
     handle.tree_verify_attention_metadata->assign_address(
         static_cast<void *>(static_cast<char *>(ptr) +
@@ -230,7 +237,8 @@ FFHandler
     //     static_cast<void *>(static_cast<char *>(ptr) +
     //                         handle.batch_config_metadata_size +
     //                         handle.incr_attention_metadata->mem_size() +
-    //                         handle.tree_search_attention_metadata->mem_size() +
+    //                         handle.tree_search_attention_metadata->mem_size()
+    //                         +
     //                         handle.tree_verify_attention_metadata->mem_size()),
     //     handle.gemm_engine->workspace_size);
   } else {

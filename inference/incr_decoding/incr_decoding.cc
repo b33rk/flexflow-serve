@@ -135,10 +135,11 @@ std::vector<Request> load_prompt_old(std::string trace_file_path) {
 
   std::ifstream file_handle(trace_file_path);
   assert(file_handle.good() && "Prompt file does not exist.");
-  nlohmann::json prompt_json = nlohmann::json::parse(file_handle,
-                                  /*parser_callback_t */ nullptr,
-                                  /*allow_exceptions */ true,
-                                  /*ignore_comments */ true);
+  nlohmann::json prompt_json =
+      nlohmann::json::parse(file_handle,
+                            /*parser_callback_t */ nullptr,
+                            /*allow_exceptions */ true,
+                            /*ignore_comments */ true);
 
   std::vector<Request> requests;
   for (auto &prompt : prompt_json) {
@@ -155,7 +156,7 @@ std::vector<Request> load_prompt_old(std::string trace_file_path) {
 
 std::vector<Request> load_trace(std::string trace_file_path) {
   std::vector<Request> requests;
-  
+
   std::ifstream file_handle(trace_file_path);
   assert(file_handle.good() && "Prompt file does not exist.");
   nlohmann::ordered_json prompt_json =
@@ -165,7 +166,7 @@ std::vector<Request> load_trace(std::string trace_file_path) {
                                     /*ignore_comments */ true);
   file_handle.close();
   auto &metadata = prompt_json["metadata"];
-  
+
   for (auto &entry : prompt_json["entries"]) {
     int prompt_length = entry["prompt_length"];
     int response_length = entry["response_length"];
@@ -288,8 +289,8 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_sequence_length(max_sequence_length);
   rm->register_tokenizer(
       model_type, bos_token_id, eos_token_ids, tokenizer_filepath);
-  std::string output_filepath = join_path(
-      {file_paths.output_folder_path, "output.log"});
+  std::string output_filepath =
+      join_path({file_paths.output_folder_path, "output.log"});
   rm->register_output_filepath(output_filepath);
 
   FFModel model(ffconfig, ffconfig.cpu_offload);
@@ -333,16 +334,16 @@ void FlexFlow::top_level_task(Task const *task,
   assert(!model.config.enable_peft);
 
   rm->start_background_server(&model);
-  
 
   // std::vector<Request> warmup_requests = make_warmup_requests(10);
-  // std::vector<GenerationResult> warmup_result = model.generate(warmup_requests);
+  // std::vector<GenerationResult> warmup_result =
+  // model.generate(warmup_requests);
   std::cout << "----------warmup finished--------------" << std::endl;
   // std::vector<Request> requests = load_trace(file_paths.prompt_file_path);
   // std::vector<GenerationResult> result = model.generate(requests);
   Request req;
   req.prompt = "Tokyo is a ";
-  req.max_new_tokens=5;
+  req.max_new_tokens = 5;
   std::vector<GenerationResult> result = model.generate({req});
   std::cout << "Result: " << result[0].output_text << std::endl;
   std::cout << "----------inference finished--------------" << std::endl;
@@ -357,10 +358,12 @@ void FlexFlow::top_level_task(Task const *task,
   }
 
   // std::string dataset_name;
-  // // set dataset name to "wildchat" if the prompt file path contains "wildchat"
-  // if (file_paths.prompt_file_path.find("wildchat") != std::string::npos) {
+  // // set dataset name to "wildchat" if the prompt file path contains
+  // "wildchat" if (file_paths.prompt_file_path.find("wildchat") !=
+  // std::string::npos) {
   //   dataset_name = "wildchat";
-  // } else if (file_paths.prompt_file_path.find("sharegpt") != std::string::npos) {
+  // } else if (file_paths.prompt_file_path.find("sharegpt") !=
+  // std::string::npos) {
   //   dataset_name = "sharegpt";
   // } else {
   //   dataset_name = "unknown";

@@ -469,9 +469,8 @@ InferenceResultFuture InferenceManager::inference(FFModel *model,
   return irf;
 };
 
-std::vector<FinetuningBwdFuture> InferenceManager::peft_bwd(FFModel *model,
-                                                            int index,
-                                                            BatchConfigFuture const &bc) {
+std::vector<FinetuningBwdFuture> InferenceManager::peft_bwd(
+    FFModel *model, int index, BatchConfigFuture const &bc) {
   int batch_index = index % model->config.data_parallelism_degree;
   FutureMap fm;
   bool found_input_operator = false;
@@ -514,7 +513,8 @@ std::vector<FinetuningBwdFuture> InferenceManager::peft_bwd(FFModel *model,
     }
     fm = op->peft_bwd(*model, bc, inputs, outputs);
   }
-  assert(fm.get_future_map_domain().get_volume() == model->config.tensor_parallelism_degree);
+  assert(fm.get_future_map_domain().get_volume() ==
+         model->config.tensor_parallelism_degree);
   std::vector<FinetuningBwdFuture> irf;
   for (int i = 0; i < model->config.tensor_parallelism_degree; i++) {
     irf.push_back(fm.get_future(i));

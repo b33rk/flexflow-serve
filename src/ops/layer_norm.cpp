@@ -40,12 +40,14 @@ LayerNormMeta::LayerNormMeta(FFHandler handle,
   DataType data_type = ln->data_type;
   size_t in_dim = ln->inputs[0]->dims[0].size / ln->inputs[0]->dims[0].degree;
   allocated_peft_buffer_size =
-      enable_peft_finetuning ? (data_type_size(data_type) *
-                                BatchConfig::max_finetuning_sequence_length() * in_dim)
-                             : 0;
+      enable_peft_finetuning
+          ? (data_type_size(data_type) *
+             BatchConfig::max_finetuning_sequence_length() * in_dim)
+          : 0;
   size_t totalSize = effective_batch_size * data_type_size(data_type) * 6 +
                      allocated_peft_buffer_size;
-  gpu_mem_allocator.create_legion_instance(reserveInst, totalSize, "LayerNormMeta");
+  gpu_mem_allocator.create_legion_instance(
+      reserveInst, totalSize, "LayerNormMeta");
   mean_ptr = gpu_mem_allocator.allocate_instance_untyped(
       data_type_size(data_type) * effective_batch_size);
   rstd_ptr = gpu_mem_allocator.allocate_instance_untyped(

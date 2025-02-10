@@ -18,13 +18,13 @@
 
 #include "flexflow/config.h"
 #include "flexflow/ffconst_utils.h"
-#include "flexflow/ops/lora_linear_params.h"
 #include "flexflow/mapper.h"
+#include "flexflow/ops/lora_linear_params.h"
 // #include <mutex>
 
 namespace FlexFlow {
 
-  using Legion::coord_t;
+using Legion::coord_t;
 using Legion::Machine;
 using Legion::Memory;
 using Legion::Processor;

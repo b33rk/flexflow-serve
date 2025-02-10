@@ -93,11 +93,13 @@ void LLAMA::create_llama_model(FFModel &ff,
     }
 
     assert(llama_config.hidden_size % llama_config.num_attention_heads == 0);
-    size_t head_dim = llama_config.hidden_size / llama_config.num_attention_heads;
-    
+    size_t head_dim =
+        llama_config.hidden_size / llama_config.num_attention_heads;
+
     Tensor qkv_proj = ff.dense(
         att_norm,
-        head_dim * (llama_config.num_attention_heads + 2 * llama_config.num_key_value_heads),
+        head_dim * (llama_config.num_attention_heads +
+                    2 * llama_config.num_key_value_heads),
         AC_MODE_NONE,
         false,         // seems like llama does not use bias
         DT_NONE,       // what is this

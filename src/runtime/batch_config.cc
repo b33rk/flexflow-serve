@@ -121,8 +121,8 @@ int BatchConfig::finetuning_request_index() const {
 }
 
 int BatchConfig::num_finetuning_fwd_requests() const {
-  if (request_completed[finetuning_request_index()] || 
-      !requestsInfo[finetuning_request_index()].finetuning_request || 
+  if (request_completed[finetuning_request_index()] ||
+      !requestsInfo[finetuning_request_index()].finetuning_request ||
       requestsInfo[finetuning_request_index()].finetuning_backward_phase) {
     return 0;
   }
@@ -137,8 +137,8 @@ int BatchConfig::num_finetuning_fwd_tokens() const {
 }
 
 int BatchConfig::num_finetuning_bwd_requests() const {
-  if (request_completed[finetuning_request_index()] || 
-      !requestsInfo[finetuning_request_index()].finetuning_request || 
+  if (request_completed[finetuning_request_index()] ||
+      !requestsInfo[finetuning_request_index()].finetuning_request ||
       !requestsInfo[finetuning_request_index()].finetuning_backward_phase) {
     return 0;
   }
@@ -188,7 +188,8 @@ int BatchConfig::max_sequence_length() {
 
 /*static*/
 int BatchConfig::max_finetuning_sequence_length() {
-  return RequestManager::get_request_manager()->get_max_finetuning_sequence_length();
+  return RequestManager::get_request_manager()
+      ->get_max_finetuning_sequence_length();
 }
 
 int BatchConfig::max_spec_tree_token_num() {
@@ -218,13 +219,17 @@ std::ostream &operator<<(std::ostream &os, BatchConfig const &bc) {
   os << "Max sequence length: " << bc.max_sequence_length() << std::endl;
   // Current values
   os << "Number of requests: " << bc.num_active_requests() << std::endl;
-  os << "Number of peft fwd requests: " << bc.num_finetuning_fwd_requests() << std::endl;
-  os << "Number of peft bwd requests: " << bc.num_finetuning_bwd_requests() << std::endl;
+  os << "Number of peft fwd requests: " << bc.num_finetuning_fwd_requests()
+     << std::endl;
+  os << "Number of peft bwd requests: " << bc.num_finetuning_bwd_requests()
+     << std::endl;
   os << "Number of active tokens: " << bc.num_active_tokens() << std::endl;
   os << "Number of generation tokens: " << bc.num_generation_tokens
      << std::endl;
-  os << "Number of peft fwd tokens: " << bc.num_finetuning_fwd_tokens() << std::endl;
-  os << "Number of peft bwd tokens: " << bc.num_finetuning_bwd_tokens() << std::endl;
+  os << "Number of peft fwd tokens: " << bc.num_finetuning_fwd_tokens()
+     << std::endl;
+  os << "Number of peft bwd tokens: " << bc.num_finetuning_bwd_tokens()
+     << std::endl;
 
   // Per-request info
   os << "Per-request info:\n";
@@ -254,7 +259,7 @@ std::ostream &operator<<(std::ostream &os, BatchConfig const &bc) {
       os << "    PEFT backward first layer: "
          << bc.requestsInfo[i].peft_bwd_first_layer << std::endl;
       os << "    PEFT backward last layer: "
-          << bc.requestsInfo[i].peft_bwd_last_layer << std::endl;
+         << bc.requestsInfo[i].peft_bwd_last_layer << std::endl;
       os << "    optimizer_tasks: {"
          << "compute_gradients: " << std::boolalpha
          << bc.requestsInfo[i].optimizer_tasks.compute_gradients

@@ -231,24 +231,25 @@ void load_attention_weights_to_dense_v2(DT *ptr,
   if (load_o_proj) {
     weight_filenames.push_back(o_file);
   }
-  
+
   assert(head_dim == hidden_dim / num_q_heads);
-  
-  int total_num_heads = num_q_heads + 2*num_kv_heads;
+
+  int total_num_heads = num_q_heads + 2 * num_kv_heads;
   int total_heads_per_shard = total_num_heads / tensor_parallelism_degree;
 
   int file_index = 0;
   for (auto filename : weight_filenames) {
-    int num_heads = (file_index == 0 || file_index == 3) ? num_q_heads : num_kv_heads;
+    int num_heads =
+        (file_index == 0 || file_index == 3) ? num_q_heads : num_kv_heads;
     int weight_size = (head_dim * num_heads) * hidden_dim;
     assert(weight_size % tensor_parallelism_degree == 0);
 
     if (load_o_proj && file_index < 3) {
-      file_index +=1;
+      file_index += 1;
       continue;
     }
     assert(load_o_proj == (file_index == 3));
-    
+
     // 1. load weight file into memory
     std::cout << "Loading weight file " << filename << std::endl;
     std::string weight_filepath = join_path({weights_folder, filename});
@@ -271,24 +272,28 @@ void load_attention_weights_to_dense_v2(DT *ptr,
     in.close();
 
     // 2. copy data into ptr
-    for (int i=0; i< weight_size; i++) {
+    for (int i = 0; i < weight_size; i++) {
       int in_dim_offset = i % hidden_dim;
       int proj_offset = (i / hidden_dim) % head_dim;
       int head_idx = i / (hidden_dim * head_dim);
 
       int shard_idx = head_idx / (num_heads / tensor_parallelism_degree);
       int per_shard_chunk_size = weight_size / tensor_parallelism_degree;
-      
 
       if (file_index == 3) {
-        // output proj weight is replicated, no need to reorder or divide into stacked shards
+        // output proj weight is replicated, no need to reorder or divide into
+        // stacked shards
         ptr[i] = host_array.at(i);
       } else {
-        int heads_previous_projs = ((file_index == 0) ? 0 : num_q_heads) + ((file_index > 1) ? num_kv_heads : 0);
-        int dst_idx = shard_idx * hidden_dim * (head_dim * total_heads_per_shard) + 
-                      hidden_dim * head_dim * (heads_previous_projs/tensor_parallelism_degree) +
-                      hidden_dim * head_dim * (head_idx % (num_heads / tensor_parallelism_degree)) +
-                      proj_offset * hidden_dim + in_dim_offset;
+        int heads_previous_projs = ((file_index == 0) ? 0 : num_q_heads) +
+                                   ((file_index > 1) ? num_kv_heads : 0);
+        int dst_idx =
+            shard_idx * hidden_dim * (head_dim * total_heads_per_shard) +
+            hidden_dim * head_dim *
+                (heads_previous_projs / tensor_parallelism_degree) +
+            hidden_dim * head_dim *
+                (head_idx % (num_heads / tensor_parallelism_degree)) +
+            proj_offset * hidden_dim + in_dim_offset;
         ptr[dst_idx] = host_array.at(i);
       }
     }
@@ -726,35 +731,35 @@ void FileDataLoader::load_single_weight_tensor(FFModel *ff,
     } else if (is_attn_proj) {
       if (weight_idx == 0) {
         load_attention_weights_to_dense_v2(data,
-                                          num_heads,
-                                          num_kv_heads,
-                                          hidden_dim,
-                                          qkv_inner_dim,
-                                          weight_filename,
-                                          weights_folder,
-                                          volume,
-                                          tensor_parallelism_degree,
-                                          is_o_proj);
+                                           num_heads,
+                                           num_kv_heads,
+                                           hidden_dim,
+                                           qkv_inner_dim,
+                                           weight_filename,
+                                           weights_folder,
+                                           volume,
+                                           tensor_parallelism_degree,
+                                           is_o_proj);
       } else {
         if (is_o_proj) {
           load_attention_o_proj_bias_to_dense_v2(data,
-                                                num_heads,
-                                                num_kv_heads,
-                                                hidden_dim,
-                                                qkv_inner_dim,
-                                                weight_filename,
-                                                weights_folder);
-          
+                                                 num_heads,
+                                                 num_kv_heads,
+                                                 hidden_dim,
+                                                 qkv_inner_dim,
+                                                 weight_filename,
+                                                 weights_folder);
+
         } else {
           load_attention_bias_v2(data,
-                                num_heads,
-                                num_kv_heads,
-                                hidden_dim,
-                                qkv_inner_dim,
-                                false, // do not load o_proj bias
-                                weight_filename,
-                                weights_folder,
-                                tensor_parallelism_degree);
+                                 num_heads,
+                                 num_kv_heads,
+                                 hidden_dim,
+                                 qkv_inner_dim,
+                                 false, // do not load o_proj bias
+                                 weight_filename,
+                                 weights_folder,
+                                 tensor_parallelism_degree);
         }
       }
     } else if (l->op_type == OP_ADD_BIAS_RESIDUAL_LAYERNORM) {

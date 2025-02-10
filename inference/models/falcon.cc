@@ -103,7 +103,7 @@ void FALCON::create_falcon_model(FFModel &ff,
 
     qkv_proj = ff.dense(
         att_norm,
-        head_dim * (falcon_config.n_head + 2*falcon_config.n_head_kv),
+        head_dim * (falcon_config.n_head + 2 * falcon_config.n_head_kv),
         AC_MODE_NONE,
         false,         // seems like it does not use bias
         DT_NONE,       // what is this

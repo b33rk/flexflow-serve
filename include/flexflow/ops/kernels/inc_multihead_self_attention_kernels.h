@@ -21,9 +21,9 @@ __device__ __forceinline__ size_t get_k_entry_offset(int const req_idx,
                                                      int const max_num_pages,
                                                      int const num_heads,
                                                      int const head_dim) {
-  
-//   int page_idx = token_idx / kPagesize;
-  
+
+  //   int page_idx = token_idx / kPagesize;
+
   return ((req_idx * max_num_pages + token_idx / kPagesize) * kPagesize +
           token_idx % kPagesize) * /* page slot index */
          num_heads *
@@ -36,11 +36,12 @@ __device__ __forceinline__ size_t get_v_entry_offset(int const req_idx,
                                                      int const max_num_pages,
                                                      int const num_heads,
                                                      int const head_dim) {
-//   return ((req_idx * max_num_pages + token_idx / kPagesize) * kPagesize * 2 +
-//           kPagesize + token_idx % kPagesize) * /* page slot index */
-//          num_heads *
-//          head_dim;
-return ((req_idx * max_num_pages + token_idx / kPagesize) * kPagesize  +
+  //   return ((req_idx * max_num_pages + token_idx / kPagesize) * kPagesize * 2
+  //   +
+  //           kPagesize + token_idx % kPagesize) * /* page slot index */
+  //          num_heads *
+  //          head_dim;
+  return ((req_idx * max_num_pages + token_idx / kPagesize) * kPagesize +
           token_idx % kPagesize) * /* page slot index */
          num_heads *
          head_dim;
@@ -48,22 +49,35 @@ return ((req_idx * max_num_pages + token_idx / kPagesize) * kPagesize  +
 #endif
 
 template <typename DT>
-void run_batched_matmul(const IncMultiHeadSelfAttentionMeta *meta, cublasHandle_t handle,
-                        cublasOperation_t transa, cublasOperation_t transb,
-                        int m, int n, int k,
-                        const void* alpha,
-                        const DT* A, cudaDataType Atype, int lda, long long int strideA,
-                        const DT* B, cudaDataType Btype, int ldb, long long int strideB,
-                        const void* beta,
-                        DT* C, cudaDataType Ctype, int ldc, long long int strideC,
+void run_batched_matmul(IncMultiHeadSelfAttentionMeta const *meta,
+                        cublasHandle_t handle,
+                        cublasOperation_t transa,
+                        cublasOperation_t transb,
+                        int m,
+                        int n,
+                        int k,
+                        void const *alpha,
+                        const DT *A,
+                        cudaDataType Atype,
+                        int lda,
+                        long long int strideA,
+                        const DT *B,
+                        cudaDataType Btype,
+                        int ldb,
+                        long long int strideB,
+                        void const *beta,
+                        DT *C,
+                        cudaDataType Ctype,
+                        int ldc,
+                        long long int strideC,
                         int batchCount,
                         cudaDataType computeType,
                         cublasGemmAlgo_t algo,
                         cudaStream_t stream,
-                        int batch_ratio_a=1,
-                        int batch_ratio_b=1,
-                        int batch_ratio_c=1,
-                        bool bwd=false);
+                        int batch_ratio_a = 1,
+                        int batch_ratio_b = 1,
+                        int batch_ratio_c = 1,
+                        bool bwd = false);
 
 template <typename DT>
 void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
@@ -78,10 +92,10 @@ void compute_attention_kernel_generation(IncMultiHeadSelfAttentionMeta const *m,
 
 template <typename DT>
 void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
-                        BatchConfig const *bc,
-                        int shard_id,
-                        DT *output_ptr,
-                        ffStream_t stream);
+                              BatchConfig const *bc,
+                              int shard_id,
+                              DT *output_ptr,
+                              ffStream_t stream);
 
 #ifdef USE_FLASHINFER
 // [For the tokens in batch]
@@ -93,7 +107,7 @@ template <typename DT>
 void update_qkv_in_batch(IncMultiHeadSelfAttentionMeta const *m,
                          BatchConfig const *bc,
                          cudaStream_t stream);
-                         
+
 template <typename DT>
 void produce_output(IncMultiHeadSelfAttentionMeta const *m,
                     BatchConfig const *bc,

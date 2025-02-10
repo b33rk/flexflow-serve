@@ -668,9 +668,9 @@ void Embedding::backward(FFModel const &ff) {
 }
 
 bool Embedding::peft_bwd_task(Task const *task,
-                           std::vector<PhysicalRegion> const &regions,
-                           Context ctx,
-                           Runtime *runtime) {
+                              std::vector<PhysicalRegion> const &regions,
+                              Context ctx,
+                              Runtime *runtime) {
   EmbeddingMeta *m = *((EmbeddingMeta **)task->local_args);
   assert(regions.size() == 2);
   assert(task->regions.size() == 2);

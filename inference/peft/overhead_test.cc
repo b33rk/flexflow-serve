@@ -22,9 +22,9 @@
 #include "models/starcoder.h"
 #include <wordexp.h>
 
+#include <cmath>
 #include <iostream>
 #include <vector>
-#include <cmath>
 
 #include <nlohmann/json.hpp>
 
@@ -77,7 +77,7 @@ void parse_input_args(char **argv,
       paths.cache_folder_path = std::string(argv[++i]);
       continue;
     }
-    
+
     // output file
     if (!strcmp(argv[i], "-output-folder")) {
       paths.output_folder_path = std::string(argv[++i]);
@@ -145,7 +145,9 @@ void parse_input_args(char **argv,
   wordfree(&p);
 }
 
-std::vector<Request> make_warmup_requests(int num_inf_request, int num_finetuning_steps, PEFTModelID *peft_model_id) {
+std::vector<Request> make_warmup_requests(int num_inf_request,
+                                          int num_finetuning_steps,
+                                          PEFTModelID *peft_model_id) {
   std::vector<Request> warmup_requests;
 
   for (int i = 0; i < num_inf_request; i++) {
@@ -161,26 +163,30 @@ std::vector<Request> make_warmup_requests(int num_inf_request, int num_finetunin
   finetuning_req.add_special_tokens = false;
   finetuning_req.max_length = 1024;
   finetuning_req.warmup = true;
-  finetuning_req.peft_model_id = (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
+  finetuning_req.peft_model_id =
+      (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
   finetuning_req.peft_finetuning_info.max_training_steps = num_finetuning_steps;
   warmup_requests.push_back(finetuning_req);
   return warmup_requests;
 }
 
-std::vector<Request> make_requests(int max_requests_per_batch, 
-                                  int finetuning_entry_size, 
-                                  int max_fwd_tokens_per_batch, 
-                                  int tot_llm_layers,
-                                  int bwd_layers_per_step,
-                                  PEFTModelID *peft_model_id) {
+std::vector<Request> make_requests(int max_requests_per_batch,
+                                   int finetuning_entry_size,
+                                   int max_fwd_tokens_per_batch,
+                                   int tot_llm_layers,
+                                   int bwd_layers_per_step,
+                                   PEFTModelID *peft_model_id) {
   if (bwd_layers_per_step == 0) {
     bwd_layers_per_step = tot_llm_layers;
   }
-  std:vector<Request> requests;
+std:
+  vector<Request> requests;
   int target_num_steps = 10;
   if (max_fwd_tokens_per_batch > 0) {
-    target_num_steps += (finetuning_entry_size + max_fwd_tokens_per_batch - 1) / max_fwd_tokens_per_batch + 
-                                  (tot_llm_layers + bwd_layers_per_step - 1) / bwd_layers_per_step;
+    target_num_steps +=
+        (finetuning_entry_size + max_fwd_tokens_per_batch - 1) /
+            max_fwd_tokens_per_batch +
+        (tot_llm_layers + bwd_layers_per_step - 1) / bwd_layers_per_step;
   }
   for (int i = 0; i < max_requests_per_batch; i++) {
     Request inference_req;
@@ -196,7 +202,8 @@ std::vector<Request> make_requests(int max_requests_per_batch,
     finetuning_req.add_special_tokens = false;
     finetuning_req.benchmarking_tokens = finetuning_entry_size;
     finetuning_req.max_length = finetuning_entry_size;
-    finetuning_req.peft_model_id = (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
+    finetuning_req.peft_model_id =
+        (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
     finetuning_req.peft_finetuning_info.max_training_steps = 1;
     finetuning_req.warmup = false;
     requests.push_back(finetuning_req);
@@ -254,8 +261,7 @@ void FlexFlow::top_level_task(Task const *task,
   //   std::cout << num_layers << " ";
   // }
   // std::cout << std::endl;
-  
-  
+
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
          ffconfig.numNodes * ffconfig.workersPerNode);
@@ -370,8 +376,8 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_sequence_length(max_sequence_length);
   rm->register_tokenizer(
       model_type, bos_token_id, eos_token_ids, tokenizer_filepath);
-  std::string output_filepath = join_path(
-      {file_paths.output_folder_path, "output.log"});
+  std::string output_filepath =
+      join_path({file_paths.output_folder_path, "output.log"});
   rm->register_output_filepath(output_filepath);
   rm->set_enable_peft_finetuning(enable_peft_finetuning);
   rm->set_max_finetuning_sequence_length(1024);
@@ -413,7 +419,7 @@ void FlexFlow::top_level_task(Task const *task,
   } else {
     assert(false && "unknow model type");
   }
-  int tot_num_layers_in_model = model.current_transformer_layer_id+1;
+  int tot_num_layers_in_model = model.current_transformer_layer_id + 1;
   rm->set_num_transformer_layers(tot_num_layers_in_model);
   // if (num_layers_per_finetuning_step > 0) {
   //   rm->set_num_layers_per_finetuning_step(num_layers_per_finetuning_step);
@@ -422,31 +428,39 @@ void FlexFlow::top_level_task(Task const *task,
   // Start background server
   rm->start_background_server(&model);
 
-  
-  PEFTModelID *peft_model_id_finetuning = model.register_peft_adapter(peft_config_finetuning);
+  PEFTModelID *peft_model_id_finetuning =
+      model.register_peft_adapter(peft_config_finetuning);
 
   // Run workload
   {
     std::cout << "----------warmup started--------------" << std::endl;
-    std::vector<Request> warmup_requests = make_warmup_requests(10, 1000, peft_model_id_finetuning);
-    std::vector<GenerationResult> warmup_result = model.generate(warmup_requests);
+    std::vector<Request> warmup_requests =
+        make_warmup_requests(10, 1000, peft_model_id_finetuning);
+    std::vector<GenerationResult> warmup_result =
+        model.generate(warmup_requests);
     rm->set_inference_finished(false); // reset inference finished flag
-    std::cout << "----------warmup finished--------------" << std::endl << std::endl << std::endl;
+    std::cout << "----------warmup finished--------------" << std::endl
+              << std::endl
+              << std::endl;
 
     for (int max_fwd_tokens_per_batch : max_fwd_finetuning_tokens) {
       rm->set_max_fwd_finetuning_tokens_per_batch(max_fwd_tokens_per_batch);
       for (int num_bwd_layers_per_step : num_layers_per_finetuning_step) {
         rm->set_num_layers_per_finetuning_step(num_bwd_layers_per_step);
-        std::cout << "Benchmarking overhead of " << max_fwd_tokens_per_batch << " fwd tokens and " << num_bwd_layers_per_step << " bwd layers per step." 
-        << " Run idx: " << rm->run_idx << std::endl;
-        std::vector<Request> requests = make_requests(max_requests_per_batch, 
-                                                      1024, 
-                                                      max_fwd_tokens_per_batch, 
+        std::cout << "Benchmarking overhead of " << max_fwd_tokens_per_batch
+                  << " fwd tokens and " << num_bwd_layers_per_step
+                  << " bwd layers per step."
+                  << " Run idx: " << rm->run_idx << std::endl;
+        std::vector<Request> requests = make_requests(max_requests_per_batch,
+                                                      1024,
+                                                      max_fwd_tokens_per_batch,
                                                       tot_num_layers_in_model,
                                                       num_bwd_layers_per_step,
                                                       peft_model_id_finetuning);
         std::vector<GenerationResult> result = model.generate(requests);
-        std::cout << "----------inference finished--------------" << std::endl << std::endl << std::endl;
+        std::cout << "----------inference finished--------------" << std::endl
+                  << std::endl
+                  << std::endl;
       }
     }
   }
@@ -462,7 +476,7 @@ void FlexFlow::top_level_task(Task const *task,
   std::string dataset_name = "overhead_test";
   std::cout << "Saving profiling info..." << std::endl;
   rm->save_profiling_info_to_csv(file_paths.output_folder_path,
-                                  dataset_name,
+                                 dataset_name,
                                  llm_model_name,
                                  ffconfig.tensor_parallelism_degree,
                                  max_requests_per_batch,
