@@ -931,9 +931,9 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
                 << ")\n";
       if (request.benchmarking_tokens <= 0) {
         outputFile << "token IDs: ";
-        for (int i = 0; i < request.tokens.size(); i++) {
-          outputFile << request.tokens[i];
-          if (i < request.tokens.size() - 1) {
+        for (int i = 0; i < output_tokens.size(); i++) {
+          outputFile << output_tokens[i];
+          if (i < output_tokens.size() - 1) {
             outputFile << ",";
           }
         }
