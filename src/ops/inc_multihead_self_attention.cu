@@ -150,35 +150,22 @@ bool is_decoding_request(BatchConfig const *bc, int request_id) {
 }
 
 template <typename DT>
-void run_batched_matmul(const IncMultiHeadSelfAttentionMeta *meta,
-                        cublasHandle_t handle,
-                        cublasOperation_t transa,
-                        cublasOperation_t transb,
-                        int m,
-                        int n,
-                        int k,
-                        const void* alpha, /* host or device pointer */
-                        const DT* A,
-                        cudaDataType Atype,
-                        int lda,
-                        long long int strideA, /* purposely signed */
-                        const DT* B,
-                        cudaDataType Btype,
-                        int ldb,
-                        long long int strideB,
-                        const void* beta, /* host or device pointer */
-                        DT* C,
-                        cudaDataType Ctype,
-                        int ldc,
-                        long long int strideC,
+void run_batched_matmul(const IncMultiHeadSelfAttentionMeta *meta, cublasHandle_t handle,
+                        cublasOperation_t transa, cublasOperation_t transb,
+                        int m, int n, int k,
+                        const void* alpha,
+                        const DT* A, cudaDataType Atype, int lda, long long int strideA,
+                        const DT* B, cudaDataType Btype, int ldb, long long int strideB,
+                        const void* beta,
+                        DT* C, cudaDataType Ctype, int ldc, long long int strideC,
                         int batchCount,
                         cudaDataType computeType,
                         cublasGemmAlgo_t algo,
                         cudaStream_t stream,
-                        int batch_ratio_a=1,
-                        int batch_ratio_b=1,
-                        int batch_ratio_c=1,
-                        bool bwd=false) {
+                        int batch_ratio_a,
+                        int batch_ratio_b,
+                        int batch_ratio_c,
+                        bool bwd) {
   if (batch_ratio_a==1 && batch_ratio_b == 1 && batch_ratio_c == 1) {
     checkCUDA(cublasGemmStridedBatchedEx(handle,
                                          transa, transb,
@@ -262,6 +249,9 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
     int num_new_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
     int total_tokens = bc->requestsInfo[req_idx].first_token_depth_in_request +
                        bc->requestsInfo[req_idx].num_tokens_in_batch;
+    if (num_new_tokens <= 0) {
+      continue;
+    }
     // Copy query to m->query_activation_buffer if we need to compute
     // PEFT backward
     if (bc->requestsInfo[req_idx].finetuning_request && !bc->requestsInfo[req_idx].finetuning_backward_phase) {
@@ -2227,6 +2217,42 @@ IncMultiHeadSelfAttentionMeta::~IncMultiHeadSelfAttentionMeta(void) {
     reserveInst.destroy();
   }
 }
+
+template void Kernels::IncMultiHeadAttention::run_batched_matmul<half>(
+  const IncMultiHeadSelfAttentionMeta *meta, cublasHandle_t handle,
+  cublasOperation_t transa, cublasOperation_t transb,
+  int m, int n, int k,
+  const void* alpha,
+  const half* A, cudaDataType Atype, int lda, long long int strideA,
+  const half* B, cudaDataType Btype, int ldb, long long int strideB,
+  const void* beta,
+  half* C, cudaDataType Ctype, int ldc, long long int strideC,
+  int batchCount,
+  cudaDataType computeType,
+  cublasGemmAlgo_t algo,
+  cudaStream_t stream,
+  int batch_ratio_a,
+  int batch_ratio_b,
+  int batch_ratio_c,
+  bool bwd);
+
+template void Kernels::IncMultiHeadAttention::run_batched_matmul<float>(
+  const IncMultiHeadSelfAttentionMeta *meta, cublasHandle_t handle,
+  cublasOperation_t transa, cublasOperation_t transb,
+  int m, int n, int k,
+  const void* alpha,
+  const float* A, cudaDataType Atype, int lda, long long int strideA,
+  const float* B, cudaDataType Btype, int ldb, long long int strideB,
+  const void* beta,
+  float* C, cudaDataType Ctype, int ldc, long long int strideC,
+  int batchCount,
+  cudaDataType computeType,
+  cublasGemmAlgo_t algo,
+  cudaStream_t stream,
+  int batch_ratio_a,
+  int batch_ratio_b,
+  int batch_ratio_c,
+  bool bwd);
 
 template void
     Kernels::IncMultiHeadAttention::compute_attention_kernel_generation<float>(

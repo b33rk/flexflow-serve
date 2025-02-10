@@ -48,6 +48,24 @@ return ((req_idx * max_num_pages + token_idx / kPagesize) * kPagesize  +
 #endif
 
 template <typename DT>
+void run_batched_matmul(const IncMultiHeadSelfAttentionMeta *meta, cublasHandle_t handle,
+                        cublasOperation_t transa, cublasOperation_t transb,
+                        int m, int n, int k,
+                        const void* alpha,
+                        const DT* A, cudaDataType Atype, int lda, long long int strideA,
+                        const DT* B, cudaDataType Btype, int ldb, long long int strideB,
+                        const void* beta,
+                        DT* C, cudaDataType Ctype, int ldc, long long int strideC,
+                        int batchCount,
+                        cudaDataType computeType,
+                        cublasGemmAlgo_t algo,
+                        cudaStream_t stream,
+                        int batch_ratio_a=1,
+                        int batch_ratio_b=1,
+                        int batch_ratio_c=1,
+                        bool bwd=false);
+
+template <typename DT>
 void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                                      BatchConfig const *bc,
                                      int shard_id,
