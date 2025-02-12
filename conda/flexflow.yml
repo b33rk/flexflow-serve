@@ -3,8 +3,8 @@ channels:
   - defaults
   - conda-forge
 dependencies:
-  - python>=3.6,<3.12
-  - cffi>=1.11.0
+  - python
+  - cffi
   - Pillow
   - rust
   - cmake-build-extension
@@ -12,12 +12,12 @@ dependencies:
   - pytest
   - pip
   - pip:
-    - qualname>=0.1.0
-    - keras_preprocessing>=1.1.2
-    - numpy>=1.16.0
-    - torch>=1.13.1
-    - torchaudio>=0.13.1
-    - torchvision>=0.14.1
+    - qualname
+    - keras_preprocessing
+    - numpy
+    - torch
+    - torchaudio
+    - torchvision
     - regex
     - onnx
     - transformers>=4.47.1

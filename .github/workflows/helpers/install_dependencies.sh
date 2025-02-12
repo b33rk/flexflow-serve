@@ -40,7 +40,20 @@ if [[ "$FF_GPU_BACKEND" == "hip_cuda" || "$FF_GPU_BACKEND" = "hip_rocm" ]]; then
     elif [ "$hip_version" = "5.5" ]; then
         AMD_GPU_SCRIPT_NAME=amdgpu-install_5.5.50500-1_all.deb
     fi
-    AMD_GPU_SCRIPT_URL="https://repo.radeon.com/amdgpu-install/${hip_version}/ubuntu/focal/${AMD_GPU_SCRIPT_NAME}"
+    # Detect Ubuntu version
+    UBUNTU_VERSION=$(lsb_release -rs)
+    if [[ "$UBUNTU_VERSION" == "20.04" ]]; then
+        UBUNTU_CODENAME="focal"
+    elif [[ "$UBUNTU_VERSION" == "22.04" ]]; then
+        UBUNTU_CODENAME="jammy"
+    elif [[ "$UBUNTU_VERSION" == "24.04" ]]; then
+        UBUNTU_CODENAME="jammy"
+    else
+        echo "Unsupported Ubuntu version: $UBUNTU_VERSION"
+        exit 1
+    fi
+
+    AMD_GPU_SCRIPT_URL="https://repo.radeon.com/amdgpu-install/${hip_version}/ubuntu/${UBUNTU_CODENAME}/${AMD_GPU_SCRIPT_NAME}"
     # Download and install AMD GPU software with ROCM and HIP support
     wget "$AMD_GPU_SCRIPT_URL"
     sudo apt-get install -y ./${AMD_GPU_SCRIPT_NAME}
