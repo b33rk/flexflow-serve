@@ -116,6 +116,41 @@ elif [ "$FF_LEGION_NETWORKS" = "ucx" ]; then
   fi
 fi
 
+# enable avx2
+if [ "$FF_USE_AVX2" = "ON" ]; then
+  SET_AVX2="-DFF_USE_AVX2=ON"
+elif [ "$FF_USE_AVX2" = "OFF" ]; then
+  SET_AVX2="-DFF_USE_AVX2=OFF"
+else
+  SET_AVX2="-DFF_USE_AVX2=OFF"
+fi
+
+#set max dims
+if [ -n "$FF_MAX_DIM" ]; then
+  SET_MAX_DIM="-DFF_MAX_DIM=${FF_MAX_DIM}"
+fi
+
+#set LEGION_MAX_RETURN_SIZE
+if [ -n "$LEGION_MAX_RETURN_SIZE" ]; then
+  SET_LEGION_MAX_RETURN_SIZE="-DLEGION_MAX_RETURN_SIZE=${LEGION_MAX_RETURN_SIZE}"
+fi
+
+# set ROCM path
+if [ -n "$ROCM_PATH" ]; then
+  SET_ROCM_PATH="-DROCM_PATH=${ROCM_PATH} -DHIP_ROOT_DIR=${ROCM_PATH}"
+fi
+
+ADD_ROCM_TO_PATH=""
+
+# set GPU backend
+if [ -n "$FF_GPU_BACKEND" ]; then
+  SET_FF_GPU_BACKEND="-DFF_GPU_BACKEND=${FF_GPU_BACKEND}"
+
+  # cmake does not play nicely with overrides via `set()` of CMAKE_CXX_COMPILER and friends
+  # because it uses their values to setup the toolchain.
+  # see: https://gitlab.kitware.com/cmake/community/-/wikis/FAQ#how-do-i-use-a-different-compiler
+  #
+  # Ideally we would use the values internally to the cmake script, e.g. HIP_HIPCC_EXECUTABLE,
   # to set these values but this is a sufficient compromise.
   if [ "$FF_GPU_BACKEND" = "hip_cuda" ] || [ "$FF_GPU_BACKEND" = "hip_rocm" ]; then
     if [ -n "$SET_CXX" ]; then
