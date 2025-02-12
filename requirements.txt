@@ -1,8 +1,5 @@
 cffi
 numpy
-qualname
-keras_preprocessing
-Pillow
 cmake-build-extension
 ninja
 requests
@@ -10,8 +7,7 @@ regex
 torch
 torchaudio
 torchvision
-onnx
-transformers
+transformers>=4.47.1
 sentencepiece
 einops
 pip

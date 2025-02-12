@@ -106,14 +106,14 @@ RUN  if [ "$FF_GPU_BACKEND" = "hip_cuda" ] || [ "$FF_GPU_BACKEND" = "hip_rocm" ]
         amdgpu-install -y --usecase=hip,rocm --no-dkms; \
         apt-get install -y hip-dev hipblas miopen-hip rocm-hip-sdk rocm-device-libs; \
         # Install protobuf dependencies
-        apt-get update -y && sudo apt-get install -y pkg-config zip g++ zlib1g-dev autoconf automake libtool make; \
+        # apt-get update -y && sudo apt-get install -y pkg-config zip g++ zlib1g-dev autoconf automake libtool make; \
     else \
         echo "FF_GPU_BACKEND: ${FF_GPU_BACKEND}. Skipping installing HIP dependencies"; \
     fi
 RUN rm -rf /var/lib/apt/lists/*
 
 # Install python packages and other dependencies
-RUN conda install -c conda-forge cmake make pillow cmake-build-extension numpy pandas keras-preprocessing
+RUN conda install -c conda-forge cmake make cmake-build-extension numpy pandas
 # Install Pytorch
 COPY docker/flexflow-environment/install_pytorch.sh /usr/local/bin/install_pytorch.sh
 RUN if [ "$FF_GPU_BACKEND" == "cuda" ] ; then \
