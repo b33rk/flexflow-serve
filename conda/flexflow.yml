@@ -6,7 +6,6 @@ dependencies:
   - python>=3.6,<3.12
   - cffi>=1.11.0
   - Pillow
-  - pybind11
   - rust
   - cmake-build-extension
   - jq
@@ -21,7 +20,7 @@ dependencies:
     - torchvision>=0.14.1
     - regex
     - onnx
-    - transformers>=4.31.0
+    - transformers>=4.47.1
     - sentencepiece
     - einops
     - requests

@@ -1,0 +1,13 @@
+images:
+  dlami-x64:
+    platform: "linux"
+    arch: "x64"
+    ami: "ami-04a2add47e78915e6"
+
+runners:
+  gpu-nvidia:
+    family: ["g4dn.12xlarge"]
+    image: dlami-x64
+  rocm-builder:
+    family: ["c4.8xlarge"]
+    image: dlami-x64

@@ -44,6 +44,7 @@ def init(
     num_gpus: Optional[int] = None,
     memory_per_gpu: Optional[int] = None,
     zero_copy_memory_per_node: Optional[int] = None,
+    cpu_memory_per_node: Optional[int] = None,
     num_cpus: Optional[int] = None,
     legion_utility_processors: Optional[int] = None,
     data_parallelism_degree: Optional[int] = None,
@@ -75,6 +76,7 @@ def init(
 
     The optional parameters are:
     - num_cpus: the number of CPU processors to reserve for the runtime, defaults to 4
+    - cpu_memory_per_node: the amount of CPU memory (in MB) to pre-allocate for each node, defaults to 0
     - legion_utility_processors: number of Legion utility threads to create per process, defaults to 1
     - data_parallelism_degree: the degree of parallelization in the data parallel dimension, defaults to 1
     - tensor_parallelism_degree: the degree of parallelization in the tensor parallel dimension (using the Megatron technique), defaults to 1
@@ -103,6 +105,8 @@ def init(
     :type zero_copy_memory_per_node: int
     :param num_cpus: the number of CPU processors to reserve for the runtime, defaults to 4
     :type num_cpus: Optional[int], optional
+    :param cpu_memory_per_node: the amount of CPU memory (in MB) to pre-allocate for each node, defaults to 0
+    :type cpu_memory_per_node: Optional[int], optional
     :param legion_utility_processors: number of Legion utility threads to create per process, defaults to 1
     :type legion_utility_processors: Optional[int], optional
     :param data_parallelism_degree: the degree of parallelization in the data parallel dimension, defaults to 1
@@ -144,6 +148,7 @@ def init(
             memory_per_gpu is not None,
             zero_copy_memory_per_node is not None,
             num_cpus is not None,
+            cpu_memory_per_node is not None,
             legion_utility_processors is not None,
             data_parallelism_degree is not None,
             tensor_parallelism_degree is not None,
@@ -172,6 +177,7 @@ def init(
             "memory_per_gpu": memory_per_gpu,
             "num_cpus": num_cpus,
             "zero_copy_memory_per_node": zero_copy_memory_per_node,
+            "cpu_memory_per_node": cpu_memory_per_node,
             "legion_utility_processors": legion_utility_processors,
             "data_parallelism_degree": data_parallelism_degree,
             "tensor_parallelism_degree": tensor_parallelism_degree,
@@ -198,6 +204,7 @@ def init(
 
     # Sanity check parameters
     positive_int_params = required_keys + [
+        "cpu_memory_per_node",
         "legion_utility_processors",
         "data_parallelism_degree",
         "tensor_parallelism_degree",
@@ -211,6 +218,8 @@ def init(
     # Set default values
     if configs_dict.get("num_cpus", None) is None:
         configs_dict["num_cpus"] = 4
+    if configs_dict.get("cpu_memory_per_node", None) is None:
+        configs_dict["cpu_memory_per_node"] = 1024
     if configs_dict.get("legion_utility_processors", None) is None:
         configs_dict["legion_utility_processors"] = 8
     if configs_dict.get("data_parallelism_degree", None) is None:

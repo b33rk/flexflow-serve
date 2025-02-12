@@ -63,7 +63,7 @@ def get_configs():
         }
         llm_configs = {
             # required parameters
-            "llm_model": "tiiuae/falcon-7b",
+            "llm_model": "meta-llama/Llama-3.2-1B-Instruct",
             # optional parameters
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,

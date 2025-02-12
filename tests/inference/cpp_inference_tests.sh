@@ -5,6 +5,12 @@ set -e
 # Cd into directory holding this script
 cd "${BASH_SOURCE[0]%/*}"
 
+# Enable model parallelism tests in C++, if desired
+TENSOR_PARALLELISM_TESTS=${TENSOR_PARALLELISM_TESTS:-OFF}
+
+# Download models
+python3 ../../inference/utils/download_hf_model.py "meta-llama/Llama-2-7b-hf" "JackFram/llama-160m" "facebook/opt-6.7b" "facebook/opt-125m" "tiiuae/falcon-7b"
+
 ###############################################################################################
 ############################ Speculative inference tests ######################################
 ###############################################################################################
