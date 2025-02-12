@@ -35,7 +35,6 @@ RUN MINICONDA_SCRIPT_NAME=Miniconda3-latest-Linux-x86_64.sh; \
         MINICONDA_SCRIPT_NAME=Miniconda3-py311_23.5.2-0-Linux-x86_64.sh; \
     elif [ "${python_version}" = "3.12" ]; then \
         MINICONDA_SCRIPT_NAME=Miniconda3-py312_25.1.1-2-Linux-x86_64.sh; \
-    fi; \
     elif [ "${python_version}" = "latest" ]; then \
         MINICONDA_SCRIPT_NAME=Miniconda3-latest-Linux-x86_64.sh; \
     fi; \
