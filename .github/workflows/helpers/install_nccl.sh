@@ -9,7 +9,6 @@ ubuntu_version=$(lsb_release -rs)
 ubuntu_version=${ubuntu_version//./}
 wget -c -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${ubuntu_version}/x86_64/cuda-keyring_1.1-1_all.deb
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
-sudo apt update -y
-rm -f cuda-keyring_1.1-1_all.deb
 sudo apt-get update -y --allow-change-held-packages
+rm -f cuda-keyring_1.1-1_all.deb
 sudo apt install -y --allow-change-held-packages libnccl2 libnccl-dev
