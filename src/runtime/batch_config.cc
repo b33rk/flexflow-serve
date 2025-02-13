@@ -303,6 +303,12 @@ InferenceResult::InferenceResult(InferenceResult const &other) {
   std::copy(other.gumbel_logits,
             other.gumbel_logits + num_gumbel_logits,
             gumbel_logits);
+  std::copy(other.debug_topk_tokens,
+            other.debug_topk_tokens + num_token_ids*5,
+            debug_topk_tokens);
+  std::copy(other.debug_topk_logits,
+            other.debug_topk_logits + num_token_ids*5,
+            debug_topk_logits);
 }
 
 StreamingCacheInfo::StreamingCacheInfo() : StreamingCacheInfo(0, 0) {}
