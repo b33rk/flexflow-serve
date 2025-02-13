@@ -35,7 +35,7 @@ max_tree_depth=64
 # CSIZE=100000
 matching_strategies=(
     linear_token_path
-    # dynamic_token_tree
+    dynamic_token_tree
 )
 online_tree_update=(
     # true
@@ -50,7 +50,7 @@ traces=(
     # wildchat
 )
 trace_files=(
-    ${SUFFIX_DECODING_TRACES_FOLDER}/cortex-llama3.1-70b_debug.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/cortex-llama3.1-70b.json
     # ${SUFFIX_DECODING_TRACES_FOLDER}/spider-llama3.1-70b.json
     # ${SUFFIX_DECODING_TRACES_FOLDER}/magicoder25k-llama3.1-70b.json
     # ${SUFFIX_DECODING_TRACES_FOLDER}/wildchat25k-llama3.1-70b.json
@@ -75,13 +75,13 @@ for i in "${!traces[@]}"; do
     fi
     if [ "$trace" == "cortex" ]; then
         partitions=(
-            # QUESTION_SUGGESTION
-            # CATEGORIZATION
+            QUESTION_SUGGESTION
+            CATEGORIZATION
             FEATURE_EXTRACTION
-            # SQL_FANOUT1
-            # SQL_FANOUT2
-            # SQL_FANOUT3
-            # SQL_COMBINE
+            SQL_FANOUT1
+            SQL_FANOUT2
+            SQL_FANOUT3
+            SQL_COMBINE
         )
     else
         partitions=(all)

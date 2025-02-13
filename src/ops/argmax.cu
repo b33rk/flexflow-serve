@@ -36,6 +36,7 @@ template <typename DT>
 __global__ void copy_result(cub::KeyValuePair<int, DT> *d_out,
                             int *indices,
                             float *prob_ptr,
+                            // DT *debug_argmax_logits,
                             int batch_size,
                             bool beam_search) {
   CUDA_KERNEL_LOOP(i, batch_size) {
@@ -43,6 +44,7 @@ __global__ void copy_result(cub::KeyValuePair<int, DT> *d_out,
     if (beam_search) {
       prob_ptr[i] = static_cast<float>(d_out[i].value);
     }
+    // debug_argmax_logits[i] = d_out[i].value;
   }
 }
 
@@ -83,25 +85,26 @@ void ArgMax::forward_kernel(ArgMaxMeta *m,
                 stream>>>(static_cast<cub::KeyValuePair<int, DT> *>(m->d_out),
                           indices_ptr,
                           prob_ptr,
+                          // (DT*)m->argmax_logits,
                           batch_size,
                           m->beam_search);
   
-  // now run arg topk
-  // assert(bc->num_active_requests() >= 0);
-  if (m->device_resources.find(stream) == m->device_resources.end()) {
-    m->device_resources[stream] = new raft::device_resources(stream);
-  }
-  raft::device_resources *handle = m->device_resources[stream];
-  raft::matrix::detail::select_k(*handle,
-                                 input_ptr,
-                                 (int *)nullptr,
-                                 batch_size,
-                                 (size_t)length,
-                                 m->arg_k,
-                                 (DT*)(m->topk_out_vals),
-                                 m->topk_out_indices,
-                                 /*select_min=*/false,
-                                 false);
+  // // now run arg topk
+  // // assert(bc->num_active_requests() >= 0);
+  // if (m->device_resources.find(stream) == m->device_resources.end()) {
+  //   m->device_resources[stream] = new raft::device_resources(stream);
+  // }
+  // raft::device_resources *handle = m->device_resources[stream];
+  // raft::matrix::detail::select_k(*handle,
+  //                                input_ptr,
+  //                                (int *)nullptr,
+  //                                batch_size,
+  //                                (size_t)length,
+  //                                m->arg_k,
+  //                                (DT*)(m->topk_out_vals),
+  //                                m->topk_out_indices,
+  //                                /*select_min=*/false,
+  //                                false);
 
                           
   //   print_tensor<int>(indices_ptr, 4, "argmax op");
@@ -182,12 +185,14 @@ ArgMaxMeta::ArgMaxMeta(FFHandler handler,
            : sizeof(cub::KeyValuePair<int, half>) * batch_size) +
       prob_size * sizeof(float);
   
-  arg_k = 5;
-  assert(data_type == DT_HALF);
-  size_t topk_num_elements = arg_k * batch_size;
-  size_t topk_out_vals_size = topk_num_elements * sizeof(half);
-  size_t topk_out_indices_size = topk_num_elements * sizeof(int);
-  total_size += topk_out_vals_size + topk_out_indices_size;
+  // arg_k = 5;
+  // assert(data_type == DT_HALF);
+  // size_t topk_num_elements = arg_k * batch_size;
+  // size_t topk_out_vals_size = topk_num_elements * sizeof(half);
+  // size_t topk_out_indices_size = topk_num_elements * sizeof(int);
+  // total_size += topk_out_vals_size + topk_out_indices_size;
+  // size_t argmax_logits_size = batch_size * sizeof(half);
+  // total_size += argmax_logits_size;
 
   gpu_mem_allocator.create_legion_instance(reserveInst, total_size);
   d_offsets = gpu_mem_allocator.allocate_instance<int>(d_offsets_size);
@@ -229,8 +234,9 @@ ArgMaxMeta::ArgMaxMeta(FFHandler handler,
   }
 
   
-  topk_out_vals = gpu_mem_allocator.allocate_instance<half>(topk_num_elements);
-  topk_out_indices = gpu_mem_allocator.allocate_instance<int>(topk_num_elements);
+  // topk_out_vals = gpu_mem_allocator.allocate_instance<half>(topk_num_elements);
+  // topk_out_indices = gpu_mem_allocator.allocate_instance<int>(topk_num_elements);
+  // argmax_logits = gpu_mem_allocator.allocate_instance<half>(batch_size);
   
   gpu_mem_allocator.create_legion_instance(reserveInst, temp_storage_bytes);
   d_temp_storage =
@@ -242,8 +248,8 @@ ArgMaxMeta::~ArgMaxMeta(void) {
   if (reserveInst != Realm::RegionInstance::NO_INST) {
     reserveInst.destroy();
   }
-  for (auto &kv : device_resources) {
-    delete kv.second;
-  }
+  // for (auto &kv : device_resources) {
+  //   delete kv.second;
+  // }
 }
 }; // namespace FlexFlow

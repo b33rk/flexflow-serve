@@ -19,10 +19,11 @@ public:
   size_t temp_storage_bytes = 0;
   int *d_offsets;
   void *d_out;
-  half *topk_out_vals;
-  int *topk_out_indices;
-  std::unordered_map<cudaStream_t, raft::device_resources *> device_resources;
-  int arg_k;
+  // half *topk_out_vals;
+  // int *topk_out_indices;
+  // half *argmax_logits;
+  // std::unordered_map<cudaStream_t, raft::device_resources *> device_resources;
+  // int arg_k;
   Realm::RegionInstance reserveInst;
   ArgMaxMeta(FFHandler handler,
              Op const *op,

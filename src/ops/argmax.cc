@@ -405,11 +405,13 @@ InferenceResult
 
   download_tensor<BatchConfig::TokenId>(indices.get_int32_ptr(), ir.token_ids, batch_size);
 
-  memset(ir.debug_topk_tokens, 0, BatchConfig::MAX_NUM_TOKENS * BatchConfig::MAX_K_LOGITS * sizeof(BatchConfig::TokenId));
-  memset(ir.debug_topk_logits, 0, BatchConfig::MAX_NUM_TOKENS * BatchConfig::MAX_K_LOGITS * sizeof(half));
+  // memset(ir.debug_topk_tokens, 0, BatchConfig::MAX_NUM_TOKENS * BatchConfig::MAX_K_LOGITS * sizeof(BatchConfig::TokenId));
+  // memset(ir.debug_topk_logits, 0, BatchConfig::MAX_NUM_TOKENS * BatchConfig::MAX_K_LOGITS * sizeof(half));
+  // memset(ir.debug_argmax_logits, 0, BatchConfig::MAX_NUM_TOKENS * sizeof(half));
   
-  download_tensor<BatchConfig::TokenId>(m->topk_out_indices, ir.debug_topk_tokens, batch_size * m->arg_k);
-  download_tensor<half>(m->topk_out_vals, ir.debug_topk_logits, batch_size * m->arg_k);
+  // download_tensor<BatchConfig::TokenId>(m->topk_out_indices, ir.debug_topk_tokens, batch_size * m->arg_k);
+  // download_tensor<half>(m->topk_out_vals, ir.debug_topk_logits, batch_size * m->arg_k);
+  // download_tensor<half>(m->argmax_logits, ir.debug_argmax_logits, batch_size);
 
   return ir;
 }

@@ -1856,7 +1856,7 @@ void RequestManager::populate_best_suffix_tree_candidates(Request &request) {
   }
   profiling_requests[request.guid].prefix_length_per_step.push_back(request.suffix_decoding_best_prefix_length);
 
-  if (true) {
+  if (verbose) {
     std::cout << "Populated best suffix tree candidates for request " << request.guid << " with score " << request.suffix_decoding_best_score << std::endl;
     std::cout << "Best prefix length: " << request.suffix_decoding_best_prefix_length << std::endl;
     std::cout << "Best prefix: ";
@@ -2829,21 +2829,29 @@ void RequestManager::get_verify_results_greedy(
   profiling.generated_tokens_per_step.push_back(total_nb_generated_tokens);
 }
 
-void print_ir_debug_info(InferenceResult const &llm_verify_result, int num_tokens, int topk) {
-  std::cout << "Logits: ";
-  for (int i=0; i<num_tokens; i++) {
-    std::cout << i << ": [";
-    for (int j=0; j<topk; j++) {
-      std::cout << "("
-            << llm_verify_result.debug_topk_tokens[i*topk + j] 
-            << ","
-            << std::fixed << std::setprecision(3) << (float)llm_verify_result.debug_topk_logits[i*topk + j] 
-            << "), ";
-    }
-    std::cout << "]\n";
-  }
-  std::cout << std::endl;
-}
+// void print_ir_debug_info(InferenceResult const &llm_verify_result, int num_tokens, int topk) {
+//   std::cout << "Logits: ";
+//   for (int i=0; i<num_tokens; i++) {
+//     std::cout << i << ": [";
+//     for (int j=0; j<topk; j++) {
+//       std::cout << "("
+//             << llm_verify_result.debug_topk_tokens[i*topk + j] 
+//             << ","
+//             << std::fixed << std::setprecision(3) << (float)llm_verify_result.debug_topk_logits[i*topk + j] 
+//             << "), ";
+//     }
+//     std::cout << "]\n";
+//   }
+//   std::cout << "Argmax logits: ";
+//   for (int i=0; i<num_tokens; i++) {
+//     std::cout << "("
+//               << llm_verify_result.token_ids[i] 
+//               << ","
+//               << std::fixed << std::setprecision(3) << (float)llm_verify_result.debug_argmax_logits[i] 
+//               << "), ";
+//   }
+//   std::cout << std::endl;
+// }
 
 void RequestManager::get_verify_results_suffix_decoding(
     InferenceResult const &llm_verify_result) {
@@ -2918,6 +2926,7 @@ void RequestManager::get_verify_results_suffix_decoding(
       //  (3) no other token has been accepted in this layer
       if (current_token == current_result &&
           last_accepted_token == current_parent_token &&
+          last_accepted_token_idx == parent_idx &&
           last_parent_idx != parent_idx) {
         request.committed_tokens.push_back(Request::CommittedToken(
             llm_cache_size + i, committed_token_index, current_token));
@@ -2933,14 +2942,14 @@ void RequestManager::get_verify_results_suffix_decoding(
 
     // 3. Add the bonus token
     int bonus_token_idx = last_accepted_token_idx+1;
-    if (true) {
+    if (verbose) {
       std::cout << "last_accepted_token_idx: " << last_accepted_token_idx << std::endl;
       std::cout << "accepted_tokens: ";
       for (int i=1; i<request.committed_tokens.size(); i++) {
         std::cout << request.committed_tokens[i].token_id << " ";
       }
       std::cout << std::endl;
-      print_ir_debug_info(llm_verify_result, request.suffix_decoding_best_token_ids.size(), 5);
+      // print_ir_debug_info(llm_verify_result, request.suffix_decoding_best_token_ids.size(), 5);
       std::cout << "bonus_token_idx: " << bonus_token_idx << std::endl;
       std::cout << "bonus token: " << llm_verify_result.token_ids[llm_result_offset + bonus_token_idx] << std::endl;
       std::cout << "found eos? " << found_eos << std::endl;
