@@ -1953,16 +1953,21 @@ BatchConfig RequestManager::prepare_suffix_decoding_batch_config() {
     new_bc.tokensInfo[new_bc.num_tokens].token_id = request.tokens.back();
     new_bc.num_tokens++;
     // add candidate tokens to the batch config
+    std::vector<int> depths = {0}; // root has depth 0
+    for (int i=1; i< request.suffix_decoding_best_parents.size(); i++) {
+      depths.push_back(depths[request.suffix_decoding_best_parents[i]] + 1);
+    }
     for (int i = 0; i < request.suffix_decoding_best_token_ids.size(); i++) {
       new_bc.tokensInfo[new_bc.num_tokens].request_index = request_index;
       new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
           request.tokens.size() + i;
       new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
-          request.tokens.size() + i;
+          request.tokens.size() + depths[i];
       new_bc.tokensInfo[new_bc.num_tokens].token_id =
           request.suffix_decoding_best_token_ids[i];
       new_bc.num_tokens++;
     }
+
     new_bc.requestsInfo[request_index].num_tokens_in_batch =
         request.suffix_decoding_best_token_ids.size() +
         1; // +1 for the bonus token
@@ -1995,6 +2000,7 @@ BatchConfig RequestManager::prepare_suffix_decoding_batch_config() {
     if (profiling_requests[request.guid].llm_decoding_steps == 0) {
       profiling_requests[request.guid].start_decoding_time = start_time;
     }
+    
   }
   long long int end_time = Realm::Clock::current_time_in_microseconds();
   profiling.tree_operation_step_times.push_back((double)(end_time - start_time) * 1e-3);
@@ -2007,6 +2013,8 @@ BatchConfig RequestManager::prepare_suffix_decoding_batch_config() {
     profiling_requests[guid].speculation_start_timestamp = start_time;
     profiling_requests[guid].speculation_end_timestamp = end_time;
   }
+
+  assert(new_bc.num_tokens <= max_tokens_per_batch);
 
   if (verbose) {
     std::cout << "prepare_suffix_decoding_batch_config NEW batchconfig:"
@@ -2829,6 +2837,30 @@ void RequestManager::get_verify_results_greedy(
   profiling.generated_tokens_per_step.push_back(total_nb_generated_tokens);
 }
 
+// void print_ir_debug_info(InferenceResult const &llm_verify_result, int num_tokens, int topk, int start_idx=0) {
+//   std::cout << "Logits: "; 
+//   for (int i=start_idx; i<start_idx+num_tokens; i++) {
+//     std::cout << i << ": [";
+//     for (int j=0; j<topk; j++) {
+//       std::cout << "("
+//             << llm_verify_result.debug_topk_tokens[i*topk + j] 
+//             << ","
+//             << std::fixed << std::setprecision(3) << (float)llm_verify_result.debug_topk_logits[i*topk + j] 
+//             << "), ";
+//     }
+//     std::cout << "]\n";
+//   }
+//   std::cout << "Argmax logits: ";
+//   for (int i=start_idx; i<start_idx+num_tokens; i++) {
+//     std::cout << "("
+//               << llm_verify_result.token_ids[i] 
+//               << ","
+//               << std::fixed << std::setprecision(3) << (float)llm_verify_result.debug_argmax_logits[i] 
+//               << "), ";
+//   }
+//   std::cout << std::endl;
+// }
+
 void RequestManager::get_verify_results_suffix_decoding(
     InferenceResult const &llm_verify_result) {
   // This function maintain the generated token list of the request and the
@@ -2887,22 +2919,20 @@ void RequestManager::get_verify_results_suffix_decoding(
     for (int i = 0; i < (int)request.suffix_decoding_best_token_ids.size(); i++) {
       int current_token = request.suffix_decoding_best_token_ids[i];
       int parent_idx = request.suffix_decoding_best_parents[i];
-      int current_result = llm_verify_result.token_ids[llm_result_offset + parent_idx+1];
-      int last_parent_idx = (last_accepted_token_idx == -1) ? -2 : request.suffix_decoding_best_parents[last_accepted_token_idx];
+      int current_result = llm_verify_result.token_ids[llm_result_offset + parent_idx + 1];
+      // int last_parent_idx = (last_accepted_token_idx == -1) ? -2 : request.suffix_decoding_best_parents[last_accepted_token_idx];
       TokenId last_accepted_token = request.tokens.back();
       TokenId current_parent_token = (parent_idx == -1) ? request.tokens.back()
                                                          : request.suffix_decoding_best_token_ids[parent_idx];
       if (verbose) {
         printf("\ti=%i: {current_token: %d, current_result: %d, last_accepted_token: %d, current_parent_token: %d, last_parent_idx: %d, parent_idx: %d, last_accepted_token_idx: %i}\n",
-              i, current_token, current_result, last_accepted_token, current_parent_token, last_parent_idx, parent_idx, last_accepted_token_idx);
+              i, current_token, current_result, last_accepted_token, current_parent_token, 0, parent_idx, last_accepted_token_idx);
       }
-      // Accept token if:
-      //  (1) it matches the result,
-      //  (2) last accepted token is the token's parent
-      //  (3) no other token has been accepted in this layer
-      if (current_token == current_result &&
-          last_accepted_token == current_parent_token &&
-          last_parent_idx != parent_idx) {
+    
+      // accept tokens if:
+      //  (1) last accepted token is the token's parent (not another identical one)
+      //  (2) the result corresponding to the parent token is the same as the current token
+      if (last_accepted_token_idx == parent_idx && current_result == current_token) {
         request.committed_tokens.push_back(Request::CommittedToken(
             llm_cache_size + i, committed_token_index, current_token));
         request.tokens.push_back(current_token);
@@ -2918,14 +2948,28 @@ void RequestManager::get_verify_results_suffix_decoding(
     // 3. Add the bonus token
     int bonus_token_idx = last_accepted_token_idx+1;
     if (verbose) {
+      std::cout << "llm_result_offset: " << llm_result_offset << std::endl;
+      std::cout << "inference results: ";
+      for (int i=llm_result_offset; i<llm_verify_result.num_token_ids; i++) {
+        std::cout << llm_verify_result.token_ids[i] << " ";
+      }
+      std::cout << std::endl; 
       std::cout << "last_accepted_token_idx: " << last_accepted_token_idx << std::endl;
       std::cout << "accepted_tokens: ";
       for (int i=1; i<request.committed_tokens.size(); i++) {
         std::cout << request.committed_tokens[i].token_id << " ";
       }
       std::cout << std::endl;
+      // if (request.tokens.size() < 70 + request) {
+        // std::cout << "found it!" << std::endl;
+        // print_ir_debug_info(llm_verify_result, request.suffix_decoding_best_token_ids.size(), 5, llm_result_offset);
+      // }
+
+      // print_ir_debug_info(llm_verify_result, request.suffix_decoding_best_token_ids.size(), 5);
       std::cout << "bonus_token_idx: " << bonus_token_idx << std::endl;
       std::cout << "bonus token: " << llm_verify_result.token_ids[llm_result_offset + bonus_token_idx] << std::endl;
+      std::cout << "found eos? " << found_eos << std::endl;
+      std::cout << std::endl;
     }
     if (!found_eos) {
       request.committed_tokens.push_back(Request::CommittedToken(
