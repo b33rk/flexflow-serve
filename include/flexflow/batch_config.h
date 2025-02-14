@@ -19,6 +19,11 @@
 #include "legion.h"
 #include <cstddef>
 #include <cstdlib>
+// #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
+// #include "flexflow/utils/cuda_helper.h"
+// #else
+// #include "flexflow/utils/hip_helper.h"
+// #endif
 
 namespace FlexFlow {
 
@@ -207,6 +212,10 @@ struct InferenceResult {
   float probs[BatchConfig::MAX_NUM_TOKENS * BatchConfig::MAX_K_LOGITS];
   float gumbel_logits[BatchConfig::MAX_NUM_TOKENS *
                       BatchConfig::MAX_SPECULATIVE_TREE_BRANCHES];
+  
+  // BatchConfig::TokenId debug_topk_tokens[BatchConfig::MAX_NUM_TOKENS * BatchConfig::MAX_K_LOGITS];
+  // half debug_topk_logits[BatchConfig::MAX_NUM_TOKENS * BatchConfig::MAX_K_LOGITS];
+  // half debug_argmax_logits[BatchConfig::MAX_NUM_TOKENS];
   InferenceResult() : num_token_ids(0), num_gumbel_logits(0) {}
   InferenceResult(InferenceResult const &other);
   friend std::ostream &operator<<(std::ostream &os, InferenceResult const &ir);

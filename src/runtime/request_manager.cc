@@ -435,11 +435,11 @@ bool RequestManager::SharedTokenTreeNodePtrDoubleRequestGuidLess ::operator()(
 
 void RequestManager::register_tokenizer(ModelType type,
                                         int bos_token_id,
-                                        int eos_token_id,
+                                        std::vector<int> eos_token_ids,
                                         std::string const &path) {
   this->model_type = type;
   this->bos_token_id = bos_token_id;
-  this->eos_token_id = eos_token_id;
+  this->eos_token_ids = eos_token_ids;
   std::filesystem::path tokenizer_folder(path);
 
   if (model_type == ModelType::LLAMA) {
@@ -565,7 +565,13 @@ void RequestManager::init_suffix_tree(std::string const &trace_filepath,
     std::vector<int> encoded = this->tokenizer_->Encode(entry.response);
     training_dataset.push_back(encoded);
   }
+  std::cout << "Generating suffix tree for partition: " << partition_name
+            << "with " << training_dataset.size() << " training entries..." << std::endl;
+  auto start_time = std::chrono::high_resolution_clock::now();
   suffix_tree = new SuffixTree<int>(training_dataset);
+  auto end_time = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> duration = end_time - start_time;
+  std::cout << "Suffix tree construction took " << duration.count() << " seconds." << std::endl;
 }
 
 RequestManager::RequestGuid
@@ -858,9 +864,9 @@ void RequestManager::request_complete_clean_up(int batch_index) {
     assert(isPrefixAndRemove(request_generation_results[guid].input_tokens,
                              request_generation_results[guid].output_tokens));
     if (request_generation_results[guid].output_tokens.size() > 0 &&
-        request_generation_results[guid].output_tokens
-                [request_generation_results[guid].output_tokens.size() - 1] ==
-            this->eos_token_id &&
+        is_eos_token(
+          request_generation_results[guid].output_tokens
+                [request_generation_results[guid].output_tokens.size() - 1]) &&
         !request.add_special_tokens) {
       request_generation_results[guid].output_tokens.pop_back();
     }
@@ -1095,7 +1101,7 @@ bool RequestManager::update_llm_prefill_results(InferenceResult const &result) {
         request->tokens.push_back(
             result.token_ids[num_tokens + request->num_tokens_in_batch - 1]);
 
-        if (request->tokens.back() == eos_token_id) {
+        if (is_eos_token(request->tokens.back())) {
           request_complete_clean_up(request->batch_index);
         } else {
           // Temporarily offload request from the batch
@@ -1170,13 +1176,13 @@ bool RequestManager::update_llm_decode_results(InferenceResult const &result) {
     nb_requests_decoded++;
 
     NewProfileInfo new_profile_info;
-    new_profile_info.timestamp = Realm::Clock::current_time_in_microseconds();
+    new_profile_info.timestamp = current_time;
     new_profile_info.request_guid = guid;
     new_profile_info.request_step_idx = profiling_requests[guid].llm_decoding_steps-1;
     new_profile_info.num_generated_tokens = 1;
     new_profiling_info.push_back(new_profile_info);
 
-    if (request.tokens.back() == eos_token_id or
+    if (is_eos_token(request.tokens.back()) or
         request.decode_length() >= get_max_output_length() or
         request.tokens.size() >= get_max_sequence_length()) {
       request_update_attainment(request_index, attained);
@@ -1425,6 +1431,8 @@ BatchConfig RequestManager::prepare_decoding_batch() {
             std::begin(bc.request_available));
   bc.num_available_requests = num_available_requests;
 
+  long long int current_time = Realm::Clock::current_time_in_microseconds();
+
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        request_index++) {
     if (!request_available[request_index]) {
@@ -1454,8 +1462,7 @@ BatchConfig RequestManager::prepare_decoding_batch() {
     bc.num_tokens++;
 
     if (profiling_requests[request.guid].llm_decoding_steps == 0) {
-      profiling_requests[request.guid].start_decoding_time =
-          Realm::Clock::current_time_in_microseconds();
+      profiling_requests[request.guid].start_decoding_time = current_time;
     }
   }
 
@@ -1463,7 +1470,7 @@ BatchConfig RequestManager::prepare_decoding_batch() {
     std::cout << "prepare_decoding_batch NEW batchconfig:" << std::endl;
     bc.print();
   }
-  profiling.llm_step_start = Realm::Clock::current_time_in_microseconds();
+  profiling.llm_step_start = current_time;
   return bc;
 }
 /* ----- Speculative Inference Specific functions ----- */
@@ -1491,6 +1498,7 @@ BatchConfig RequestManager::prepare_first_spec_batch_config() {
             std::begin(new_bc.request_available));
   new_bc.num_available_requests = num_available_requests;
 
+  long long ssm_step_start_time = Realm::Clock::current_time_in_microseconds();
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
@@ -1576,10 +1584,9 @@ BatchConfig RequestManager::prepare_first_spec_batch_config() {
     new_bc.streamingCacheInfo[request_index] = request.streaming_cache_info;
 
     if (profiling_requests[guid].ssm_decoding_steps == 0) {
-      profiling_requests[guid].start_decoding_time =
-          Realm::Clock::current_time_in_microseconds();
+      profiling_requests[guid].start_decoding_time = ssm_step_start_time;
     }
-    profiling.ssm_step_start = Realm::Clock::current_time_in_microseconds();
+    profiling.ssm_step_start = ssm_step_start_time;
   }
 
   if (!spec_infer_old_version) {
@@ -1946,16 +1953,21 @@ BatchConfig RequestManager::prepare_suffix_decoding_batch_config() {
     new_bc.tokensInfo[new_bc.num_tokens].token_id = request.tokens.back();
     new_bc.num_tokens++;
     // add candidate tokens to the batch config
+    std::vector<int> depths = {0}; // root has depth 0
+    for (int i=1; i< request.suffix_decoding_best_parents.size(); i++) {
+      depths.push_back(depths[request.suffix_decoding_best_parents[i]] + 1);
+    }
     for (int i = 0; i < request.suffix_decoding_best_token_ids.size(); i++) {
       new_bc.tokensInfo[new_bc.num_tokens].request_index = request_index;
       new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
           request.tokens.size() + i;
       new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
-          request.tokens.size() + i;
+          request.tokens.size() + depths[i];
       new_bc.tokensInfo[new_bc.num_tokens].token_id =
           request.suffix_decoding_best_token_ids[i];
       new_bc.num_tokens++;
     }
+
     new_bc.requestsInfo[request_index].num_tokens_in_batch =
         request.suffix_decoding_best_token_ids.size() +
         1; // +1 for the bonus token
@@ -1986,11 +1998,23 @@ BatchConfig RequestManager::prepare_suffix_decoding_batch_config() {
     new_bc.streamingCacheInfo[request_index] = request.streaming_cache_info;
 
     if (profiling_requests[request.guid].llm_decoding_steps == 0) {
-      profiling_requests[request.guid].start_decoding_time = Realm::Clock::current_time_in_microseconds();
+      profiling_requests[request.guid].start_decoding_time = start_time;
     }
+    
   }
   long long int end_time = Realm::Clock::current_time_in_microseconds();
   profiling.tree_operation_step_times.push_back((double)(end_time - start_time) * 1e-3);
+
+  for (int request_index = 0; request_index < get_max_requests_per_batch(); ++request_index) {
+    if (!request_available[request_index]) {
+      continue;
+    }
+    int guid = guid_of_requests[request_index];
+    profiling_requests[guid].speculation_start_timestamp = start_time;
+    profiling_requests[guid].speculation_end_timestamp = end_time;
+  }
+
+  assert(new_bc.num_tokens <= max_tokens_per_batch);
 
   if (verbose) {
     std::cout << "prepare_suffix_decoding_batch_config NEW batchconfig:"
@@ -2007,6 +2031,15 @@ int get_tree_size(Request const &request) {
     size += (int)layer.size();
   }
   return size;
+}
+
+bool RequestManager::is_eos_token(TokenId token_id) {
+  for (int eos_token : eos_token_ids) {
+    if (token_id == eos_token) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool RequestManager::update_llm_verify_results(
@@ -2092,7 +2125,7 @@ bool RequestManager::update_llm_verify_results(
     // metainfo stored in the RequestManager. Otherwise, update its bitmask.
     bool eos_token_found = false;
     for (auto const &committed_token : request.committed_tokens) {
-      if (committed_token.token_id == eos_token_id) {
+      if (is_eos_token(committed_token.token_id)) {
         eos_token_found = true;
         break;
       }
@@ -2158,6 +2191,7 @@ bool RequestManager::update_llm_suffix_decoding_results(
   bool request_completed = false;
 
   // Iterate over the requests
+  long long tree_update_time = 0;
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
@@ -2186,7 +2220,7 @@ bool RequestManager::update_llm_suffix_decoding_results(
     // metainfo stored in the RequestManager. Otherwise, update its bitmask.
     bool eos_token_found = false;
     for (auto const &committed_token : request.committed_tokens) {
-      if (committed_token.token_id == eos_token_id) {
+      if (is_eos_token(committed_token.token_id)) {
         eos_token_found = true;
         break;
       }
@@ -2194,7 +2228,10 @@ bool RequestManager::update_llm_suffix_decoding_results(
     if (eos_token_found or request.decode_length() >= get_max_output_length() or
         request.tokens.size() >= get_max_sequence_length()) {
       if (get_suffix_tree_online_tree_update()) {
+        long long int start = Realm::Clock::current_time_in_microseconds();
         insert_completed_request_into_suffix_tree(request_index);
+        long long int end = Realm::Clock::current_time_in_microseconds();
+        tree_update_time += (end - start);
       }
       // Request is completed
       request_update_attainment(request_index, attained);
@@ -2210,6 +2247,21 @@ bool RequestManager::update_llm_suffix_decoding_results(
       // update_bitmask_prompt(guid, request.committed_tokens.size() - 1);
     }
   }
+
+  // TODO: check this
+  // int idx=0;
+  // for (int request_index = 0; request_index < get_max_requests_per_batch(); ++request_index) {
+  //   if (!request_available[request_index]) {
+  //     // Request in this slot is unavailable
+  //     continue;
+  //   }
+  //   int guid = guid_of_requests[request_index];
+  //   assert(new_profiling_info.size() - nb_requests_decoded + idx < new_profiling_info.size() >= 0);
+  //   assert(new_profiling_info.size() - nb_requests_decoded + idx < new_profiling_info.size());
+  //   assert(new_profiling_info[new_profiling_info.size()-nb_requests_decoded + idx].request_guid == guid);
+  //   new_profiling_info[new_profiling_info.size()-nb_requests_decoded + idx].suffix_tree_update_time = tree_update_time;
+  //   idx++;
+  // }
 
   // Some requests may be completed after appending the verified tokens.
   // If there is a request completed, return true.
@@ -2232,6 +2284,7 @@ bool RequestManager::update_ssm_inference_results(
     add_tokens_to_spec_token_tree_old_version(ssm_inference_result);
   }
 
+  long long ssm_end_time = Realm::Clock::current_time_in_microseconds();
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
@@ -2261,7 +2314,7 @@ bool RequestManager::update_ssm_inference_results(
     if (current_ssm_step == ssm_tree_depth) {
       assert(profiling_requests[guid].ssm_decoding_steps % ssm_tree_depth == 0);
       profiling_requests[guid].speculation_start_timestamp = profiling.ssm_step_start;
-      profiling_requests[guid].speculation_end_timestamp = Realm::Clock::current_time_in_microseconds();
+      profiling_requests[guid].speculation_end_timestamp = ssm_end_time;
     }
   }
 
@@ -2272,10 +2325,7 @@ bool RequestManager::update_ssm_inference_results(
       prune_token_tree();
     }
     // Update profiling statistics before returning
-    profiling.ssm_step_times.push_back(
-        (Realm::Clock::current_time_in_microseconds() -
-         profiling.ssm_step_start) *
-        1e-3);
+    profiling.ssm_step_times.push_back((ssm_end_time - profiling.ssm_step_start) * 1e-3);
     profiling.ssm_steps.push_back(current_ssm_step);
     return true;
   }
@@ -2643,6 +2693,7 @@ void RequestManager::get_verify_results_greedy(
   // This function maintain the generated token list of the request and the
   // committed tokens.
   int total_nb_generated_tokens = 0;
+  long long current_time = Realm::Clock::current_time_in_microseconds();
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
@@ -2715,7 +2766,7 @@ void RequestManager::get_verify_results_greedy(
             last_accepted_token_index = current_token_index;
             last_accepted_token_index_in_layer = current_token_index_in_layer;
             committed_token_index++;
-            if (node_ptr->id == eos_token_id) {
+            if (is_eos_token(node_ptr->id)) {
               found_eos = true;
             }
           }
@@ -2760,7 +2811,7 @@ void RequestManager::get_verify_results_greedy(
     
 
     NewProfileInfo new_profile_info;
-    new_profile_info.timestamp = Realm::Clock::current_time_in_microseconds();
+    new_profile_info.timestamp = current_time;
     new_profile_info.request_guid = guid;
     new_profile_info.request_step_idx = profiling_requests[guid].llm_decoding_steps-1; // check if this has already been incremented
     new_profile_info.num_speculated_tokens = get_tree_size(request);
@@ -2786,6 +2837,30 @@ void RequestManager::get_verify_results_greedy(
   profiling.generated_tokens_per_step.push_back(total_nb_generated_tokens);
 }
 
+// void print_ir_debug_info(InferenceResult const &llm_verify_result, int num_tokens, int topk, int start_idx=0) {
+//   std::cout << "Logits: "; 
+//   for (int i=start_idx; i<start_idx+num_tokens; i++) {
+//     std::cout << i << ": [";
+//     for (int j=0; j<topk; j++) {
+//       std::cout << "("
+//             << llm_verify_result.debug_topk_tokens[i*topk + j] 
+//             << ","
+//             << std::fixed << std::setprecision(3) << (float)llm_verify_result.debug_topk_logits[i*topk + j] 
+//             << "), ";
+//     }
+//     std::cout << "]\n";
+//   }
+//   std::cout << "Argmax logits: ";
+//   for (int i=start_idx; i<start_idx+num_tokens; i++) {
+//     std::cout << "("
+//               << llm_verify_result.token_ids[i] 
+//               << ","
+//               << std::fixed << std::setprecision(3) << (float)llm_verify_result.debug_argmax_logits[i] 
+//               << "), ";
+//   }
+//   std::cout << std::endl;
+// }
+
 void RequestManager::get_verify_results_suffix_decoding(
     InferenceResult const &llm_verify_result) {
   // This function maintain the generated token list of the request and the
@@ -2795,6 +2870,7 @@ void RequestManager::get_verify_results_suffix_decoding(
     std::cout << llm_verify_result << std::endl;
   }
   int total_nb_generated_tokens = 0;
+  long long current_time = Realm::Clock::current_time_in_microseconds();
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
@@ -2843,28 +2919,26 @@ void RequestManager::get_verify_results_suffix_decoding(
     for (int i = 0; i < (int)request.suffix_decoding_best_token_ids.size(); i++) {
       int current_token = request.suffix_decoding_best_token_ids[i];
       int parent_idx = request.suffix_decoding_best_parents[i];
-      int current_result = llm_verify_result.token_ids[llm_result_offset + parent_idx+1];
-      int last_parent_idx = (last_accepted_token_idx == -1) ? -2 : request.suffix_decoding_best_parents[last_accepted_token_idx];
+      int current_result = llm_verify_result.token_ids[llm_result_offset + parent_idx + 1];
+      // int last_parent_idx = (last_accepted_token_idx == -1) ? -2 : request.suffix_decoding_best_parents[last_accepted_token_idx];
       TokenId last_accepted_token = request.tokens.back();
       TokenId current_parent_token = (parent_idx == -1) ? request.tokens.back()
                                                          : request.suffix_decoding_best_token_ids[parent_idx];
       if (verbose) {
         printf("\ti=%i: {current_token: %d, current_result: %d, last_accepted_token: %d, current_parent_token: %d, last_parent_idx: %d, parent_idx: %d, last_accepted_token_idx: %i}\n",
-              i, current_token, current_result, last_accepted_token, current_parent_token, last_parent_idx, parent_idx, last_accepted_token_idx);
+              i, current_token, current_result, last_accepted_token, current_parent_token, 0, parent_idx, last_accepted_token_idx);
       }
-      // Accept token if:
-      //  (1) it matches the result,
-      //  (2) last accepted token is the token's parent
-      //  (3) no other token has been accepted in this layer
-      if (current_token == current_result &&
-          last_accepted_token == current_parent_token &&
-          last_parent_idx != parent_idx) {
+    
+      // accept tokens if:
+      //  (1) last accepted token is the token's parent (not another identical one)
+      //  (2) the result corresponding to the parent token is the same as the current token
+      if (last_accepted_token_idx == parent_idx && current_result == current_token) {
         request.committed_tokens.push_back(Request::CommittedToken(
             llm_cache_size + i, committed_token_index, current_token));
         request.tokens.push_back(current_token);
         committed_token_index++;
         last_accepted_token_idx=i;
-        if (current_token == eos_token_id) {
+        if (is_eos_token(current_token)) {
           found_eos = true;
           break;
         }
@@ -2874,14 +2948,28 @@ void RequestManager::get_verify_results_suffix_decoding(
     // 3. Add the bonus token
     int bonus_token_idx = last_accepted_token_idx+1;
     if (verbose) {
+      std::cout << "llm_result_offset: " << llm_result_offset << std::endl;
+      std::cout << "inference results: ";
+      for (int i=llm_result_offset; i<llm_verify_result.num_token_ids; i++) {
+        std::cout << llm_verify_result.token_ids[i] << " ";
+      }
+      std::cout << std::endl; 
       std::cout << "last_accepted_token_idx: " << last_accepted_token_idx << std::endl;
       std::cout << "accepted_tokens: ";
       for (int i=1; i<request.committed_tokens.size(); i++) {
         std::cout << request.committed_tokens[i].token_id << " ";
       }
       std::cout << std::endl;
+      // if (request.tokens.size() < 70 + request) {
+        // std::cout << "found it!" << std::endl;
+        // print_ir_debug_info(llm_verify_result, request.suffix_decoding_best_token_ids.size(), 5, llm_result_offset);
+      // }
+
+      // print_ir_debug_info(llm_verify_result, request.suffix_decoding_best_token_ids.size(), 5);
       std::cout << "bonus_token_idx: " << bonus_token_idx << std::endl;
       std::cout << "bonus token: " << llm_verify_result.token_ids[llm_result_offset + bonus_token_idx] << std::endl;
+      std::cout << "found eos? " << found_eos << std::endl;
+      std::cout << std::endl;
     }
     if (!found_eos) {
       request.committed_tokens.push_back(Request::CommittedToken(
@@ -2915,9 +3003,12 @@ void RequestManager::get_verify_results_suffix_decoding(
     }
 
     NewProfileInfo new_profile_info;
-    new_profile_info.timestamp = Realm::Clock::current_time_in_microseconds();
+    new_profile_info.timestamp = current_time;
     new_profile_info.request_guid = guid;
     new_profile_info.request_step_idx = profiling_requests[guid].llm_decoding_steps-1;
+    new_profile_info.speculation_start_timestamp = profiling_requests[guid].speculation_start_timestamp;
+    new_profile_info.speculation_end_timestamp = profiling_requests[guid].speculation_end_timestamp;
+    new_profile_info.suffix_tree_update_time = 0;
     new_profile_info.num_speculated_tokens = (int)request.suffix_decoding_best_token_ids.size();
     new_profile_info.num_accepted_tokens = accepted_tokens;
     new_profile_info.prefix_length = request.suffix_decoding_best_prefix_length;
@@ -3035,7 +3126,8 @@ void RequestManager::serve_decoding(FFModel *llm) {
   assert(im->model_weights_loaders.find(llm) !=
          im->model_weights_loaders.end());
   // Load model weights
-  im->model_weights_loaders[llm]->load_weights(llm);
+  im->model_weights_loaders[llm]->load_weights_parallel(llm, ctx, runtime);
+
   // init operators
   im->init_operators_inference(llm);
   // Legion futures for inc_decoding and spec_infer
@@ -3089,7 +3181,8 @@ void RequestManager::serve_spec_infer(FFModel *llm) {
     assert(im->model_weights_loaders.find(llm) !=
            im->model_weights_loaders.end());
     // Load model weights
-    im->model_weights_loaders[llm]->load_weights(llm);
+    im->model_weights_loaders[llm]->load_weights_parallel(llm, ctx, runtime);
+
     // init operators
     im->init_operators_inference(llm);
   }
@@ -3100,7 +3193,8 @@ void RequestManager::serve_spec_infer(FFModel *llm) {
     assert(im->model_weights_loaders.find(ssm) !=
            im->model_weights_loaders.end());
     // Load model weights
-    im->model_weights_loaders[ssm]->load_weights(ssm);
+    im->model_weights_loaders[ssm]->load_weights_parallel(ssm, ctx, runtime);
+
     // init operators
     im->init_operators_inference(ssm);
   }
@@ -3163,7 +3257,8 @@ void RequestManager::serve_spec_infer_sync(FFModel *llm) {
     assert(im->model_weights_loaders.find(llm) !=
            im->model_weights_loaders.end());
     // Load model weights
-    im->model_weights_loaders[llm]->load_weights(llm);
+    im->model_weights_loaders[llm]->load_weights_parallel(llm, ctx, runtime);
+
     // init operators
     im->init_operators_inference(llm);
   }
@@ -3174,7 +3269,8 @@ void RequestManager::serve_spec_infer_sync(FFModel *llm) {
     assert(im->model_weights_loaders.find(ssm) !=
            im->model_weights_loaders.end());
     // Load model weights
-    im->model_weights_loaders[ssm]->load_weights(ssm);
+    im->model_weights_loaders[ssm]->load_weights_parallel(ssm, ctx, runtime);
+
     // init operators
     im->init_operators_inference(ssm);
   }

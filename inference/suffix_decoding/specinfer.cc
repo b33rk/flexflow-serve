@@ -51,7 +51,8 @@ struct ModelMeta {
   std::string llm_weights_path;
   std::string llm_model_config_path;
 
-  int bos_token_id, eos_token_id;
+  int bos_token_id;
+  std::vector<int> eos_token_ids;
 
   std::vector<ModelType> ssm_model_types;
   std::vector<std::string> ssm_model_config_paths;
@@ -64,6 +65,7 @@ void parse_input_args(char **argv,
                       ModelNames &model_names,
                       bool &use_full_precision,
                       bool &verbose,
+                      int &ssm_tp_degree,
                       int &max_requests_per_batch,
                       int &max_tokens_per_batch,
                       int &max_sequence_length,
@@ -74,7 +76,8 @@ void parse_input_args(char **argv,
                       bool &do_sample,
                       double &request_per_second,
                       bool &add_special_tokens,
-                      std::string &target_partition) {
+                      std::string &target_partition,
+                      int &max_trace_requests) {
   for (int i = 1; i < argc; i++) {
     // llm model name
     if (!strcmp(argv[i], "-llm-model")) {
@@ -91,6 +94,11 @@ void parse_input_args(char **argv,
         c = std::tolower(c);
       }
       model_names.ssm_model_names.push_back(ssm_model_name);
+      continue;
+    }
+    // tensor parallelism degree to use for the SSM
+    if (!strcmp(argv[i], "-ssm-tp-degree")) {
+      ssm_tp_degree = std::stoi(argv[++i]);
       continue;
     }
     // cache folder
@@ -169,6 +177,11 @@ void parse_input_args(char **argv,
       add_special_tokens = true;
       continue;
     }
+    // this parameter can be used to set the maximum number of requests to run from the trace
+    if (!strcmp(argv[i], "--max-trace-requests")) {
+      max_trace_requests = std::stod(argv[++i]);
+      continue;
+    }
   }
   if (paths.cache_folder_path.empty()) {
     char const *ff_cache_path = std::getenv("FF_CACHE_PATH");
@@ -240,10 +253,21 @@ void get_model_meta(FilePaths &file_paths,
       llm_model_config.find("bos_token_id") == llm_model_config.end()
           ? -1
           : (int)llm_model_config.at("bos_token_id");
-  model_metadata.eos_token_id =
-      llm_model_config.find("eos_token_id") == llm_model_config.end()
-          ? -1
-          : (int)llm_model_config.at("eos_token_id");
+  // model_metadata.eos_token_id =
+  //     llm_model_config.find("eos_token_id") == llm_model_config.end()
+  //         ? -1
+  //         : (int)llm_model_config.at("eos_token_id");
+  if (llm_model_config.find("eos_token_id") != llm_model_config.end()) {
+    if (llm_model_config["eos_token_id"].is_array()) {
+      for (auto &eos_token_id : llm_model_config["eos_token_id"]) {
+        model_metadata.eos_token_ids.push_back(eos_token_id);
+      }
+    } else {
+      model_metadata.eos_token_ids.push_back(llm_model_config["eos_token_id"]);
+    }
+  } else {
+    model_metadata.eos_token_ids.push_back(-1);
+  }
 
   for (auto ssm_model_name : model_metadata.model_names.ssm_model_names) {
     std::string ssm_config_path = join_path({file_paths.cache_folder_path,
@@ -292,15 +316,15 @@ void get_model_meta(FilePaths &file_paths,
         ssm_model_config.find("bos_token_id") == ssm_model_config.end()
             ? -1
             : (int)ssm_model_config.at("bos_token_id");
-    int ssm_eos_id =
-        ssm_model_config.find("eos_token_id") == ssm_model_config.end()
-            ? -1
-            : (int)ssm_model_config.at("eos_token_id");
-    if (ssm_bos_id != model_metadata.bos_token_id ||
-        ssm_eos_id != model_metadata.eos_token_id) {
-      printf("Warning: bos/eos token id mismatch between LLM and one of the "
-             "SSMs!\n");
-    }
+    // int ssm_eos_id =
+    //     ssm_model_config.find("eos_token_id") == ssm_model_config.end()
+    //         ? -1
+    //         : (int)ssm_model_config.at("eos_token_id");
+    // if (ssm_bos_id != model_metadata.bos_token_id ||
+    //     ssm_eos_id != model_metadata.eos_token_id) {
+    //   printf("Warning: bos/eos token id mismatch between LLM and one of the "
+    //          "SSMs!\n");
+    // }
     model_metadata.ssm_model_types.push_back(ssm_model_type);
     model_metadata.ssm_model_config_paths.push_back(ssm_config_path);
     model_metadata.ssm_model_weights_paths.push_back(ssm_weights_path);
@@ -325,6 +349,7 @@ void FlexFlow::top_level_task(Task const *task,
   ModelMeta model_metadata;
   bool use_full_precision = false;
   bool verbose = false;
+  int ssm_tp_degree = 1;
   int max_requests_per_batch = 8;
   int max_tokens_per_batch = 128;
   int max_sequence_length = 512;
@@ -339,6 +364,7 @@ void FlexFlow::top_level_task(Task const *task,
   double request_per_second = 1.0;
   bool add_special_tokens = false;
   std::string target_partition = "FEATURE_EXTRACTION";
+  int max_trace_requests = INT_MAX;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -349,6 +375,7 @@ void FlexFlow::top_level_task(Task const *task,
                    model_metadata.model_names,
                    use_full_precision,
                    verbose,
+                   ssm_tp_degree,
                    max_requests_per_batch,
                    max_tokens_per_batch,
                    max_sequence_length,
@@ -359,33 +386,44 @@ void FlexFlow::top_level_task(Task const *task,
                    do_sample,
                    request_per_second,
                    add_special_tokens,
-                   target_partition);
+                   target_partition,
+                   max_trace_requests);
 
   get_model_meta(file_paths, model_metadata, use_full_precision);
 
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
          ffconfig.numNodes * ffconfig.workersPerNode);
+  assert(ssm_tp_degree >= 1 &&
+         ssm_tp_degree <= ffconfig.numNodes * ffconfig.workersPerNode);
 
   std::ifstream input_file(file_paths.trace_file_path);
   assert(input_file.good() && "Prompt file does not exist.");
+  printf("Parsing trace file: %s into JSON\n", file_paths.trace_file_path.c_str());
   nlohmann::ordered_json j = nlohmann::ordered_json::parse(input_file);
+  printf("Trace file parsed successfully. Closing file.\n");
   input_file.close();
 
   // Find the partition with name "FEATURE_EXTRACTION"
+  printf("Getting handle to trace partitions\n");
   auto &partitions = j["partitions"];
+  printf("Finding the target partition\n");
   auto it =
       std::find_if(partitions.begin(),
                    partitions.end(),
                    [target_partition](nlohmann::ordered_json const &partition) {
                      return partition["partition_name"] == target_partition;
                    });
-  nlohmann::ordered_json &partition = *it;
+  printf("Found target partition (or reached end) of JSON\n");
   if (it == partitions.end()) {
     std::cerr << "Partition " << target_partition
               << " not found in the trace file." << std::endl;
     assert(false);
   }
+  printf("Getting direct handle to target partition\n");
+  nlohmann::ordered_json &partition = *it;
+  printf("Got direct handle to target partition\n");
+  
   // check that the max prompt + response length sum in the eval_entries in the
   // partition does not exceed the max_sequence_length
   int max_prompt_response_length = 0;
@@ -411,6 +449,7 @@ void FlexFlow::top_level_task(Task const *task,
               << max_sequence_length << ")." << std::endl;
     assert(false);
   }
+  printf("Checked if prompt + response length sum is within max_sequence_length\n");
 
   // Sanity check for SpecInfer old version
   assert(max_tree_depth <= 8);
@@ -436,7 +475,7 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_streaming_cache(false);
   rm->register_tokenizer(model_metadata.llm_model_type,
                          model_metadata.bos_token_id,
-                         model_metadata.eos_token_id,
+                         model_metadata.eos_token_ids,
                          model_metadata.llm_tokenizer_path);
   rm->set_decoding_mode(decoding_mode);
   rm->set_slo_violation_early_termination(false);
@@ -486,11 +525,12 @@ void FlexFlow::top_level_task(Task const *task,
   std::vector<int> ssm_model_ids;
   std::vector<FFModel> ssm_models;
   FFConfig bm_config = ffconfig;
-  bm_config.data_parallelism_degree = bm_config.tensor_parallelism_degree =
-      bm_config.pipeline_parallelism_degree = 1;
-  //   bm_config.data_parallelism_degree = 1;
-  //   bm_config.tensor_parallelism_degree = 4;
-  //   bm_config.pipeline_parallelism_degree = 1;
+  std::cout << "SSM TP Degree: " << ssm_tp_degree << std::endl;
+  // bm_config.data_parallelism_degree = bm_config.tensor_parallelism_degree =
+  //     bm_config.pipeline_parallelism_degree = 1;
+  bm_config.data_parallelism_degree = 1;
+  bm_config.tensor_parallelism_degree = ssm_tp_degree;
+  bm_config.pipeline_parallelism_degree = 1;
   for (int ssm_id = 0; ssm_id < num_ssms; ssm_id++) {
     FFModel beam_model(bm_config);
     ssm_models.push_back(beam_model);
@@ -554,7 +594,10 @@ void FlexFlow::top_level_task(Task const *task,
       timestamps.push_back(0);
       ratios.push_back(1.0);
       total_num_requests++;
-
+      
+      if (total_num_requests >= max_trace_requests) {
+        break;
+      }
       if (verbose) {
         break;
       }
@@ -564,7 +607,7 @@ void FlexFlow::top_level_task(Task const *task,
         tree_model.generate(requests, emission_machine);
     assert(result.size() == requests.size());
     assert(result.size() == total_num_requests);
-    assert(result.size() == partition["eval_entries"].size());
+    assert(result.size() == std::min((int)partition["eval_entries"].size(), max_trace_requests));
     int i = 0;
     for (auto &entry : partition["eval_entries"]) {
       entry["original_response"] = entry["response"];
@@ -575,6 +618,9 @@ void FlexFlow::top_level_task(Task const *task,
       entry["response_length"] = result[i].output_tokens.size();
       entry["specinfer_decoding_steps"] = result[i].decoding_steps;
       i++;
+      if (i >= total_num_requests) {
+        break;
+      }
     }
 
     // Write the modified JSON to a file

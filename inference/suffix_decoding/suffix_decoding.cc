@@ -46,7 +46,8 @@ struct ModelMeta {
   std::string llm_weights_path;
   std::string llm_model_config_path;
 
-  int bos_token_id, eos_token_id;
+  int bos_token_id;
+  std::vector<int> eos_token_ids;
 };
 
 void parse_input_args(char **argv,
@@ -226,10 +227,21 @@ void get_model_meta(FilePaths &file_paths,
       llm_model_config.find("bos_token_id") == llm_model_config.end()
           ? -1
           : (int)llm_model_config.at("bos_token_id");
-  model_metadata.eos_token_id =
-      llm_model_config.find("eos_token_id") == llm_model_config.end()
-          ? -1
-          : (int)llm_model_config.at("eos_token_id");
+  // model_metadata.eos_token_id =
+  //     llm_model_config.find("eos_token_id") == llm_model_config.end()
+  //         ? -1
+  //         : (int)llm_model_config.at("eos_token_id");
+  if (llm_model_config.find("eos_token_id") != llm_model_config.end()) {
+    if (llm_model_config["eos_token_id"].is_array()) {
+      for (auto &eos_token_id : llm_model_config["eos_token_id"]) {
+        model_metadata.eos_token_ids.push_back(eos_token_id);
+      }
+    } else {
+      model_metadata.eos_token_ids.push_back(llm_model_config["eos_token_id"]);
+    }
+  } else {
+    model_metadata.eos_token_ids.push_back(-1);
+  }
 
   assert(model_metadata.llm_model_type != ModelType::UNKNOWN &&
          "Invalid LLM model type passed (or no type was passed).");
@@ -321,23 +333,31 @@ void FlexFlow::top_level_task(Task const *task,
 
   std::ifstream input_file(file_paths.trace_file_path);
   assert(input_file.good() && "Prompt file does not exist.");
+  printf("Parsing trace file: %s into JSON\n", file_paths.trace_file_path.c_str());
   nlohmann::ordered_json j = nlohmann::ordered_json::parse(input_file);
+  printf("Trace file parsed successfully. Closing file.\n");
   input_file.close();
 
   // Find the partition with name "FEATURE_EXTRACTION"
+  printf("Getting handle to trace partitions\n");
   auto &partitions = j["partitions"];
+  printf("Finding the target partition\n");
   auto it =
       std::find_if(partitions.begin(),
                    partitions.end(),
                    [target_partition](nlohmann::ordered_json const &partition) {
                      return partition["partition_name"] == target_partition;
                    });
-  nlohmann::ordered_json &partition = *it;
+  printf("Found target partition (or reached end) of JSON\n");
   if (it == partitions.end()) {
     std::cerr << "Partition " << target_partition
               << " not found in the trace file." << std::endl;
     assert(false);
   }
+  printf("Getting direct handle to target partition\n");
+  nlohmann::ordered_json &partition = *it;
+  printf("Got direct handle to target partition\n");
+  
   // check that the max prompt + response length sum in the eval_entries in the
   // partition does not exceed the max_sequence_length
   int max_prompt_response_length = 0;
@@ -363,6 +383,7 @@ void FlexFlow::top_level_task(Task const *task,
               << max_sequence_length << ")." << std::endl;
     assert(false);
   }
+  printf("Checked if prompt + response length sum is within max_sequence_length\n");
 
   // Sanity check for SpecInfer old version
   // Total verified tokens
@@ -383,7 +404,7 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_streaming_cache(false);
   rm->register_tokenizer(model_metadata.llm_model_type,
                          model_metadata.bos_token_id,
-                         model_metadata.eos_token_id,
+                         model_metadata.eos_token_ids,
                          model_metadata.llm_tokenizer_path);
   rm->set_decoding_mode(decoding_mode);
   rm->set_slo_violation_early_termination(false);
@@ -406,6 +427,7 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_suffix_tree_max_depth(max_tree_depth);
   rm->set_suffix_tree_max_spec_factor(max_spec_factor);
   rm->set_suffix_tree_online_tree_update(online_tree_update);
+  printf("Initializing suffix tree\n");
   rm->init_suffix_tree(file_paths.trace_file_path, target_partition);
 
   // Create LLM model
@@ -707,7 +729,7 @@ void FlexFlow::top_level_task(Task const *task,
   }
   */
 
-  std::string header = "llm,partition,max_tree_depth,online_tree_update,matching_strategy,max_requests_per_batch,max_tokens_per_batch,request_guid,request_step_idx,timestamp,num_speculated_tokens,num_accepted_tokens,prefix_length,speculation_score,num_generated_tokens";  
+  std::string header = "llm,partition,max_tree_depth,online_tree_update,matching_strategy,max_requests_per_batch,max_tokens_per_batch,request_guid,request_step_idx,timestamp,speculation_start_timestamp,speculation_end_timestamp,tree_update_time,num_speculated_tokens,num_accepted_tokens,prefix_length,speculation_score,num_generated_tokens";  
   // csv filepath
   // create csv filepath and add header if it doesn't exist
   
@@ -743,6 +765,9 @@ void FlexFlow::top_level_task(Task const *task,
     file << info.request_guid << "," 
           << info.request_step_idx << ","
           << info.timestamp << ","
+          << info.speculation_start_timestamp << ","
+          << info.speculation_end_timestamp << ","
+          << info.suffix_tree_update_time << ","
           << info.num_speculated_tokens << ","
           << info.num_accepted_tokens << ","
           << info.prefix_length << ","

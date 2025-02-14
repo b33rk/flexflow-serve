@@ -3393,6 +3393,7 @@ void FFModel::create_operators_from_layers() {
                config.tensor_parallelism_degree > 1 &&
                (l->op_type == OP_INC_MULTIHEAD_SELF_ATTENTION ||
                 l->op_type == OP_TREE_INC_MULTIHEAD_SELF_ATTENTION ||
+                l->op_type == OP_SPEC_INC_MULTIHEAD_SELF_ATTENTION ||
                 // mlp layer
                 is_mlp_block(layer_idx) ||
                 // llama mlp layer
@@ -4530,6 +4531,20 @@ void register_flexflow_internal_tasks(Runtime *runtime,
         registrar.global_registration = false;
       }
       runtime->register_task_variant<RequestManager::background_serving_task>(
+          registrar);
+    }
+  }
+  {
+    TaskVariantRegistrar registrar(LOAD_WEIGHT_TASK_ID, "load_weight_task");
+    registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    if (pre_register) {
+      Runtime::preregister_task_variant<FileDataLoader::load_weight_task>(
+          registrar, "load_weight_task");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime->register_task_variant<FileDataLoader::load_weight_task>(
           registrar);
     }
   }
