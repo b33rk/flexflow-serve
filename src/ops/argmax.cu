@@ -16,7 +16,7 @@
 #include "flexflow/ops/argmax.h"
 #include "flexflow/utils/cuda_helper.h"
 #include <cub/cub.cuh>
-#include "raft/matrix/detail/select_k.cuh"
+// #include "raft/matrix/detail/select_k.cuh"
 
 namespace FlexFlow {
 
@@ -25,8 +25,8 @@ __global__ void init_offset(int batch_size,
                             int total_eles,
                             int *d_offsets) {
   CUDA_KERNEL_LOOP(i, (total_eles) / vocab_size + 1) {
-    // if (i % vocab_size == 0) {
-    //   d_offsets[i / vocab_size] = i;
+    // if (i % vocab_size == 0) {weace
+    //   d_offsets[i / vocab_size] = i
     // }
     d_offsets[i] = i * vocab_size;
   }
@@ -89,8 +89,8 @@ void ArgMax::forward_kernel(ArgMaxMeta *m,
                           batch_size,
                           m->beam_search);
   
-  // // now run arg topk
-  // // assert(bc->num_active_requests() >= 0);
+  // now run arg topk
+  // assert(bc->num_active_requests() >= 0);
   // if (m->device_resources.find(stream) == m->device_resources.end()) {
   //   m->device_resources[stream] = new raft::device_resources(stream);
   // }

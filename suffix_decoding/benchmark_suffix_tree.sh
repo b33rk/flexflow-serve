@@ -45,15 +45,15 @@ online_tree_update=(
 ##################### Dataset parameters #####################
 traces=(
     cortex
-    # spider
-    # magicoder
-    # wildchat
+    spider
+    magicoder
+    wildchat
 )
 trace_files=(
     ${SUFFIX_DECODING_TRACES_FOLDER}/cortex-llama3.1-70b.json
-    # ${SUFFIX_DECODING_TRACES_FOLDER}/spider-llama3.1-70b.json
-    # ${SUFFIX_DECODING_TRACES_FOLDER}/magicoder25k-llama3.1-70b.json
-    # ${SUFFIX_DECODING_TRACES_FOLDER}/wildchat25k-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/spider-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/magicoder25k-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/wildchat25k-llama3.1-70b.json
 )
 
 

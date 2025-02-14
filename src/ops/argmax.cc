@@ -17,11 +17,11 @@
 #include "flexflow/model.h"
 #include "flexflow/utils/hash_utils.h"
 #include "legion/legion_utilities.h"
-#if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
-#include "flexflow/utils/cuda_helper.h"
-#else
-#include "flexflow/utils/hip_helper.h"
-#endif
+// #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
+// #include "flexflow/utils/cuda_helper.h"
+// #else
+// #include "flexflow/utils/hip_helper.h"
+// #endif
 
 namespace FlexFlow {
 // declare Legion names
