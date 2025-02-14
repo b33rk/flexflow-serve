@@ -6,7 +6,7 @@
 #include "flexflow/node.h"
 #include "flexflow/ops/argmax_params.h"
 #include "flexflow/utils/memory_allocator.h"
-#include "raft/core/device_resources.hpp"
+// #include "raft/core/device_resources.hpp"
 // #include <unordered_map>
 
 namespace FlexFlow {
