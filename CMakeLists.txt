@@ -296,7 +296,7 @@ if(NOT BUILD_LEGION_ONLY)
   )
   FetchContent_MakeAvailable(suffix_decoding)
   list(APPEND FLEXFLOW_INCLUDE_DIRS ${suffix_decoding_SOURCE_DIR}/src)
-  list(APPEND FLEXFLOW_SRC ${suffix_decoding_SOURCE_DIR}/src/suffix_decoding.cc)
+  list(APPEND FLEXFLOW_SRC ${suffix_decoding_SOURCE_DIR}/src/suffix_tree.cc)
 
   set(FLEXFLOW_CPP_DRV_SRC
     ${FLEXFLOW_ROOT}/src/runtime/cpp_driver.cc)
