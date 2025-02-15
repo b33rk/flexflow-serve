@@ -40,16 +40,16 @@ ssm_tp_degrees=(
 
 ##################### Dataset parameters #####################
 traces=(
-    cortex
-    spider
-    magicoder
+    # cortex
+    # spider
+    # magicoder
     wildchat
 )
 trace_files=(
-    ${SUFFIX_DECODING_TRACES_FOLDER}/cortex-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/spider-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/magicoder25k-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/wildchat25k-llama3.1-70b.json
+    # ${SUFFIX_DECODING_TRACES_FOLDER}/cortex-llama3.1-70b.json
+    # ${SUFFIX_DECODING_TRACES_FOLDER}/spider-llama3.1-70b.json
+    # ${SUFFIX_DECODING_TRACES_FOLDER}/magicoder25k-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/wildchat25k-llama3.1-70b_part1.json
 )
 
 ##################### Environment setup #####################
@@ -57,6 +57,8 @@ mkdir -p $OUTPUT_FOLDER
 make -j
 source set_python_envs.sh
 # download all models and small models
+python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="meta-llama/Llama-3.1-70B-Instruct", allow_patterns="*.safetensors", max_workers=30)'
+python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="meta-llama/Llama-3.2-1B-Instruct", allow_patterns="*.safetensors", max_workers=30)'
 python ../inference/utils/download_hf_model.py --half-precision-only $model_name ${small_model_names[@]}
 export LEGION_BACKTRACE=1
 
