@@ -9,7 +9,7 @@ cd "${BASH_SOURCE[0]%/*}/../build"
 ##################### General parameters #####################
 
 OUTPUT_FOLDER="${PWD}/../inference/output/suffix_decoding"
-SUFFIX_DECODING_TRACES_FOLDER="${PWD}/../../suffix-tree-decoding/trace/llama70b" # assume suffix-tree-decoding is cloned in the same directory as flexflow-serve
+SUFFIX_DECODING_TRACES_FOLDER="${PWD}/../../suffix-tree-decoding/trace" # assume suffix-tree-decoding is cloned in the same directory as flexflow-serve
 # model_name=meta-llama/Meta-Llama-3-70B-Instruct
 model_name=meta-llama/Llama-3.1-70B-Instruct
 NGPUS=8
@@ -50,10 +50,16 @@ traces=(
     wildchat
 )
 trace_files=(
-    ${SUFFIX_DECODING_TRACES_FOLDER}/cortex-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/spider-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/magicoder25k-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/wildchat25k-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/llama70b/cortex-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/llama70b/spider-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/magicoder25k-flexflow
+    ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/wildchat25k-flexflow.json
+)
+max_spec_factors=(
+    4.0
+    2.0
+    1.0
+    1.0
 )
 
 
@@ -69,6 +75,7 @@ export LEGION_BACKTRACE=1
 for i in "${!traces[@]}"; do
     trace=${traces[$i]}
     trace_file=${trace_files[$i]}
+    max_spec_factor=${max_spec_factors[$i]}
     if [ ! -f "$trace_file" ]; then
         echo "Trace file $trace_file does not exist. Skipping trace ${trace}."
         exit 1
@@ -88,20 +95,24 @@ for i in "${!traces[@]}"; do
     fi
     
     for partition_name in "${partitions[@]}"; do
+        # if the trace="cortex" and the partition is "SQL_FANOUT1", "SQL_FANOUT2", or "SQL_FANOUT3", set the max spec factor to 2.0
+        if [ "$trace" == "cortex" ] && [[ "$partition_name" == "SQL_FANOUT1" || "$partition_name" == "SQL_FANOUT2" || "$partition_name" == "SQL_FANOUT3" ]]; then
+            max_spec_factor=2.0
+        fi
     for matching_strategy in "${matching_strategies[@]}"; do
     for otu in "${online_tree_update[@]}"; do
-        echo "Running trace '${trace}' partition '${partition_name}' with model '${model_name}', batch size ${batch_size}, and tokens per batch ${tokens_per_batch} with matching strategy ${matching_strategy}, online tree update ${otu}, and max tree depth ${max_tree_depth}"
+        echo "Running trace '${trace}' partition '${partition_name}' with model '${model_name}', batch size ${batch_size}, and tokens per batch ${tokens_per_batch} with matching strategy ${matching_strategy}, online tree update ${otu}, and max spec factor ${max_spec_factor}"
         # create model name version where "/" is replaced with "-"
         model_name_=$(echo $model_name | tr / -)
-        output_log_file="${OUTPUT_FOLDER}/${trace}_${partition_name}_${model_name_}_${batch_size}_${matching_strategy}_otu-${otu}_max_tree_depth-${max_tree_depth}.out"
-        output_csv_file="${OUTPUT_FOLDER}/${trace}_${partition_name}_${model_name_}_${batch_size}_${matching_strategy}_otu-${otu}_max_tree_depth-${max_tree_depth}.csv"
-        trace_output_file="${OUTPUT_FOLDER}/${trace}_${partition_name}_${model_name_}_${batch_size}_${matching_strategy}_otu-${otu}_max_tree_depth-${max_tree_depth}.json"
+        output_log_file="${OUTPUT_FOLDER}/${trace}_${partition_name}_${model_name_}_${batch_size}_${matching_strategy}_otu-${otu}_max_spec_factor-${max_spec_factor}.out"
+        output_csv_file="${OUTPUT_FOLDER}/${trace}_${partition_name}_${model_name_}_${batch_size}_${matching_strategy}_otu-${otu}_max_spec_factor-${max_spec_factor}.csv"
+        trace_output_file="${OUTPUT_FOLDER}/${trace}_${partition_name}_${model_name_}_${batch_size}_${matching_strategy}_otu-${otu}_max_spec_factor-${max_spec_factor}.json"
 
         rm $output_log_file || true
         rm $output_csv_file || true
 
         otu_arg=""
-        if [ "$otu" = true ]; then
+        if [ "$otu" = false ]; then
             otu_arg="--disable-online-tree-update"
         fi
 
