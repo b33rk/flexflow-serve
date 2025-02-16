@@ -8,7 +8,7 @@ cd "${BASH_SOURCE[0]%/*}/../build"
 
 ##################### General parameters #####################
 OUTPUT_FOLDER="${PWD}/../inference/output/specinfer"
-SUFFIX_DECODING_TRACES_FOLDER="${PWD}/../../suffix-tree-decoding/trace/llama70b" # assume suffix-tree-decoding is cloned in the same directory as flexflow-serve
+SUFFIX_DECODING_TRACES_FOLDER="${PWD}/../../"
 # model_name=meta-llama/Meta-Llama-3-70B-Instruct
 model_name=meta-llama/Llama-3.1-70B-Instruct
 small_model_names=(
@@ -40,16 +40,16 @@ ssm_tp_degrees=(
 
 ##################### Dataset parameters #####################
 traces=(
-    # cortex
-    # spider
+    cortex
+    spider
     # magicoder
-    wildchat
+    # wildchat
 )
 trace_files=(
-    # ${SUFFIX_DECODING_TRACES_FOLDER}/cortex-llama3.1-70b.json
-    # ${SUFFIX_DECODING_TRACES_FOLDER}/spider-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/cortex-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/spider-llama3.1-70b.json
     # ${SUFFIX_DECODING_TRACES_FOLDER}/magicoder25k-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/wildchat25k-llama3.1-70b_part1.json
+    # ${SUFFIX_DECODING_TRACES_FOLDER}/wildchat25k-llama3.1-70b_part1.json
 )
 
 ##################### Environment setup #####################
