@@ -50,9 +50,9 @@ traces=(
     wildchat
 )
 trace_files=(
-    ${SUFFIX_DECODING_TRACES_FOLDER}/llama70b/cortex-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/llama70b/spider-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/magicoder25k-flexflow
+    ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/cortex-flexflow.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/spider-flexflow.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/magicoder25k-flexflow.json
     ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/wildchat25k-flexflow.json
 )
 max_spec_factors=(
@@ -96,8 +96,10 @@ for i in "${!traces[@]}"; do
     
     for partition_name in "${partitions[@]}"; do
         # if the trace="cortex" and the partition is "SQL_FANOUT1", "SQL_FANOUT2", or "SQL_FANOUT3", set the max spec factor to 2.0
-        if [ "$trace" == "cortex" ] && [[ "$partition_name" == "SQL_FANOUT1" || "$partition_name" == "SQL_FANOUT2" || "$partition_name" == "SQL_FANOUT3" ]]; then
+        if [ "$trace" == "cortex" ] && [[ "$partition_name" == "SQL_FANOUT1" || "$partition_name" == "SQL_FANOUT2" || "$partition_name" == "SQL_FANOUT3" || "$partition_name" == "SQL_COMBINE" ]]; then
             max_spec_factor=2.0
+        else
+            max_spec_factor=${max_spec_factors[$i]}
         fi
     for matching_strategy in "${matching_strategies[@]}"; do
     for otu in "${online_tree_update[@]}"; do

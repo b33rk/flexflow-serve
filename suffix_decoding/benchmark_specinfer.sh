@@ -12,8 +12,8 @@ SUFFIX_DECODING_TRACES_FOLDER="${PWD}/../../suffix-tree-decoding/trace/llama70b"
 # model_name=meta-llama/Meta-Llama-3-70B-Instruct
 model_name=meta-llama/Llama-3.1-70B-Instruct
 small_model_names=(
-    meta-llama/Llama-3.2-1B-Instruct
-    # meta-llama/Llama-3.1-8B-Instruct
+    # meta-llama/Llama-3.2-1B-Instruct
+    meta-llama/Llama-3.1-8B-Instruct
 )
 NGPUS=8
 NCPUS=16
