@@ -261,13 +261,16 @@ class LlamaAlignmentTest(AlignmentTest):
             torch.testing.assert_close(hf_q_proj_in, hf_k_proj_in)
             torch.testing.assert_close(hf_k_proj_in, hf_v_proj_in)
             compare(hf_q_proj_in, ff_qkv_tensor_in, label=f"QKV proj {i} input")
+            
+            bz, seq_len, hidden_dim = hf_q_proj_out.shape
+            head_dim = hidden_dim // self.num_attention_heads
+            tot_num_heads = self.num_attention_heads + 2*self.num_key_value_heads
             ff_qkv_tensor_out = get_ff_tensor(
                 ff_qkv_tensor_name, 
                 output_comparison, 
-                torch.Size([hf_q_proj_out.shape[0], hf_q_proj_out.shape[1], 3*hf_q_proj_out.shape[2]]), 
+                torch.Size([bz, seq_len, head_dim*tot_num_heads]), 
                 tp_type=TPType.PARTITION
             )
-            head_dim = hf_q_proj_out.shape[2] // self.num_attention_heads
             q_heads_per_shard = self.num_attention_heads // self.tp_degree
             kv_heads_per_shard = self.num_key_value_heads // self.tp_degree
             q_chunk_size = head_dim * q_heads_per_shard
@@ -294,7 +297,7 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_attn_tensor_in = get_ff_tensor(
                 ff_tensor_name, 
                 input_comparison, 
-                torch.Size([hf_q_proj_out.shape[0], hf_q_proj_out.shape[1], 3*hf_q_proj_out.shape[2]]),
+                torch.Size([bz, seq_len, head_dim*tot_num_heads]),
                 tp_type=TPType.PARTITION
             )
             assert torch.allclose(ff_qkv_tensor_out, ff_attn_tensor_in)

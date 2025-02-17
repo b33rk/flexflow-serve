@@ -3,14 +3,11 @@ cmake_minimum_required(VERSION 3.10)
 project(FlexFlow_SpecInfer)
 set(project_target spec_infer)
 
-
+file(GLOB MODEL_SOURCES "../models/*.cc")
 set(CPU_SRC
   ${FLEXFLOW_CPP_DRV_SRC}
   spec_infer.cc
-  ../models/llama.cc
-  ../models/opt.cc
-  ../models/falcon.cc
-  ../models/mpt.cc)
+  ${MODEL_SOURCES})
 
 if (FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
   cuda_add_executable(${project_target} ${CPU_SRC})

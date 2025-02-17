@@ -2,16 +2,14 @@ cmake_minimum_required(VERSION 3.10)
 
 project(FlexFlow_Peft)
 
+file(GLOB MODEL_SOURCES "../models/*.cc")
+
 # Normal PEFT
 set(project_target1 peft)
 set(CPU_SRC1
   ${FLEXFLOW_CPP_DRV_SRC}
   peft.cc
-  ../models/llama.cc
-  ../models/opt.cc
-  ../models/falcon.cc
-  ../models/starcoder.cc
-  ../models/mpt.cc)
+  ${MODEL_SOURCES})
 
 if (FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
   cuda_add_executable(${project_target1} ${CPU_SRC1})
@@ -41,11 +39,7 @@ set(project_target2 peft_throughput)
 set(CPU_SRC2
   ${FLEXFLOW_CPP_DRV_SRC}
   peft_throughput.cc
-  ../models/llama.cc
-  ../models/opt.cc
-  ../models/falcon.cc
-  ../models/starcoder.cc
-  ../models/mpt.cc)
+  ${MODEL_SOURCES})
 
 if (FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
   cuda_add_executable(${project_target2} ${CPU_SRC2})
@@ -76,11 +70,7 @@ set(project_target4 req_rate_benchmark)
 set(CPU_SRC4
   ${FLEXFLOW_CPP_DRV_SRC}
   req_rate_benchmark.cc
-  ../models/llama.cc
-  ../models/opt.cc
-  ../models/falcon.cc
-  ../models/starcoder.cc
-  ../models/mpt.cc)
+  ${MODEL_SOURCES})
 
 if (FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
   cuda_add_executable(${project_target4} ${CPU_SRC4})
@@ -111,11 +101,7 @@ set(project_target5 overhead_test)
 set(CPU_SRC5
   ${FLEXFLOW_CPP_DRV_SRC}
   overhead_test.cc
-  ../models/llama.cc
-  ../models/opt.cc
-  ../models/falcon.cc
-  ../models/starcoder.cc
-  ../models/mpt.cc)
+  ${MODEL_SOURCES})
 
 if (FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
   cuda_add_executable(${project_target5} ${CPU_SRC5})

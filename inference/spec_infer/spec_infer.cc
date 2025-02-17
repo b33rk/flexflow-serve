@@ -13,14 +13,7 @@
  * limitations under the License.
  */
 
-#include "flexflow/inference.h"
-#include "models/falcon.h"
-#include "models/llama.h"
-#include "models/mpt.h"
-#include "models/opt.h"
-#include <filesystem>
-#include <nlohmann/json.hpp>
-#include <wordexp.h>
+#include "models/models.h"
 
 using namespace FlexFlow;
 using namespace Legion;
@@ -37,22 +30,6 @@ struct FilePaths {
 struct ModelNames {
   std::string llm_model_name;
   std::vector<std::string> ssm_model_names;
-};
-
-struct ModelMeta {
-  ModelNames model_names;
-
-  ModelType llm_model_type;
-  std::string llm_tokenizer_path;
-  std::string llm_weights_path;
-  std::string llm_model_config_path;
-
-  int bos_token_id;
-  std::vector<int> eos_token_ids;
-
-  std::vector<ModelType> ssm_model_types;
-  std::vector<std::string> ssm_model_config_paths;
-  std::vector<std::string> ssm_model_weights_paths;
 };
 
 void parse_input_args(char **argv,
@@ -136,158 +113,19 @@ void parse_input_args(char **argv,
   wordfree(&p);
 }
 
-void get_model_meta(FilePaths &file_paths,
-                    ModelMeta &model_metadata,
-                    bool use_full_precision) {
-  if (model_metadata.model_names.llm_model_name.empty() ||
-      model_metadata.model_names.ssm_model_names.size() == 0) {
-    assert(false && "SpecInfer needs at least one LLM and one SSM for "
-                    "speculative inference");
-  }
-  model_metadata.llm_model_config_path =
-      join_path({file_paths.cache_folder_path,
-                 "configs",
-                 model_metadata.model_names.llm_model_name,
-                 "config.json"});
-  model_metadata.llm_tokenizer_path =
-      join_path({file_paths.cache_folder_path,
-                 "tokenizers",
-                 model_metadata.model_names.llm_model_name});
-  model_metadata.llm_weights_path =
-      join_path({file_paths.cache_folder_path,
-                 "weights",
-                 model_metadata.model_names.llm_model_name,
-                 use_full_precision ? "full-precision" : "half-precision"});
-
-  std::ifstream llm_config_file_handle(model_metadata.llm_model_config_path);
-  if (!llm_config_file_handle.good()) {
-    std::cout << "LLM Model config file "
-              << model_metadata.llm_model_config_path << " not found."
-              << std::endl;
-    assert(false);
-  }
-  json llm_model_config = json::parse(llm_config_file_handle,
-                                      /*parser_callback_t */ nullptr,
-                                      /*allow_exceptions */ true,
-                                      /*ignore_comments */ true);
-
-  model_metadata.llm_model_type = ModelType::UNKNOWN;
-  auto architectures = llm_model_config["architectures"];
-  for (auto const &str : architectures) {
-    if (str == "LlamaForCausalLM" || str == "LLaMAForCausalLM") {
-      model_metadata.llm_model_type = ModelType::LLAMA;
-      break;
-    } else if (str == "OPTForCausalLM") {
-      model_metadata.llm_model_type = ModelType::OPT;
-      break;
-    } else if (str == "RWForCausalLM" || str == "FalconForCausalLM") {
-      model_metadata.llm_model_type = ModelType::FALCON;
-      break;
-    } else if (str == "MPTForCausalLM") {
-      model_metadata.llm_model_type = ModelType::MPT;
-      break;
-    }
-  }
-  model_metadata.bos_token_id =
-      llm_model_config.find("bos_token_id") == llm_model_config.end()
-          ? -1
-          : (int)llm_model_config.at("bos_token_id");
-  // parse eos token id, which can be either a single integer or an array of
-  // integers. Convert to std::vector<int>
-  std::vector<int> eos_token_ids;
-  if (llm_model_config.find("eos_token_id") != llm_model_config.end()) {
-    if (llm_model_config["eos_token_id"].is_array()) {
-      for (auto &eos_token_id : llm_model_config["eos_token_id"]) {
-        model_metadata.eos_token_ids.push_back(eos_token_id);
-      }
-    } else {
-      model_metadata.eos_token_ids.push_back(llm_model_config["eos_token_id"]);
-    }
-  } else {
-    model_metadata.eos_token_ids.push_back(-1);
-  }
-
-  for (auto ssm_model_name : model_metadata.model_names.ssm_model_names) {
-    std::string ssm_config_path = join_path({file_paths.cache_folder_path,
-                                             "configs",
-                                             ssm_model_name,
-                                             "config.json"});
-    std::string ssm_tokenizer_path =
-        join_path({file_paths.cache_folder_path, "tokenizers", ssm_model_name});
-    std::string ssm_weights_path =
-        join_path({file_paths.cache_folder_path,
-                   "weights",
-                   ssm_model_name,
-                   use_full_precision ? "full-precision" : "half-precision"});
-
-    std::ifstream ssm_config_file_handle(ssm_config_path);
-    if (!ssm_config_file_handle.good()) {
-      std::cout << "SSM Model config file " << ssm_config_path << " not found."
-                << std::endl;
-      assert(false);
-    }
-    json ssm_model_config = json::parse(ssm_config_file_handle,
-                                        /*parser_callback_t */ nullptr,
-                                        /*allow_exceptions */ true,
-                                        /*ignore_comments */ true);
-
-    ModelType ssm_model_type = ModelType::UNKNOWN;
-    auto architectures = ssm_model_config["architectures"];
-    for (auto const &str : architectures) {
-      if (str == "LlamaForCausalLM" || str == "LLaMAForCausalLM") {
-        ssm_model_type = ModelType::LLAMA;
-        break;
-      } else if (str == "OPTForCausalLM") {
-        ssm_model_type = ModelType::OPT;
-        break;
-      } else if (str == "RWForCausalLM") {
-        ssm_model_type = ModelType::FALCON;
-        break;
-      } else if (str == "MPTForCausalLM") {
-        ssm_model_type = ModelType::MPT;
-        break;
-      }
-    }
-    int ssm_bos_id =
-        ssm_model_config.find("bos_token_id") == ssm_model_config.end()
-            ? -1
-            : (int)ssm_model_config.at("bos_token_id");
-    // int ssm_eos_id =
-    //     ssm_model_config.find("eos_token_id") == ssm_model_config.end()
-    //         ? -1
-    //         : (int)ssm_model_config.at("eos_token_id");
-    // if (ssm_bos_id != model_metadata.bos_token_id ||
-    //     ssm_eos_id != model_metadata.eos_token_id) {
-    //   printf("Warning: bos/eos token id mismatch between LLM and one of the "
-    //          "SSMs!\n");
-    // }
-    model_metadata.ssm_model_types.push_back(ssm_model_type);
-    model_metadata.ssm_model_config_paths.push_back(ssm_config_path);
-    model_metadata.ssm_model_weights_paths.push_back(ssm_weights_path);
-  }
-
-  assert(model_metadata.llm_model_type != ModelType::UNKNOWN &&
-         "Invalid LLM model type passed (or no type was passed).");
-
-  for (auto mt : model_metadata.ssm_model_types) {
-    if (mt == ModelType::UNKNOWN) {
-      assert(false && "One of the SSM model types passed is invalid.");
-    }
-  }
-}
 
 void FlexFlow::top_level_task(Task const *task,
                               std::vector<PhysicalRegion> const &regions,
                               Context ctx,
                               Runtime *runtime) {
-  FFConfig ffconfig;
   FilePaths file_paths;
-  ModelMeta model_metadata;
+  ModelNames model_names;
+  GenerationConfig generationConfig;
   bool use_full_precision = false;
   bool verbose = false;
-  int max_requests_per_batch = 16;
+  int max_requests_per_batch = 8;
   int max_tokens_per_batch = 256;
-  int max_sequence_length = 1024;
+  int max_sequence_length = 2048;
   int max_spec_tree_token_num = 23;
   int expansion_degree = 3;
 
@@ -297,7 +135,7 @@ void FlexFlow::top_level_task(Task const *task,
   parse_input_args(argv,
                    argc,
                    file_paths,
-                   model_metadata.model_names,
+                   model_names,
                    use_full_precision,
                    verbose,
                    max_requests_per_batch,
@@ -305,27 +143,14 @@ void FlexFlow::top_level_task(Task const *task,
                    max_sequence_length,
                    expansion_degree);
 
-  get_model_meta(file_paths, model_metadata, use_full_precision);
 
-  assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
-             ffconfig.pipeline_parallelism_degree ==
-         ffconfig.numNodes * ffconfig.workersPerNode);
-
-  // Create SentencePiece tokenizer or OPT tokenizer
-  GenerationConfig generationConfig;
-  InferenceManager *im = InferenceManager::get_inference_manager();
   RequestManager *rm = RequestManager::get_request_manager();
+  rm->set_verbose(verbose);
   rm->set_max_requests_per_batch(max_requests_per_batch);
   rm->set_max_tokens_per_batch(max_tokens_per_batch);
   rm->set_max_spec_tree_token_num(max_spec_tree_token_num);
   rm->set_max_sequence_length(max_sequence_length);
-  rm->register_tokenizer(model_metadata.llm_model_type,
-                         model_metadata.bos_token_id,
-                         model_metadata.eos_token_ids,
-                         model_metadata.llm_tokenizer_path);
   rm->register_output_filepath(file_paths.output_file_path);
-
-  // first decoding step: 3 results
   if (expansion_degree != -1) {
     rm->push_spec_infer_tree_width(1);
     rm->push_spec_infer_tree_width(1);
@@ -333,83 +158,22 @@ void FlexFlow::top_level_task(Task const *task,
   }
 
   // Create LLM model
-  FFModel tree_model(ffconfig, ffconfig.cpu_offload);
-  if (model_metadata.llm_model_type == ModelType::LLAMA) {
-    LLAMA::create_llama_model(tree_model,
-                              model_metadata.llm_model_config_path,
-                              model_metadata.llm_weights_path,
-                              TREE_VERIFY_MODE,
-                              generationConfig,
-                              use_full_precision);
-  } else if (model_metadata.llm_model_type == ModelType::OPT) {
-    OPT::create_opt_model(tree_model,
-                          model_metadata.llm_model_config_path,
-                          model_metadata.llm_weights_path,
-                          TREE_VERIFY_MODE,
-                          use_full_precision);
-  } else if (model_metadata.llm_model_type == ModelType::FALCON) {
-    FALCON::create_falcon_model(tree_model,
-                                model_metadata.llm_model_config_path,
-                                model_metadata.llm_weights_path,
-                                TREE_VERIFY_MODE,
-                                use_full_precision);
-  } else if (model_metadata.llm_model_type == ModelType::MPT) {
-    MPT::create_mpt_model(tree_model,
-                          model_metadata.llm_model_config_path,
-                          model_metadata.llm_weights_path,
-                          TREE_VERIFY_MODE,
-                          generationConfig,
-                          use_full_precision);
-  } else {
-    assert(false && "Invalid LLM model type passed (or no type was passed).");
-  }
+  FFModel tree_model = build_model(model_names.llm_model_name,
+                                  file_paths.cache_folder_path,
+                                  use_full_precision,
+                                  generationConfig,
+                                  TREE_VERIFY_MODE);
 
   // Create SSM models
-  int num_ssms = model_metadata.ssm_model_types.size();
-  std::vector<int> ssm_model_ids;
   std::vector<FFModel> ssm_models;
-  FFConfig bm_config = ffconfig;
-  bm_config.data_parallelism_degree = bm_config.tensor_parallelism_degree =
-      bm_config.pipeline_parallelism_degree = 1;
-  for (int ssm_id = 0; ssm_id < num_ssms; ssm_id++) {
-    FFModel beam_model(bm_config);
-    ssm_models.push_back(beam_model);
-  }
-
-  for (int ssm_id = 0; ssm_id < num_ssms; ssm_id++) {
-    FFModel &beam_model = ssm_models[ssm_id];
-    if (model_metadata.ssm_model_types[ssm_id] == ModelType::LLAMA) {
-      LLAMA::create_llama_model(beam_model,
-                                model_metadata.ssm_model_config_paths[ssm_id],
-                                model_metadata.ssm_model_weights_paths[ssm_id],
-                                BEAM_SEARCH_MODE,
-                                generationConfig,
-                                use_full_precision);
-    } else if (model_metadata.ssm_model_types[ssm_id] == ModelType::OPT) {
-      OPT::create_opt_model(beam_model,
-                            model_metadata.ssm_model_config_paths[ssm_id],
-                            model_metadata.ssm_model_weights_paths[ssm_id],
-                            BEAM_SEARCH_MODE,
-                            use_full_precision);
-    } else if (model_metadata.ssm_model_types[ssm_id] == ModelType::FALCON) {
-      FALCON::create_falcon_model(
-          beam_model,
-          model_metadata.ssm_model_config_paths[ssm_id],
-          model_metadata.ssm_model_weights_paths[ssm_id],
-          BEAM_SEARCH_MODE,
-          use_full_precision);
-    } else if (model_metadata.ssm_model_types[ssm_id] == ModelType::MPT) {
-      MPT::create_mpt_model(beam_model,
-                            model_metadata.ssm_model_config_paths[ssm_id],
-                            model_metadata.ssm_model_weights_paths[ssm_id],
-                            BEAM_SEARCH_MODE,
-                            generationConfig,
-                            use_full_precision);
-    } else {
-      assert(false && "Invalid SSM model type passed.");
-    }
-
+  for (auto ssm_model_name : model_names.ssm_model_names) {
+    FFModel beam_model = build_model(ssm_model_name,
+                                    file_paths.cache_folder_path,
+                                    use_full_precision,
+                                    generationConfig,
+                                    BEAM_SEARCH_MODE);
     rm->register_ssm_model(&beam_model);
+    ssm_models.push_back(beam_model);
   }
 
   rm->start_background_server(&tree_model);

@@ -4,14 +4,12 @@ project(FlexFlow_IncrDecoding)
 set(project_target incr_decoding)
 
 
+file(GLOB MODEL_SOURCES "../models/*.cc")
+
 set(CPU_SRC
   ${FLEXFLOW_CPP_DRV_SRC}
   incr_decoding.cc
-  ../models/llama.cc
-  ../models/opt.cc
-  ../models/falcon.cc
-  ../models/starcoder.cc
-  ../models/mpt.cc)
+  ${MODEL_SOURCES})
 
 if (FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
   cuda_add_executable(${project_target} ${CPU_SRC})
