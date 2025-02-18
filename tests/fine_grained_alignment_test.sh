@@ -10,6 +10,9 @@ PP_DEGREE=${PP_DEGREE:-1}
 CACHE_PATH=${FF_CACHE_PATH:-"~/.cache/flexflow"}
 NUM_STEPS=${NUM_STEPS:-2}
 FULL_PRECISION=${FULL_PRECISION:-true}
+FUSION=${FUSION:-true}
+export LEGION_BACKTRACE=1
+export FF_DEBG_NO_WEIGHTS=1
 
 cleanup() {
     eval rm -rf "${CACHE_PATH}/debug" ./fine_grained_alignment_config.json ./inference/output/fine_grained_alignment_test_ff.txt ./inference/output/fine_grained_alignment_test_hf.txt
@@ -27,11 +30,6 @@ echo '["Three tips for staying healthy are: "]' > ./inference/prompt/test.json
 
 # Create output folder
 mkdir -p ./inference/output
-
-# Enable backtrace in case we run into a segfault or assertion failure
-export LEGION_BACKTRACE=1
-export FF_DEBG_NO_WEIGHTS=1
-FUSION=true
 
 
 # Check if the Python code executed successfully
@@ -67,12 +65,12 @@ json_config=$(cat <<-END
         "data_parallelism_degree": 1,
         "tensor_parallelism_degree": ${TP_DEGREE},
         "pipeline_parallelism_degree": ${PP_DEGREE},
-        "inference_debugging": ${FULL_PRECISION},
+        "inference_debugging": true,
         "fusion": ${FUSION},
         "refresh_cache": false,
         "llm_model": "${MODEL_NAME}",
         "cache_path": "${CACHE_PATH}",
-        "full_precision": false,
+        "full_precision": ${FULL_PRECISION},
         "prompt": "./inference/prompt/test.json",
         "max_length": $MAX_LENGTH,
         "output_file": "./inference/output/fine_grained_alignment_test_ff.txt"

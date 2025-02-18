@@ -289,9 +289,9 @@ class LlamaAlignmentTest(AlignmentTest):
                 ff_qproj_out = np.concatenate((ff_qproj_out, ff_qproj_out_), axis=0)
                 ff_kproj_out = np.concatenate((ff_kproj_out, ff_kproj_out_), axis=0)
                 ff_vproj_out = np.concatenate((ff_vproj_out, ff_vproj_out_), axis=0)
-            compare_loaded_tensors(hf_q_proj_out.T, ff_qproj_out)
-            compare_loaded_tensors(hf_k_proj_out.T, ff_kproj_out)
-            compare_loaded_tensors(hf_v_proj_out.T, ff_vproj_out)
+            compare_loaded_tensors(hf_q_proj_out.T, ff_qproj_out, label=f"Q proj {i} output")
+            compare_loaded_tensors(hf_k_proj_out.T, ff_kproj_out, label=f"K proj {i} output")
+            compare_loaded_tensors(hf_v_proj_out.T, ff_vproj_out, label=f"V proj {i} output")
             ff_tensor_name = f"layers.{i}.layers.{i}.self_attn"
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input", ff_tensor_type="input", hf_tensor_idx=0, ff_tensor_idx=0)
             ff_attn_tensor_in = get_ff_tensor(
