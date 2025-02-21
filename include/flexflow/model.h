@@ -64,11 +64,6 @@ enum TaskIDs {
   EXPERTS_FWD_TASK_ID,
   EXPERTS_BWD_TASK_ID,
   EXPERTS_INF_TASK_ID,
-  CONV2D_INIT_TASK_ID,
-  CONV2D_INIT_PARA_TASK_ID,
-  CONV2D_FWD_TASK_ID,
-  CONV2D_BWD_TASK_ID,
-  CONV2D_UPD_TASK_ID,
   DROPOUT_INIT_TASK_ID,
   DROPOUT_FWD_TASK_ID,
   DROPOUT_BWD_TASK_ID,
@@ -76,34 +71,15 @@ enum TaskIDs {
   EMBED_FWD_TASK_ID,
   EMBED_INF_TASK_ID,
   EMBED_BWD_TASK_ID,
-  GATHER_INIT_TASK_ID,
-  GATHER_FWD_TASK_ID,
-  GATHER_BWD_TASK_ID,
   GROUP_BY_INIT_TASK_ID,
   GROUP_BY_FWD_TASK_ID,
   GROUP_BY_BWD_TASK_ID,
-  CACHE_INIT_TASK_ID,
-  CACHE_FWD_TASK_ID,
-  CACHE_UPDATE_TASK_ID,
   CAST_INIT_TASK_ID,
   CAST_FWD_TASK_ID,
   CAST_BWD_TASK_ID,
   AGGREGATE_INIT_TASK_ID,
   AGGREGATE_FWD_TASK_ID,
   AGGREGATE_BWD_TASK_ID,
-  AGG_SPEC_INIT_TASK_ID,
-  AGG_SPEC_FWD_TASK_ID,
-  AGG_SPEC_BWD_TASK_ID,
-  POOL2D_INIT_TASK_ID,
-  POOL2D_FWD_TASK_ID,
-  POOL2D_BWD_TASK_ID,
-  BATCHNORM_INIT_TASK_ID,
-  BATCHNORM_INIT_PARA_TASK_ID,
-  BATCHNORM_FWD_TASK_ID,
-  BATCHNORM_BWD_TASK_ID,
-  BATCHMATMUL_INIT_TASK_ID,
-  BATCHMATMUL_FWD_TASK_ID,
-  BATCHMATMUL_BWD_TASK_ID,
   LAYERNORM_INIT_TASK_ID,
   LAYERNORM_FWD_TASK_ID,
   LAYERNORM_INF_TASK_ID,
@@ -133,29 +109,11 @@ enum TaskIDs {
   LORA_LINEAR_REG_TASK_ID,
   LORA_LINEAR_INF_TASK_ID,
   LORA_LINEAR_PEFT_BWD_TASK_ID,
-  FLAT_INIT_TASK_ID,
-  FLAT_FWD_TASK_ID,
-  FLAT_BWD_TASK_ID,
   SOFTMAX_INIT_TASK_ID,
   SOFTMAX_FWD_TASK_ID,
   SOFTMAX_BWD_TASK_ID,
   SOFTMAX_INF_TASK_ID,
   SOFTMAX_PEFT_BWD_TASK_ID,
-  CONCAT_INIT_TASK_ID,
-  CONCAT_FWD_TASK_ID,
-  CONCAT_BWD_TASK_ID,
-  SPLIT_INIT_TASK_ID,
-  SPLIT_FWD_TASK_ID,
-  SPLIT_BWD_TASK_ID,
-  REDUCE_INIT_TASK_ID,
-  REDUCE_FWD_TASK_ID,
-  REDUCE_BWD_TASK_ID,
-  RESHAPE_INIT_TASK_ID,
-  RESHAPE_FWD_TASK_ID,
-  RESHAPE_BWD_TASK_ID,
-  REVERSE_INIT_TASK_ID,
-  REVERSE_FWD_TASK_ID,
-  REVERSE_BWD_TASK_ID,
   TOPK_INIT_TASK_ID,
   TOPK_FWD_TASK_ID,
   TOPK_BWD_TASK_ID,
@@ -167,12 +125,6 @@ enum TaskIDs {
   ARGMAX_INIT_TASK_ID,
   ARGMAX_BEAM_INF_TASK_ID,
   ARGMAX_NORM_INF_TASK_ID,
-  TRANSPOSE_INIT_TASK_ID,
-  TRANSPOSE_FWD_TASK_ID,
-  TRANSPOSE_BWD_TASK_ID,
-  ATTENTION_INIT_TASK_ID,
-  ATTENTION_FWD_TASK_ID,
-  ATTENTION_BWD_TASK_ID,
   RMSNORM_INIT_TASK_ID,
   RMSNORM_FWD_TASK_ID,
   RMSNORM_INF_TASK_ID,
@@ -338,18 +290,12 @@ class NoOp;
 ParallelConfig get_basic_data_parallel_config(int num_parts, int dims);
 
 class Aggregate;
-class AggregateSpec;
-class BatchMatmul;
 class Cast;
-class Concat;
-class Conv2D;
 class Dropout;
 class ElementBinary;
 class ElementUnary;
 class Embedding;
 class Experts;
-class Flat;
-class Gather;
 class Group_by;
 class LayerNorm;
 class ResidualLayerNorm;
@@ -360,14 +306,9 @@ class LoraLinear;
 class MultiHeadAttention;
 class IncMultiHeadSelfAttention;
 class TreeIncMultiHeadSelfAttention;
-class Pool2D;
-class Reduce;
-class Reshape;
 class Softmax;
-class Split;
 class TopK;
 class ArgTopK;
-class Transpose;
 class RMSNorm;
 class ResidualRMSNorm;
 class BeamTopK;
@@ -507,22 +448,6 @@ public:
   Tensor sigmoid(const Tensor x, char const *name = NULL);
   Tensor tanh(const Tensor x, char const *name = NULL);
   Tensor elu(const Tensor x, bool inplace = true, char const *name = NULL);
-  // Add a 2D convolutional layer
-  Tensor conv2d(const Tensor input,
-                int outChannels,
-                int kernelH,
-                int kernelW,
-                int strideH,
-                int strideW,
-                int paddingH,
-                int paddingW,
-                ActiMode activation = AC_MODE_NONE,
-                int groups = 1,
-                bool use_bias = true,
-                Layer const *shared_op = NULL,
-                Initializer *krenel_initializer = NULL,
-                Initializer *bias_initializer = NULL,
-                char const *name = NULL);
   // Add a dropout layer
   Tensor dropout(const Tensor input,
                  float rate,
@@ -537,11 +462,6 @@ public:
                    Layer const *shared_op = NULL,
                    Initializer *kernel_initializer = NULL,
                    char const *name = NULL);
-  // Add a gather layer
-  Tensor gather(const Tensor input,
-                const Tensor index,
-                int dim,
-                char const *name = NULL);
   // Add a group_by layer
   void group_by(const Tensor data,
                 const Tensor assign,
@@ -549,33 +469,11 @@ public:
                 int n,
                 float alpha,
                 char const *name = NULL);
-  // Add a cache layer
-  Tensor cache(Tensor const &input,
-               int num_batches,
-               std::function<float(float *, void const *, void const *, int)>
-                   score_f = {},
-               char const *name = NULL);
   // Add aggregate layer
   Tensor aggregate(Tensor const *inputs,
                    int n,
                    float lambda_bal,
                    char const *name = NULL);
-  // Add aggregate_spec layer
-  Tensor aggregate_spec(Tensor const *inputs,
-                        int n,
-                        float lambda_bal,
-                        char const *name = NULL);
-  // Add a 2D pooling layer
-  Tensor pool2d(const Tensor input,
-                int kernelH,
-                int kernelW,
-                int strideH,
-                int strideW,
-                int paddingH,
-                int paddingW,
-                PoolType type = POOL_MAX,
-                ActiMode activation = AC_MODE_NONE,
-                char const *name = NULL);
   // Add a layer_norm layer
   Tensor layer_norm(const Tensor input,
                     std::vector<int> const &axes,
@@ -613,15 +511,6 @@ public:
                             const Tensor input2,
                             DataType data_type = DT_NONE,
                             char const *name = NULL);
-  // Add a batch_norm layer
-  Tensor
-      batch_norm(const Tensor input, bool relu = true, char const *name = NULL);
-  // Add a batch_matmul layer
-  Tensor batch_matmul(const Tensor A,
-                      const Tensor B,
-                      int a_seq_length_dim = -1,
-                      int b_seq_length_dim = -1,
-                      char const *name = nullptr);
   // Add a root mean square layer
   Tensor rms_norm(const Tensor input,
                   float eps,
@@ -657,9 +546,6 @@ public:
                char const *name = NULL);
   // Add a cast layer
   Tensor cast(const Tensor input, DataType dtype, char const *name = nullptr);
-  // Add a concat layer
-  Tensor
-      concat(int n, Tensor const *tensors, int axis, char const *name = NULL);
   // Add an experts layer
   Tensor experts(
       Tensor const *inputs,
@@ -670,11 +556,6 @@ public:
       int experts_num_layers = 1,        // number of linear layers per expert
       int experts_internal_dim_size = 0, // hidden dimension for internal layers
       char const *name = NULL);
-  // Add a mean layer
-  Tensor mean(const Tensor input,
-              std::vector<int> const &dims,
-              bool keepdims,
-              char const *name);
   // Add a moe layer (wrapping topk, group_by and aggregate operators)
   Tensor moe(const Tensor input,
              int num_exp,
@@ -682,31 +563,11 @@ public:
              int expert_hidden_size,
              float alpha,
              float lambda);
-  // Add a split layer
-  void split(const Tensor input,
-             Tensor *outputs,
-             std::vector<int> const &split,
-             int axis,
-             char const *name = NULL);
-  // Add a flat layer
-  Tensor flat(const Tensor input, char const *name = NULL);
   // Add a softmax layer
   Tensor softmax(const Tensor input,
                  int dim = -1,
                  DataType data_type = DT_NONE,
                  char const *name = NULL);
-  // Create input tensors and constants
-  Tensor transpose(const Tensor input,
-                   std::vector<int> const &perm,
-                   char const *name = NULL);
-  Tensor reduce_sum(const Tensor input,
-                    std::vector<int> const &axes,
-                    bool keepdims = false,
-                    char const *name = nullptr);
-  Tensor reshape(const Tensor input,
-                 std::vector<int> const &shape,
-                 char const *name = NULL);
-  Tensor reverse(const Tensor input, int axis, char const *name = NULL);
   void top_k(const Tensor input,
              Tensor *outputs,
              int k,
@@ -1184,18 +1045,7 @@ public:
       std::unordered_map<
           std::pair<std::vector<ParallelTensorShape>, AggregateParams>,
           Aggregate *>,
-      std::unordered_map<std::pair<ParallelTensorShape, AggregateSpecParams>,
-                         AggregateSpec *>,
-      std::unordered_map<
-          std::pair<std::pair<ParallelTensorShape, ParallelTensorShape>,
-                    BatchMatmulParams>,
-          BatchMatmul *>,
       std::unordered_map<std::pair<ParallelTensorShape, CastParams>, Cast *>,
-      std::unordered_map<
-          std::pair<std::vector<ParallelTensorShape>, ConcatParams>,
-          Concat *>,
-      std::unordered_map<std::pair<ParallelTensorShape, Conv2DParams>,
-                         Conv2D *>,
       std::unordered_map<std::pair<ParallelTensorShape, DropoutParams>,
                          Dropout *>,
       std::unordered_map<
@@ -1209,11 +1059,6 @@ public:
       std::unordered_map<
           std::pair<std::vector<ParallelTensorShape>, ExpertsParams>,
           Experts *>,
-      std::unordered_map<std::pair<ParallelTensorShape, FlatParams>, Flat *>,
-      std::unordered_map<
-          std::pair<std::pair<ParallelTensorShape, ParallelTensorShape>,
-                    GatherParams>,
-          Gather *>,
       std::unordered_map<
           std::pair<std::pair<ParallelTensorShape, ParallelTensorShape>,
                     Group_byParams>,
@@ -1239,13 +1084,6 @@ public:
           std::pair<std::pair<ParallelTensorShape, ParallelTensorShape>,
                     LoraLinearParams>,
           LoraLinear *>,
-      std::unordered_map<std::pair<ParallelTensorShape, Pool2DParams>,
-                         Pool2D *>,
-      std::unordered_map<std::pair<std::tuple<ParallelTensorShape,
-                                              ParallelTensorShape,
-                                              ParallelTensorShape>,
-                                   MultiHeadAttentionParams>,
-                         MultiHeadAttention *>,
       std::unordered_map<
           std::pair<ParallelTensorShape, IncMultiHeadSelfAttentionParams>,
           IncMultiHeadSelfAttention *>,
@@ -1261,18 +1099,11 @@ public:
       std::unordered_map<
           std::pair<ParallelTensorShape, TreeIncMultiHeadSelfAttentionParams>,
           TreeIncMultiHeadSelfAttention *>,
-      std::unordered_map<std::pair<ParallelTensorShape, ReduceParams>,
-                         Reduce *>,
-      std::unordered_map<std::pair<ParallelTensorShape, ReshapeParams>,
-                         Reshape *>,
-      std::unordered_map<std::pair<ParallelTensorShape, SplitParams>, Split *>,
       std::unordered_map<std::pair<ParallelTensorShape, SoftmaxParams>,
                          Softmax *>,
       std::unordered_map<std::pair<ParallelTensorShape, TopKParams>, TopK *>,
       std::unordered_map<std::pair<ParallelTensorShape, ArgTopKParams>,
                          ArgTopK *>,
-      std::unordered_map<std::pair<ParallelTensorShape, TransposeParams>,
-                         Transpose *>,
       std::unordered_map<std::pair<ParallelTensorShape, RMSNormParams>,
                          RMSNorm *>,
       std::unordered_map<

@@ -17,27 +17,18 @@
 #include "flexflow/ffconst_utils.h"
 #include "flexflow/model.h"
 #include "flexflow/ops/add_bias_residual_layer_norm.h"
-#include "flexflow/ops/batch_norm.h"
 #include "flexflow/ops/element_unary.h"
 #include "flexflow/ops/embedding.h"
-#include "flexflow/ops/flat.h"
 #include "flexflow/ops/fused.h"
 #include "flexflow/ops/inc_multihead_self_attention.h"
-#include "flexflow/ops/kernels/batch_matmul_kernels.h"
-#include "flexflow/ops/kernels/concat_kernels.h"
-#include "flexflow/ops/kernels/conv_2d_kernels.h"
 #include "flexflow/ops/kernels/dropout_kernels.h"
 #include "flexflow/ops/kernels/element_binary_kernels.h"
 #include "flexflow/ops/kernels/embedding_kernels.h"
-#include "flexflow/ops/kernels/flat_kernels.h"
 #include "flexflow/ops/kernels/linear_kernels.h"
 #include "flexflow/ops/kernels/lora_linear_kernels.h"
-#include "flexflow/ops/kernels/pool_2d_kernels.h"
-#include "flexflow/ops/kernels/reshape_kernels.h"
 #include "flexflow/ops/kernels/residual_rms_norm_kernels.h"
 #include "flexflow/ops/kernels/rms_norm_kernels.h"
 #include "flexflow/ops/kernels/softmax_kernels.h"
-#include "flexflow/ops/kernels/transpose_kernels.h"
 #include "flexflow/ops/layer_norm.h"
 #include "flexflow/ops/residual_layer_norm.h"
 #include "flexflow/ops/sigmoid_silu_multi.h"
@@ -188,33 +179,6 @@ __host__ void
 #endif
     }
     switch (fused->op_op_type[op]) {
-      case OP_CONCAT: {
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        ConcatMeta *m = (ConcatMeta *)metas->meta[op];
-        int num_inputs = fused->op_num_inputs[op];
-        Kernels::Concat::forward_kernel_wrapper(m,
-                                                my_output_accessor[0],
-                                                my_input_accessor,
-                                                num_inputs,
-                                                m->legion_axis);
-        break;
-      }
-      case OP_BATCHNORM: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_accessor[0].domain.get_dim() == 5);
-        assert(my_output_accessor[0].domain.get_dim() == 5);
-        assert(my_weight_accessor[0].domain.get_dim() == 2);
-        assert(my_weight_accessor[1].domain.get_dim() == 2);
-        BatchNormMeta *m = (BatchNormMeta *)metas->meta[op];
-        BatchNorm::forward_kernel(m,
-                                  my_input_accessor[0].get_float_ptr(),
-                                  my_output_accessor[0].get_float_ptr(),
-                                  my_weight_accessor[0].get_float_ptr(),
-                                  my_weight_accessor[1].get_float_ptr());
-        break;
-      }
       case OP_LINEAR: {
         assert(fused->op_num_inputs[op] == 1);
         assert(fused->op_num_outputs[op] == 1);
@@ -267,44 +231,6 @@ __host__ void
         assert(my_input_accessor[1].ptr == my_output_accessor[0].ptr);
         Kernels::LoraLinear::inference_kernel_wrapper(
             m, bc, my_input_accessor[0], my_output_accessor[0]);
-        break;
-      }
-      case OP_BATCHMATMUL: {
-        assert(fused->op_num_inputs[op] == 2);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        Domain out_domain = my_output_accessor[0].domain;
-        Domain a_domain = my_input_accessor[0].domain;
-        Domain b_domain = my_input_accessor[1].domain;
-        int m = b_domain.hi()[0] - b_domain.lo()[0] + 1;
-        assert(m == out_domain.hi()[0] - out_domain.lo()[0] + 1);
-        int n = a_domain.hi()[1] - a_domain.lo()[1] + 1;
-        assert(n == out_domain.hi()[1] - out_domain.lo()[1] + 1);
-        int k = a_domain.hi()[0] - a_domain.lo()[0] + 1;
-        assert(k == b_domain.hi()[1] - b_domain.lo()[1] + 1);
-        assert(a_domain.get_dim() == b_domain.get_dim());
-        assert(a_domain.get_dim() == out_domain.get_dim());
-        int batch = 1;
-        for (int i = 2; i < a_domain.get_dim(); i++) {
-          int dim_size = a_domain.hi()[i] - a_domain.lo()[i] + 1;
-          assert(dim_size == b_domain.hi()[i] - b_domain.lo()[i] + 1);
-          assert(dim_size == out_domain.hi()[i] - out_domain.lo()[i] + 1);
-          batch *= dim_size;
-        }
-        BatchMatmulMeta *meta = (BatchMatmulMeta *)metas->meta[op];
-        Kernels::BatchMatmul::forward_kernel_wrapper(
-            meta,
-            my_output_accessor[0].get_float_ptr(),
-            my_input_accessor[0].get_float_ptr(),
-            my_input_accessor[1].get_float_ptr(),
-            (float const *)nullptr,
-            m,
-            n,
-            k,
-            batch,
-            meta->a_seq_length_dim,
-            meta->b_seq_length_dim,
-            fused->iter_config.seq_length);
         break;
       }
       case OP_EW_ADD:
@@ -813,38 +739,6 @@ __host__ void FusedOp::peft_bwd_task(Task const *task,
 #endif
     }
     switch (fused->op_op_type[op]) {
-      case OP_CONCAT: {
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        // TODO: implement this
-        assert(false);
-        // ConcatMeta *m = (ConcatMeta *)metas->meta[op];
-        // int num_inputs = fused->op_num_inputs[op];
-        // Kernels::Concat::peft_bwd_kernel_wrapper(m,
-        //                                          my_output_accessor[0],
-        //                                          my_input_accessor,
-        //                                         num_inputs,
-        //                                          m->legion_axis);
-        break;
-      }
-      case OP_BATCHNORM: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_grad_accessor[0].domain.get_dim() == 5);
-        assert(my_output_grad_accessor[0].domain.get_dim() == 5);
-        assert(my_weight_accessor[0].domain.get_dim() == 2);
-        assert(my_weight_accessor[1].domain.get_dim() == 2);
-        // TODO: implement this
-        assert(false);
-        // BatchNormMeta *m = (BatchNormMeta *)metas->meta[op];
-        // BatchNorm::peft_bwd_kernel_kernel(
-        //     m,
-        //     my_input_accessor[0].get_float_ptr(),
-        //     my_output_accessor[0].get_float_ptr(),
-        //     my_weight_accessor[0].get_float_ptr(),
-        //     my_weight_accessor[1].get_float_ptr());
-        break;
-      }
       case OP_LINEAR: {
         assert(fused->op_num_inputs[op] == 1);
         assert(fused->op_num_outputs[op] == 1);
@@ -899,46 +793,6 @@ __host__ void FusedOp::peft_bwd_task(Task const *task,
             shard_id,
             my_input_grad_accessor[0],
             my_output_grad_accessor[0]);
-        break;
-      }
-      case OP_BATCHMATMUL: {
-        assert(fused->op_num_inputs[op] == 2);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        Domain out_domain = my_output_grad_accessor[0].domain;
-        Domain a_domain = my_input_grad_accessor[0].domain;
-        Domain b_domain = my_input_grad_accessor[1].domain;
-        int m = b_domain.hi()[0] - b_domain.lo()[0] + 1;
-        assert(m == out_domain.hi()[0] - out_domain.lo()[0] + 1);
-        int n = a_domain.hi()[1] - a_domain.lo()[1] + 1;
-        assert(n == out_domain.hi()[1] - out_domain.lo()[1] + 1);
-        int k = a_domain.hi()[0] - a_domain.lo()[0] + 1;
-        assert(k == b_domain.hi()[1] - b_domain.lo()[1] + 1);
-        assert(a_domain.get_dim() == b_domain.get_dim());
-        assert(a_domain.get_dim() == out_domain.get_dim());
-        int batch = 1;
-        for (int i = 2; i < a_domain.get_dim(); i++) {
-          int dim_size = a_domain.hi()[i] - a_domain.lo()[i] + 1;
-          assert(dim_size == b_domain.hi()[i] - b_domain.lo()[i] + 1);
-          assert(dim_size == out_domain.hi()[i] - out_domain.lo()[i] + 1);
-          batch *= dim_size;
-        }
-        // TODO: implement me
-        assert(false);
-        // BatchMatmulMeta *meta = (BatchMatmulMeta *)metas->meta[op];
-        // Kernels::BatchMatmul::backward_kernel_wrapper(
-        //     meta,
-        //     my_output_accessor[0].get_float_ptr(),
-        //     my_input_accessor[0].get_float_ptr(),
-        //     my_input_accessor[1].get_float_ptr(),
-        //     (float const *)nullptr,
-        //     m,
-        //     n,
-        //     k,
-        //     batch,
-        //     meta->a_seq_length_dim,
-        //     meta->b_seq_length_dim,
-        //     fused->iter_config.seq_length);
         break;
       }
       case OP_EW_ADD:
@@ -1297,48 +1151,6 @@ __host__ void FusedOp::forward_task(Task const *task,
       my_output_accessor[i] = output_accessor[my_off];
     }
     switch (fused->op_op_type[op]) {
-      case OP_CONCAT: {
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        ConcatMeta *m = (ConcatMeta *)metas->meta[op];
-        int num_inputs = fused->op_num_inputs[op];
-        Kernels::Concat::forward_kernel_wrapper(m,
-                                                my_output_accessor[0],
-                                                my_input_accessor,
-                                                num_inputs,
-                                                m->legion_axis);
-        break;
-      }
-      case OP_CONV2D: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_accessor[0].domain.get_dim() == 5);
-        assert(my_weight_accessor[0].domain.get_dim() == 5);
-        assert(my_output_accessor[0].domain.get_dim() == 5);
-        Conv2DMeta *m = (Conv2DMeta *)metas->meta[op];
-        Kernels::Conv2D::forward_kernel_wrapper(
-            m,
-            my_input_accessor[0].get_float_ptr(),
-            my_output_accessor[0].get_float_ptr(),
-            my_weight_accessor[0].get_float_ptr(),
-            my_weight_accessor[1].get_float_ptr());
-        break;
-      }
-      case OP_BATCHNORM: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_accessor[0].domain.get_dim() == 5);
-        assert(my_output_accessor[0].domain.get_dim() == 5);
-        assert(my_weight_accessor[0].domain.get_dim() == 2);
-        assert(my_weight_accessor[1].domain.get_dim() == 2);
-        BatchNormMeta *m = (BatchNormMeta *)metas->meta[op];
-        BatchNorm::forward_kernel(m,
-                                  my_input_accessor[0].get_float_ptr(),
-                                  my_output_accessor[0].get_float_ptr(),
-                                  my_weight_accessor[0].get_float_ptr(),
-                                  my_weight_accessor[1].get_float_ptr());
-        break;
-      }
       case OP_DROPOUT: {
         assert(fused->op_num_inputs[op] == 1);
         assert(fused->op_num_outputs[op] == 1);
@@ -1378,44 +1190,6 @@ __host__ void FusedOp::forward_task(Task const *task,
             in_dim,
             out_dim,
             batch_size);
-        break;
-      }
-      case OP_BATCHMATMUL: {
-        assert(fused->op_num_inputs[op] == 2);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        Domain out_domain = my_output_accessor[0].domain;
-        Domain a_domain = my_input_accessor[0].domain;
-        Domain b_domain = my_input_accessor[1].domain;
-        int m = b_domain.hi()[0] - b_domain.lo()[0] + 1;
-        assert(m == out_domain.hi()[0] - out_domain.lo()[0] + 1);
-        int n = a_domain.hi()[1] - a_domain.lo()[1] + 1;
-        assert(n == out_domain.hi()[1] - out_domain.lo()[1] + 1);
-        int k = a_domain.hi()[0] - a_domain.lo()[0] + 1;
-        assert(k == b_domain.hi()[1] - b_domain.lo()[1] + 1);
-        assert(a_domain.get_dim() == b_domain.get_dim());
-        assert(a_domain.get_dim() == out_domain.get_dim());
-        int batch = 1;
-        for (int i = 2; i < a_domain.get_dim(); i++) {
-          int dim_size = a_domain.hi()[i] - a_domain.lo()[i] + 1;
-          assert(dim_size == b_domain.hi()[i] - b_domain.lo()[i] + 1);
-          assert(dim_size == out_domain.hi()[i] - out_domain.lo()[i] + 1);
-          batch *= dim_size;
-        }
-        BatchMatmulMeta *meta = (BatchMatmulMeta *)metas->meta[op];
-        Kernels::BatchMatmul::forward_kernel_wrapper(
-            meta,
-            my_output_accessor[0].get_float_ptr(),
-            my_input_accessor[0].get_float_ptr(),
-            my_input_accessor[1].get_float_ptr(),
-            (float const *)nullptr,
-            m,
-            n,
-            k,
-            batch,
-            meta->a_seq_length_dim,
-            meta->b_seq_length_dim,
-            fused->iter_config.seq_length);
         break;
       }
       case OP_EW_ADD:
@@ -1518,29 +1292,6 @@ __host__ void FusedOp::forward_task(Task const *task,
             my_input_accessor[0].domain.get_volume());
         break;
       }
-      case OP_POOL2D: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        Pool2DMeta *m = (Pool2DMeta *)metas->meta[op];
-        Kernels::Pool2D::forward_kernel_wrapper(
-            m,
-            my_input_accessor[0].get_float_ptr(),
-            my_output_accessor[0].get_float_ptr());
-        break;
-      }
-      case OP_FLAT: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_accessor[0].domain.get_volume() ==
-               my_output_accessor[0].domain.get_volume());
-        Kernels::Flat::forward_kernel_wrapper(
-            my_input_accessor[0].get_float_ptr(),
-            my_output_accessor[0].get_float_ptr(),
-            my_input_accessor[0].domain.get_volume());
-        break;
-      }
       case OP_SOFTMAX: {
         assert(fused->op_num_inputs[op] == 1);
         assert(fused->op_num_weights[op] == 0);
@@ -1550,33 +1301,6 @@ __host__ void FusedOp::forward_task(Task const *task,
         SoftmaxMeta *m = (SoftmaxMeta *)metas->meta[op];
         Kernels::Softmax::forward_kernel_wrapper(
             m, my_input_accessor[0], my_output_accessor[0]);
-        break;
-      }
-      case OP_RESHAPE: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_accessor[0].domain.get_volume() ==
-               my_output_accessor[0].domain.get_volume());
-        Kernels::Reshape::forward_kernel_wrapper(
-            my_input_accessor[0].get_float_ptr(),
-            my_output_accessor[0].get_float_ptr(),
-            my_input_accessor[0].domain.get_volume());
-        break;
-      }
-      case OP_TRANSPOSE: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_accessor[0].domain.get_volume() ==
-               my_output_accessor[0].domain.get_volume());
-        TransposeMeta *m = (TransposeMeta *)metas->meta[op];
-        Kernels::Transpose::forward_kernel_wrapper(
-            m,
-            my_input_accessor[0].get_float_ptr(),
-            my_output_accessor[0].get_float_ptr(),
-            my_input_accessor[0].domain,
-            my_output_accessor[0].domain);
         break;
       }
       case OP_LAYERNORM: {
@@ -1792,95 +1516,6 @@ __host__ void FusedOp::backward_task(Task const *task,
       assert(my_output_grad_accessor[i].domain == my_output_accessor[i].domain);
     }
     switch (fused->op_op_type[op]) {
-      case OP_BATCHMATMUL: {
-        assert(fused->op_num_inputs[op] == 2);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        Domain out_domain = my_output_accessor[0].domain;
-        Domain a_domain = my_input_accessor[0].domain;
-        Domain b_domain = my_input_accessor[1].domain;
-        // check dims
-        int m = b_domain.hi()[0] - b_domain.lo()[0] + 1;
-        assert(m == out_domain.hi()[0] - out_domain.lo()[0] + 1);
-        int n = a_domain.hi()[1] - a_domain.lo()[1] + 1;
-        assert(n == out_domain.hi()[1] - out_domain.lo()[1] + 1);
-        int k = a_domain.hi()[0] - a_domain.lo()[0] + 1;
-        assert(k == b_domain.hi()[1] - b_domain.lo()[1] + 1);
-        assert(a_domain.get_dim() == b_domain.get_dim());
-        assert(a_domain.get_dim() == out_domain.get_dim());
-        int batch = 1;
-        for (int i = 2; i < a_domain.get_dim(); i++) {
-          int dim_size = a_domain.hi()[i] - a_domain.lo()[i] + 1;
-          assert(dim_size == b_domain.hi()[i] - b_domain.lo()[i] + 1);
-          assert(dim_size == out_domain.hi()[i] - out_domain.lo()[i] + 1);
-          batch *= dim_size;
-        }
-        BatchMatmulMeta *meta = (BatchMatmulMeta *)metas->meta[op];
-        Kernels::BatchMatmul::backward_kernel_wrapper(
-            meta,
-            (float const *)my_output_accessor[0].get_float_ptr(),
-            (float const *)my_output_grad_accessor[0].get_float_ptr(),
-            (float const *)my_input_accessor[0].get_float_ptr(),
-            (float *)my_input_grad_accessor[0].get_float_ptr(),
-            (float const *)my_input_accessor[1].get_float_ptr(),
-            (float *)my_input_grad_accessor[1].get_float_ptr(),
-            (float *)nullptr,
-            m,
-            n,
-            k,
-            batch);
-        break;
-      }
-      case OP_BATCHNORM: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_accessor[0].domain.get_dim() == 5);
-        assert(my_weight_accessor[0].domain.get_dim() == 2);
-        assert(my_weight_accessor[1].domain.get_dim() == 2);
-        assert(my_output_accessor[0].domain.get_dim() == 5);
-        BatchNormMeta *m = (BatchNormMeta *)metas->meta[op];
-        BatchNorm::backward_kernel(
-            m,
-            (float const *)my_input_accessor[0].get_float_ptr(),
-            (float *)my_output_grad_accessor[0].get_float_ptr(),
-            (float const *)my_output_accessor[0].get_float_ptr(),
-            (float *)my_input_grad_accessor[0].get_float_ptr(),
-            (float const *)my_weight_accessor[0].get_float_ptr(),
-            (float *)my_weight_grad_accessor[0].get_float_ptr(),
-            (float *)my_weight_grad_accessor[1].get_float_ptr(),
-            my_output_accessor[0].domain.get_volume());
-        break;
-      }
-      case OP_CONCAT: {
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        ConcatMeta *m = (ConcatMeta *)metas->meta[op];
-        int num_inputs = fused->op_num_inputs[op];
-        Kernels::Concat::backward_kernel_wrapper(m,
-                                                 my_output_grad_accessor[0],
-                                                 my_input_grad_accessor.data(),
-                                                 num_inputs,
-                                                 m->legion_axis);
-        break;
-      }
-      case OP_CONV2D: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_accessor[0].domain.get_dim() == 5);
-        assert(my_weight_accessor[0].domain.get_dim() == 5);
-        assert(my_output_accessor[0].domain.get_dim() == 5);
-        Conv2DMeta *m = (Conv2DMeta *)metas->meta[op];
-        Kernels::Conv2D::backward_kernel_wrapper(
-            m,
-            my_input_accessor[0].get_float_ptr(),
-            my_input_grad_accessor[0].get_float_ptr(),
-            my_output_accessor[0].get_float_ptr(),
-            my_output_grad_accessor[0].get_float_ptr(),
-            my_weight_accessor[0].get_float_ptr(),
-            my_weight_grad_accessor[0].get_float_ptr(),
-            my_weight_grad_accessor[1].get_float_ptr());
-        break;
-      }
       case OP_DROPOUT: {
         assert(fused->op_num_inputs[op] == 1);
         assert(fused->op_num_outputs[op] == 1);
@@ -1995,59 +1630,6 @@ __host__ void FusedOp::backward_task(Task const *task,
             my_output_accessor[0].get_float_ptr(),
             my_output_grad_accessor[0].get_float_ptr(),
             my_input_accessor[0].domain.get_volume());
-        break;
-      }
-      case OP_POOL2D: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        // assert(my_input_accessor[0].domain == my_output_accessor[0].domain);
-        Pool2DMeta *m = (Pool2DMeta *)metas->meta[op];
-        Kernels::Pool2D::backward_kernel_wrapper(
-            m,
-            my_input_accessor[0].get_float_ptr(),
-            my_input_grad_accessor[0].get_float_ptr(),
-            my_output_accessor[0].get_float_ptr(),
-            my_output_grad_accessor[0].get_float_ptr());
-        break;
-      }
-      case OP_FLAT: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_grad_accessor[0].domain.get_volume() ==
-               my_output_grad_accessor[0].domain.get_volume());
-        Kernels::Flat::backward_kernel_wrapper(
-            my_input_grad_accessor[0].get_float_ptr(),
-            my_output_grad_accessor[0].get_float_ptr(),
-            my_input_grad_accessor[0].domain.get_volume());
-        break;
-      }
-      case OP_RESHAPE: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_grad_accessor[0].domain.get_volume() ==
-               my_output_grad_accessor[0].domain.get_volume());
-        Kernels::Reshape::backward_kernel_wrapper(
-            my_input_grad_accessor[0].get_float_ptr(),
-            my_output_grad_accessor[0].get_float_ptr(),
-            my_input_grad_accessor[0].domain.get_volume());
-        break;
-      }
-      case OP_TRANSPOSE: {
-        assert(fused->op_num_inputs[op] == 1);
-        assert(fused->op_num_weights[op] == 0);
-        assert(fused->op_num_outputs[op] == 1);
-        assert(my_input_grad_accessor[0].domain.get_volume() ==
-               my_output_grad_accessor[0].domain.get_volume());
-        TransposeMeta *m = (TransposeMeta *)metas->meta[op];
-        Kernels::Transpose::backward_kernel_wrapper(
-            m,
-            my_input_grad_accessor[0].get_float_ptr(),
-            my_output_grad_accessor[0].get_float_ptr(),
-            my_input_grad_accessor[0].domain,
-            my_output_grad_accessor[0].domain);
         break;
       }
       default:

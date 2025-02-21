@@ -1,43 +1,27 @@
 #include "flexflow/operator_params.h"
 #include "flexflow/ops/add_bias_residual_layer_norm.h"
 #include "flexflow/ops/aggregate.h"
-#include "flexflow/ops/aggregate_spec.h"
 #include "flexflow/ops/arg_topk.h"
 #include "flexflow/ops/argmax.h"
-#include "flexflow/ops/attention.h"
-#include "flexflow/ops/batch_matmul.h"
-#include "flexflow/ops/batch_norm.h"
 #include "flexflow/ops/beam_topk.h"
-#include "flexflow/ops/cache.h"
 #include "flexflow/ops/cast.h"
-#include "flexflow/ops/concat.h"
-#include "flexflow/ops/conv_2d.h"
 #include "flexflow/ops/dropout.h"
 #include "flexflow/ops/element_binary.h"
 #include "flexflow/ops/element_unary.h"
 #include "flexflow/ops/embedding.h"
-#include "flexflow/ops/flat.h"
-#include "flexflow/ops/gather.h"
 #include "flexflow/ops/groupby.h"
 #include "flexflow/ops/inc_multihead_self_attention.h"
 #include "flexflow/ops/layer_norm.h"
 #include "flexflow/ops/linear.h"
-#include "flexflow/ops/mean.h"
 #include "flexflow/ops/noop.h"
-#include "flexflow/ops/pool_2d.h"
-#include "flexflow/ops/reduce.h"
-#include "flexflow/ops/reshape.h"
 #include "flexflow/ops/residual_layer_norm.h"
 #include "flexflow/ops/residual_rms_norm.h"
-#include "flexflow/ops/reverse.h"
 #include "flexflow/ops/rms_norm.h"
 #include "flexflow/ops/sampling.h"
 #include "flexflow/ops/sigmoid_silu_multi.h"
 #include "flexflow/ops/softmax.h"
 #include "flexflow/ops/spec_inc_multihead_self_attention.h"
-#include "flexflow/ops/split.h"
 #include "flexflow/ops/topk.h"
-#include "flexflow/ops/transpose.h"
 #include "flexflow/ops/tree_inc_multihead_self_attention.h"
 #include "flexflow/parallel_ops/allreduce.h"
 #include "flexflow/parallel_ops/combine.h"
@@ -53,8 +37,6 @@ tl::optional<OperatorParameters> get_op_parameters(Op const *op) {
   switch (op->op_type) {
     case OP_LINEAR:
       return ((Linear *)op)->get_params();
-    case OP_CONV2D:
-      return ((Conv2D *)op)->get_params();
     case OP_EW_ADD:
     case OP_EW_SUB:
     case OP_EW_MUL:
@@ -76,22 +58,12 @@ tl::optional<OperatorParameters> get_op_parameters(Op const *op) {
     case OP_GELU:
     case OP_ELU:
       return ((ElementUnary *)op)->get_params();
-    case OP_CONCAT:
-      return ((Concat *)op)->get_params();
-    case OP_POOL2D:
-      return ((Pool2D *)op)->get_params();
     case OP_CAST:
       return ((Cast *)op)->get_params();
     case OP_DROPOUT:
       return ((Dropout *)op)->get_params();
     case OP_EMBEDDING:
       return ((Embedding *)op)->get_params();
-    case OP_FLAT:
-      return ((Flat *)op)->get_params();
-    case OP_GATHER:
-      return ((Gather *)op)->get_params();
-    case OP_MULTIHEAD_ATTENTION:
-      return ((MultiHeadAttention *)op)->get_params();
     case OP_INC_MULTIHEAD_SELF_ATTENTION:
       return ((IncMultiHeadSelfAttention *)op)->get_params();
     case OP_TREE_INC_MULTIHEAD_SELF_ATTENTION:
@@ -124,12 +96,6 @@ tl::optional<OperatorParameters> get_op_parameters(Op const *op) {
       return ((ParallelIdentity *)op)->get_params();
     case OP_FUSED_PARALLEL:
       return ((FusedParallelOp *)op)->get_params();
-    case OP_TRANSPOSE:
-      return ((Transpose *)op)->get_params();
-    case OP_BATCHMATMUL:
-      return ((BatchMatmul *)op)->get_params();
-    case OP_SPLIT:
-      return ((Split *)op)->get_params();
     case OP_TOPK:
       return ((TopK *)op)->get_params();
     case OP_GROUP_BY:

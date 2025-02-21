@@ -16,16 +16,9 @@
 #include "flexflow/ops/fused.h"
 #include "flexflow/ffconst_utils.h"
 #include "flexflow/model.h"
-#include "flexflow/ops/batch_matmul.h"
-#include "flexflow/ops/batch_norm.h"
-#include "flexflow/ops/concat.h"
 #include "flexflow/ops/dropout.h"
 #include "flexflow/ops/element_binary.h"
 #include "flexflow/ops/element_unary.h"
-#include "flexflow/ops/flat.h"
-#include "flexflow/ops/pool_2d.h"
-#include "flexflow/ops/reshape.h"
-#include "flexflow/ops/transpose.h"
 
 namespace FlexFlow {
 // declare Legion names
