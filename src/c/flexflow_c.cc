@@ -181,7 +181,8 @@ bool flexflow_config_get_enable_peft_finetuning(flexflow_config_t handle_) {
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
   return handle->enable_peft_finetuning;
 }
-void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_, bool value) {
+void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_,
+                                                bool value) {
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
   handle->enable_peft_finetuning = value;
 }
@@ -2805,7 +2806,7 @@ void flexflow_request_manager_set_num_transformers_layers(
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
   handle->set_num_transformer_layers(num_transformers_layers_);
   DEBUG_PRINT("[RequestManager] set num_transformers_layers %d",
-    num_transformers_layers_);
+              num_transformers_layers_);
 }
 
 void flexflow_request_manager_set_num_layers_per_finetuning_step(
@@ -2813,7 +2814,7 @@ void flexflow_request_manager_set_num_layers_per_finetuning_step(
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
   handle->set_num_layers_per_finetuning_step(num_layers_per_finetuning_step_);
   DEBUG_PRINT("[RequestManager] set num layers per finetuning step %d",
-    num_layers_per_finetuning_step_);
+              num_layers_per_finetuning_step_);
 }
 
 void flexflow_request_manager_register_tokenizer(

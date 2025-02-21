@@ -37,8 +37,10 @@ public:
   static InferenceManager *get_inference_manager();
   void compile_model_and_allocate_buffer(FFModel *model);
   void init_operators_inference(FFModel *model);
-  InferenceResultFuture inference(FFModel *model, int index, BatchConfig const &bc);
-  InferenceResultFuture inference(FFModel *model, int index, BatchConfigFuture const &bc);
+  InferenceResultFuture
+      inference(FFModel *model, int index, BatchConfig const &bc);
+  InferenceResultFuture
+      inference(FFModel *model, int index, BatchConfigFuture const &bc);
   std::vector<FinetuningBwdFuture>
       peft_bwd(FFModel *model, int index, BatchConfigFuture const &bc);
   void load_input_tokens_from_batch_config(FFModel *model,
@@ -374,7 +376,7 @@ public:
       std::vector<Legion::PhysicalRegion> const &regions,
       Legion::Context ctx,
       Legion::Runtime *runtime);
-  
+
   int run_idx = 0;
 
 private:

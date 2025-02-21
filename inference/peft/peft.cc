@@ -389,12 +389,15 @@ void FlexFlow::top_level_task(Task const *task,
     peft_model_id = model.register_peft_adapter(peft_config);
   }
   if (enable_peft_finetuning) {
-    peft_model_id_finetuning = model.register_peft_adapter(peft_config_finetuning);
+    peft_model_id_finetuning =
+        model.register_peft_adapter(peft_config_finetuning);
   }
 
   if (run_warmup) {
-    std::vector<Request> warmup_requests = make_warmup_requests(10, 1000, peft_model_id_finetuning);
-    std::vector<GenerationResult> warmup_result = model.generate(warmup_requests);
+    std::vector<Request> warmup_requests =
+        make_warmup_requests(10, 1000, peft_model_id_finetuning);
+    std::vector<GenerationResult> warmup_result =
+        model.generate(warmup_requests);
     rm->set_inference_finished(false); // reset inference finished flag
     std::cout << "----------warmup finished--------------" << std::endl;
   }
@@ -437,8 +440,10 @@ void FlexFlow::top_level_task(Task const *task,
       fine_tuning_req.peft_model_id = (peft_model_id_finetuning != nullptr)
                                           ? *peft_model_id_finetuning
                                           : PEFTModelID::NO_ID;
-      fine_tuning_req.peft_finetuning_info.dataset_filepath = file_paths.dataset_file_path;
-      fine_tuning_req.peft_finetuning_info.max_training_steps = max_training_steps;
+      fine_tuning_req.peft_finetuning_info.dataset_filepath =
+          file_paths.dataset_file_path;
+      fine_tuning_req.peft_finetuning_info.max_training_steps =
+          max_training_steps;
       requests.push_back(fine_tuning_req);
     }
     std::vector<GenerationResult> result = model.generate(requests);
@@ -456,10 +461,12 @@ void FlexFlow::top_level_task(Task const *task,
   if (!file_paths.profiling_folder_path.empty()) {
     std::cout << "Saving profiling info..." << std::endl;
     std::string dataset_name;
-    // set dataset name to "wildchat" if the prompt file path contains "wildchat" 
+    // set dataset name to "wildchat" if the prompt file path contains
+    // "wildchat"
     if (file_paths.prompt_file_path.find("wildchat") != std::string::npos) {
       dataset_name = "wildchat";
-    } else if (file_paths.prompt_file_path.find("sharegpt") != std::string::npos) {
+    } else if (file_paths.prompt_file_path.find("sharegpt") !=
+               std::string::npos) {
       dataset_name = "sharegpt";
     } else {
       dataset_name = "unknown";

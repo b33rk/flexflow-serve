@@ -827,10 +827,10 @@ __global__ void
 
 template <typename DT>
 void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
-                        BatchConfig const *bc,
-                        int shard_id,
-                        DT *output_ptr,
-                        hipStream_t stream) {
+                              BatchConfig const *bc,
+                              int shard_id,
+                              DT *output_ptr,
+                              hipStream_t stream) {
 
   checkCUDA(hipblasSetStream(m->handle.blas, stream));
   checkCUDNN(miopenSetStream(m->handle.dnn, stream));

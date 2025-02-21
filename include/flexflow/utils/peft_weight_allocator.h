@@ -81,7 +81,7 @@ public:
         max_peft_tokens(max_peft_tokens_),
         lora_layername_substr(lora_layername_substr_), dt(dt_),
         base_ptr(nullptr), finetuning_ptr(nullptr),
-        finetuning_model_id(PEFTModelID::NO_ID), log_instance_creation(false)  {
+        finetuning_model_id(PEFTModelID::NO_ID), log_instance_creation(false) {
     max_lora_size =
         data_type_size(dt) * (max_rank * in_dim + max_rank * out_dim);
     assert(max_concurrent_adapters > 0 &&

@@ -768,13 +768,8 @@ bool Linear::peft_bwd_task(Task const *task,
            in_dim,
            num_peft_tokens);
   }
-  peft_bwd_kernel_wrapper(m,
-                          bc,
-                          input_grad.ptr,
-                          output_grad.ptr,
-                          weight.ptr,
-                          in_dim,
-                          out_dim);
+  peft_bwd_kernel_wrapper(
+      m, bc, input_grad.ptr, output_grad.ptr, weight.ptr, in_dim, out_dim);
   if (m->inference_debugging) {
     assert(task->index_point.get_dim() == 1);
     int shard_id = task->index_point.point_data[0];

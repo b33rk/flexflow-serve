@@ -27,10 +27,10 @@ void compute_attention_kernel_generation(IncMultiHeadSelfAttentionMeta const *m,
 
 template <typename DT>
 void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
-                            BatchConfig const *bc,
-                            int shard_id,
-                            DT *output_ptr,
-                            ffStream_t stream);
+                              BatchConfig const *bc,
+                              int shard_id,
+                              DT *output_ptr,
+                              ffStream_t stream);
 
 template <typename DT>
 __global__ void apply_position_bias_qkprd(DT *input_ptr,

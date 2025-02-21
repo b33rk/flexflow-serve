@@ -30,8 +30,7 @@ SigmoidSiluMultiMeta::SigmoidSiluMultiMeta(FFHandler handle,
     size_t in_dim =
         ssm->inputs[0]->dims[0].size / ssm->inputs[0]->dims[0].degree;
     allocated_peft_buffer_size = 2 * data_type_size(input_type[0]) *
-                                 BatchConfig::max_sequence_length() *
-                                 in_dim;
+                                 BatchConfig::max_sequence_length() * in_dim;
     gpu_mem_allocator.create_legion_instance(
         reserveInst, allocated_peft_buffer_size, "SigmoidSiluMultiMeta");
     input_activation =

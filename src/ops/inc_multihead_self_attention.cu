@@ -129,7 +129,8 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
   assert(m->qProjSize == m->kProjSize);
 
   for (int i = 0; i < bc->max_requests_per_batch(); i++) {
-    if (bc->request_completed[i] || is_decoding_request(bc, i) || is_finetuning_bwd_request(bc, i)) {
+    if (bc->request_completed[i] || is_decoding_request(bc, i) ||
+        is_finetuning_bwd_request(bc, i)) {
       continue;
     }
     int num_new_tokens = bc->requestsInfo[i].num_tokens_in_batch;
@@ -140,7 +141,8 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
     }
     // Copy query to m->query_activation_buffer if we need to compute
     // PEFT backward
-    if (bc->requestsInfo[i].finetuning_request && !bc->requestsInfo[i].finetuning_backward_phase) {
+    if (bc->requestsInfo[i].finetuning_request &&
+        !bc->requestsInfo[i].finetuning_backward_phase) {
       // int max_peft_tokens = bc->requestsInfo[i].max_length;
       int max_peft_tokens = BatchConfig::max_sequence_length();
       size_t activation_size_needed =
@@ -314,7 +316,7 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                                 cudaMemcpyDeviceToDevice,
                                 stream));
     }
-    
+
     // Step 5: Matmul softmax(QK.T/sqrt(d_k)) by V. Implemented as V @
     // softmax(QK.T/sqrt(d_k)).T
     {
@@ -823,10 +825,10 @@ __global__ void
 
 template <typename DT>
 void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
-                        BatchConfig const *bc,
-                        int shard_id,
-                        DT *output_ptr,
-                        cudaStream_t stream) {
+                              BatchConfig const *bc,
+                              int shard_id,
+                              DT *output_ptr,
+                              cudaStream_t stream) {
 
   checkCUDA(cublasSetStream(m->handle.blas, stream));
   checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
@@ -1100,13 +1102,13 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   assert(num_tokens == num_total_tokens);
   assert(num_total_tokens == bc->requestsInfo[i].max_length);
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
-    int kt_block_size = m->kProjSize;
-    int kt_req_block_size =
-        kt_block_size * m->num_q_heads * BatchConfig::max_sequence_length();
-    int vt_block_size = m->vProjSize;
-    int vt_req_block_size =
-        vt_block_size * m->num_q_heads * BatchConfig::max_sequence_length();
-    
+  int kt_block_size = m->kProjSize;
+  int kt_req_block_size =
+      kt_block_size * m->num_q_heads * BatchConfig::max_sequence_length();
+  int vt_block_size = m->vProjSize;
+  int vt_req_block_size =
+      vt_block_size * m->num_q_heads * BatchConfig::max_sequence_length();
+
   // Step 1: copy gradient before final projection into workspace
   {
     int m_ = m->vProjSize * m->num_q_heads;
@@ -1140,7 +1142,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     DT *C = static_cast<DT *>(m->devQKVProjArray) +
             2 * num_tokens *
                 (m->qProjSize * m->num_q_heads); // skip over regions reserved
-                                                  // for Q and K gradients
+                                                 // for Q and K gradients
     // after transpositions
     int m_ = num_tokens;   // total_tokens
     int n_ = m->vProjSize; // num_new_tokens
@@ -1154,28 +1156,28 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideB = m->vProjSize;
     int strideC = num_tokens * m->vProjSize;
     checkCUDA(cublasGemmStridedBatchedEx(m->handle.blas,
-                                          CUBLAS_OP_T,
-                                          CUBLAS_OP_T,
-                                          m_,
-                                          n_,
-                                          k_,
-                                          &alpha,
-                                          A,
-                                          cublas_data_type,
-                                          lda,
-                                          strideA,
-                                          B,
-                                          cublas_data_type,
-                                          ldb,
-                                          strideB,
-                                          &beta,
-                                          C,
-                                          cublas_data_type,
-                                          ldc,
-                                          strideC,
-                                          m->num_q_heads,
-                                          compute_type,
-                                          CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+                                         CUBLAS_OP_T,
+                                         CUBLAS_OP_T,
+                                         m_,
+                                         n_,
+                                         k_,
+                                         &alpha,
+                                         A,
+                                         cublas_data_type,
+                                         lda,
+                                         strideA,
+                                         B,
+                                         cublas_data_type,
+                                         ldb,
+                                         strideB,
+                                         &beta,
+                                         C,
+                                         cublas_data_type,
+                                         ldc,
+                                         strideC,
+                                         m->num_q_heads,
+                                         compute_type,
+                                         CUBLAS_GEMM_DEFAULT_TENSOR_OP));
     // save result to file for checking
     if (m->inference_debugging) {
       std::string filename =
@@ -1211,28 +1213,28 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideC = num_tokens * num_tokens; // num_new_tokens * total_tokens
 
     checkCUDA(cublasGemmStridedBatchedEx(m->handle.blas,
-                                          CUBLAS_OP_T,
-                                          CUBLAS_OP_N,
-                                          m_,
-                                          n_,
-                                          k_,
-                                          &alpha,
-                                          A,
-                                          cublas_data_type,
-                                          lda,
-                                          strideA,
-                                          B,
-                                          cublas_data_type,
-                                          ldb,
-                                          strideB,
-                                          &beta,
-                                          C,
-                                          cublas_data_type,
-                                          ldc,
-                                          strideC,
-                                          m->num_q_heads,
-                                          compute_type,
-                                          CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+                                         CUBLAS_OP_T,
+                                         CUBLAS_OP_N,
+                                         m_,
+                                         n_,
+                                         k_,
+                                         &alpha,
+                                         A,
+                                         cublas_data_type,
+                                         lda,
+                                         strideA,
+                                         B,
+                                         cublas_data_type,
+                                         ldb,
+                                         strideB,
+                                         &beta,
+                                         C,
+                                         cublas_data_type,
+                                         ldc,
+                                         strideC,
+                                         m->num_q_heads,
+                                         compute_type,
+                                         CUBLAS_GEMM_DEFAULT_TENSOR_OP));
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad";
@@ -1282,8 +1284,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     if (entries_above_diagonal > 0) {
       size_t parallelism = m->num_q_heads * entries_above_diagonal;
       fill_entries_above_diagonal<<<GET_BLOCKS(parallelism),
-                                    min((size_t)CUDA_NUM_THREADS,
-                                        parallelism),
+                                    min((size_t)CUDA_NUM_THREADS, parallelism),
                                     0,
                                     stream>>>(static_cast<DT *>(m->qk_prods),
                                               num_tokens,
@@ -1294,8 +1295,8 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     }
     if (m->inference_debugging) {
       DT *C = static_cast<DT *>(m->qk_prods);
-      std::string filename = get_peft_dbg_folder(m, shard_id) +
-                              ".qk_prods.softmax_grad_in.masked";
+      std::string filename =
+          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad_in.masked";
       save_tensor(
           C, num_tokens * num_tokens * m->num_q_heads, filename.c_str());
     }
@@ -1314,11 +1315,10 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     DT const *B = static_cast<DT *>(m->query_activation_buffer);
     // matrix C: gradients for key (saved as part of m->devQKVProjArray)
     // matrix C's layout: [num_tokens, qProjsize * num_heads, 3]
-    DT *C =
-        static_cast<DT *>(m->devQKVProjArray) +
-        num_tokens *
-            (m->qProjSize *
-              m->num_q_heads); // skip over regions reserved for Q gradients
+    DT *C = static_cast<DT *>(m->devQKVProjArray) +
+            num_tokens *
+                (m->qProjSize *
+                 m->num_q_heads); // skip over regions reserved for Q gradients
     // after transposition & striding
     int m_ = num_tokens;
     int n_ = m->kProjSize;
@@ -1331,28 +1331,28 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideB = m->kProjSize;
     int strideC = num_tokens * m->kProjSize;
     checkCUDA(cublasGemmStridedBatchedEx(m->handle.blas,
-                                          CUBLAS_OP_T,
-                                          CUBLAS_OP_T,
-                                          m_,
-                                          n_,
-                                          k_,
-                                          &alpha,
-                                          A,
-                                          cublas_data_type,
-                                          lda,
-                                          strideA,
-                                          B,
-                                          cublas_data_type,
-                                          ldb,
-                                          strideB,
-                                          &beta,
-                                          C,
-                                          cublas_data_type,
-                                          ldc,
-                                          strideC,
-                                          m->num_q_heads,
-                                          compute_type,
-                                          CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+                                         CUBLAS_OP_T,
+                                         CUBLAS_OP_T,
+                                         m_,
+                                         n_,
+                                         k_,
+                                         &alpha,
+                                         A,
+                                         cublas_data_type,
+                                         lda,
+                                         strideA,
+                                         B,
+                                         cublas_data_type,
+                                         ldb,
+                                         strideB,
+                                         &beta,
+                                         C,
+                                         cublas_data_type,
+                                         ldc,
+                                         strideC,
+                                         m->num_q_heads,
+                                         compute_type,
+                                         CUBLAS_GEMM_DEFAULT_TENSOR_OP));
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".query_activation";
@@ -1391,34 +1391,33 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideB = m->qProjSize;
     int strideC = num_tokens * m->qProjSize;
     checkCUDA(cublasGemmStridedBatchedEx(m->handle.blas,
-                                          CUBLAS_OP_N,
-                                          CUBLAS_OP_T,
-                                          m_,
-                                          n_,
-                                          k_,
-                                          &alpha,
-                                          A,
-                                          cublas_data_type,
-                                          lda,
-                                          strideA,
-                                          B,
-                                          cublas_data_type,
-                                          ldb,
-                                          strideB,
-                                          &beta,
-                                          C,
-                                          cublas_data_type,
-                                          ldc,
-                                          strideC,
-                                          m->num_q_heads,
-                                          compute_type,
-                                          CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+                                         CUBLAS_OP_N,
+                                         CUBLAS_OP_T,
+                                         m_,
+                                         n_,
+                                         k_,
+                                         &alpha,
+                                         A,
+                                         cublas_data_type,
+                                         lda,
+                                         strideA,
+                                         B,
+                                         cublas_data_type,
+                                         ldb,
+                                         strideB,
+                                         &beta,
+                                         C,
+                                         cublas_data_type,
+                                         ldc,
+                                         strideC,
+                                         m->num_q_heads,
+                                         compute_type,
+                                         CUBLAS_GEMM_DEFAULT_TENSOR_OP));
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray_pre";
-      save_tensor(C,
-                  num_tokens * m->qProjSize * m->num_q_heads * 3,
-                  filename.c_str());
+      save_tensor(
+          C, num_tokens * m->qProjSize * m->num_q_heads * 3, filename.c_str());
     }
   }
 
@@ -1431,9 +1430,9 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
       int parallelism = num_tokens * m->hidden_size;
       DT *A = static_cast<DT *>(m->devQKVProjArray);
       apply_rotary_embedding_bwd<<<GET_BLOCKS(parallelism),
-                                    min(CUDA_NUM_THREADS, parallelism),
-                                    0,
-                                    stream>>>(
+                                   min(CUDA_NUM_THREADS, parallelism),
+                                   0,
+                                   stream>>>(
           A,
           m->complex_input,
           m->token_infos,
@@ -1458,11 +1457,10 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
 
     // matrix C: gradients for key (saved as part of m->devQKVProjArray)
     // matrix C's layout: [num_tokens, qProjsize * num_heads, 3]
-    DT *C =
-        static_cast<DT *>(m->devQKVProjArray) +
-        num_tokens *
-            (m->qProjSize *
-              m->num_q_heads); // skip over regions reserved for Q gradients
+    DT *C = static_cast<DT *>(m->devQKVProjArray) +
+            num_tokens *
+                (m->qProjSize *
+                 m->num_q_heads); // skip over regions reserved for Q gradients
     if (m->inference_debugging) {
       std::string filename = get_peft_dbg_folder(m, shard_id) + ".devkproj";
       save_tensor(
@@ -1731,8 +1729,11 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                                    kProjSize * num_q_heads)) /
                           2;
     if (enable_peft_finetuning) {
-      allocated_peft_buffer_size1 = BatchConfig::max_sequence_length() * num_q_heads * qProjSize * size_of_dt;
-      allocated_peft_buffer_size2 = BatchConfig::max_sequence_length() * BatchConfig::max_sequence_length() * num_q_heads * size_of_dt;
+      allocated_peft_buffer_size1 = BatchConfig::max_sequence_length() *
+                                    num_q_heads * qProjSize * size_of_dt;
+      allocated_peft_buffer_size2 = BatchConfig::max_sequence_length() *
+                                    BatchConfig::max_sequence_length() *
+                                    num_q_heads * size_of_dt;
     } else {
       allocated_peft_buffer_size1 = 0;
       allocated_peft_buffer_size2 = 0;

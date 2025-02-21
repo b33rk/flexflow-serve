@@ -39,10 +39,9 @@ RMSNormMeta::RMSNormMeta(FFHandler handler,
   size_t norm_ptr_size = num_elements;
   size_t in_dim = rms->inputs[0]->dims[0].size / rms->inputs[0]->dims[0].degree;
   allocated_peft_buffer_size =
-      enable_peft_finetuning
-          ? (data_type_size(data_type) *
-             BatchConfig::max_sequence_length() * in_dim)
-          : 0;
+      enable_peft_finetuning ? (data_type_size(data_type) *
+                                BatchConfig::max_sequence_length() * in_dim)
+                             : 0;
   size_t totalSize =
       (rms_ptr_size + norm_ptr_size) * data_type_size(data_type) +
       allocated_peft_buffer_size;

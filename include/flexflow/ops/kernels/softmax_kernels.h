@@ -1,8 +1,8 @@
 #ifndef _FLEXFLOW_OPS_KERNELS_SOFTMAX_KERNELS_H
 #define _FLEXFLOW_OPS_KERNELS_SOFTMAX_KERNELS_H
 
-#include "flexflow/ffconst_utils.h"
 #include "flexflow/device.h"
+#include "flexflow/ffconst_utils.h"
 #include "flexflow/fftype.h"
 #include "flexflow/op_meta.h"
 #include "flexflow/ops/softmax.h"
@@ -85,8 +85,8 @@ template <typename DT>
 void store_peft_activations(SoftmaxMeta *m,
                             BatchConfig const *bc,
                             int num_classes,
-                          DT *output_ptr,
-                          cudaStream_t stream);
+                            DT *output_ptr,
+                            cudaStream_t stream);
 
 } // namespace Internal
 } // namespace Softmax
