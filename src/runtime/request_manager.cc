@@ -1251,7 +1251,7 @@ void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
       new_bc.num_active_tokens();
   new_bc.requestsInfo[inference_batch_size].num_tokens_in_batch =
       num_peft_tokens;
-  new_bc.requestsInfo[inference_batch_size].max_length = request.max_length;
+  new_bc.requestsInfo[inference_batch_size].max_length = request.dataset[dataset_entry].size();
   new_bc.requestsInfo[inference_batch_size].request_guid = request.guid;
   new_bc.requestsInfo[inference_batch_size].peft_model_id =
       request.peft_model_id;
@@ -1312,7 +1312,7 @@ void RequestManager::add_finetuning_req_bwd_batch(BatchConfig &new_bc) {
       new_bc.num_active_tokens();
   new_bc.requestsInfo[inference_batch_size].num_tokens_in_batch =
       request.dataset[dataset_entry].size();
-  new_bc.requestsInfo[inference_batch_size].max_length = request.max_length;
+  new_bc.requestsInfo[inference_batch_size].max_length = request.dataset[dataset_entry].size();
   new_bc.requestsInfo[inference_batch_size].request_guid = request.guid;
   new_bc.requestsInfo[inference_batch_size].peft_model_id =
       request.peft_model_id;

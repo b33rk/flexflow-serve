@@ -177,6 +177,14 @@ bool flexflow_config_get_enable_peft(flexflow_config_t handle_) {
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
   return handle->enable_peft;
 }
+bool flexflow_config_get_enable_peft_finetuning(flexflow_config_t handle_) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->enable_peft_finetuning;
+}
+void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_, bool value) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->enable_peft_finetuning = value;
+}
 
 int flexflow_config_get_python_data_loader_type(flexflow_config_t handle_) {
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
@@ -2776,6 +2784,19 @@ int flexflow_request_manager_get_max_sequence_length(
   return handle->get_max_sequence_length();
 }
 
+void flexflow_request_manager_set_max_finetuning_sequence_length(
+  flexflow_request_manager_t handle_, int max_seq_length) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_max_finetuning_sequence_length(max_seq_length);
+  DEBUG_PRINT("[RequestManager] set max finetuning sequence length %d", max_seq_length);
+}
+
+int flexflow_request_manager_get_max_finetuning_sequence_length(
+  flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->get_max_finetuning_sequence_length();
+}
+
 void flexflow_request_manager_set_max_concurrent_adapters(
     flexflow_request_manager_t handle_, int max_concurrent_adapters) {
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
@@ -2790,6 +2811,22 @@ void flexflow_request_manager_set_enable_peft_finetuning(
   handle->set_enable_peft_finetuning(enable_peft_finetuning_);
   DEBUG_PRINT("[RequestManager] set_enable_peft_finetuning %d",
               enable_peft_finetuning_);
+}
+
+void flexflow_request_manager_set_num_transformers_layers(
+    flexflow_request_manager_t handle_, int num_transformers_layers_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_num_transformer_layers(num_transformers_layers_);
+  DEBUG_PRINT("[RequestManager] set num_transformers_layers %d",
+    num_transformers_layers_);
+}
+
+void flexflow_request_manager_set_num_layers_per_finetuning_step(
+    flexflow_request_manager_t handle_, int num_layers_per_finetuning_step_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_num_layers_per_finetuning_step(num_layers_per_finetuning_step_);
+  DEBUG_PRINT("[RequestManager] set num layers per finetuning step %d",
+    num_layers_per_finetuning_step_);
 }
 
 void flexflow_request_manager_register_tokenizer(

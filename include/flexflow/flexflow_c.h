@@ -92,6 +92,8 @@ int flexflow_config_get_tensor_parallelism_degree(flexflow_config_t handle_);
 int flexflow_config_get_pipeline_parallelism_degree(flexflow_config_t handle_);
 
 bool flexflow_config_get_enable_peft(flexflow_config_t handle_);
+bool flexflow_config_get_enable_peft_finetuning(flexflow_config_t handle_);
+void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_, bool value);
 
 void flexflow_config_set_data_parallelism_degree(flexflow_config_t handle_,
                                                  int value);
@@ -1029,11 +1031,23 @@ void flexflow_request_manager_set_max_sequence_length(
 int flexflow_request_manager_get_max_sequence_length(
     flexflow_request_manager_t handle_);
 
+void flexflow_request_manager_set_max_finetuning_sequence_length(
+    flexflow_request_manager_t handle_, int max_seq_length);
+
+int flexflow_request_manager_get_max_finetuning_sequence_length(
+    flexflow_request_manager_t handle_);
+
 void flexflow_request_manager_set_max_concurrent_adapters(
     flexflow_request_manager_t handle_, int max_concurrent_adapters);
 
 void flexflow_request_manager_set_enable_peft_finetuning(
     flexflow_request_manager_t handle_, bool enable_peft_finetuning_);
+
+void flexflow_request_manager_set_num_transformers_layers(
+    flexflow_request_manager_t handle_, int num_transformers_layers_);
+
+void flexflow_request_manager_set_num_layers_per_finetuning_step(
+    flexflow_request_manager_t handle_, int num_layers_per_finetuning_step_);
 
 void flexflow_request_manager_register_tokenizer(
     flexflow_request_manager_t handle_,

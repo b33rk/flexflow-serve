@@ -840,9 +840,7 @@ __host__ bool FusedOp::peft_bwd_task(Task const *task,
                                                  my_output_grad_accessor[0].ptr,
                                                  my_weight_accessor[0].ptr,
                                                  in_dim,
-                                                 out_dim,
-                                                 num_infr_tokens,
-                                                 num_peft_tokens);
+                                                 out_dim);
         break;
       }
       case OP_LORA: {

@@ -101,30 +101,6 @@ __global__ void store_kv_cache(DT const *devQKVProjArray,
 }
 
 template <typename DT>
-__global__ void store_query_cache(DT const *devQKVProjArray,
-                                  DT *qCache_ptr,
-                                  int num_tokens_in_batch,
-                                  int first_token_offset_in_batch,
-                                  int first_token_depth_in_request,
-                                  int head_dim,
-                                  int num_q_heads,
-                                  int num_kv_heads) {
-  CUDA_KERNEL_LOOP(i, num_tokens_in_batch * head_dim * num_q_heads) {
-    int hidden_size = head_dim * num_q_heads;
-    int tot_num_heads = num_q_heads + 2 * num_kv_heads;
-
-    int token_idx = i / hidden_size;
-    int offset = i % hidden_size;
-    int src_idx =
-        (first_token_offset_in_batch + token_idx) * (head_dim * tot_num_heads) +
-        offset;
-
-    qCache_ptr[first_token_depth_in_request * hidden_size + i] =
-        devQKVProjArray[src_idx];
-  }
-}
-
-template <typename DT>
 __global__ void fill_entries_above_diagonal(DT *matrix,
                                             size_t num_rows,
                                             size_t num_cols,
@@ -295,6 +271,107 @@ void run_batched_matmul(IncMultiHeadSelfAttentionMeta const *meta,
 }
 
 template <typename DT>
+__global__ void store_query_cache(DT const *devQKVProjArray,
+                                  DT *qCache_ptr,
+                                  int num_tokens_in_batch,
+                                  int first_token_offset_in_batch,
+                                  int first_token_depth_in_request,
+                                  int head_dim,
+                                  int num_q_heads,
+                                  int num_kv_heads) {
+  CUDA_KERNEL_LOOP(i, num_tokens_in_batch * head_dim * num_q_heads) {
+    int hidden_size = head_dim * num_q_heads;
+    int tot_num_heads = num_q_heads + 2 * num_kv_heads;
+
+    int token_idx = i / hidden_size;
+    int offset = i % hidden_size;
+    int src_idx =
+        (first_token_offset_in_batch + token_idx) * (head_dim * tot_num_heads) +
+        offset;
+
+    qCache_ptr[first_token_depth_in_request * hidden_size + i] =
+        devQKVProjArray[src_idx];
+  }
+}
+
+template <typename DT>
+__global__ void store_softmax_activation(DT const *qk_prods_softmax,
+                                        DT *softmax_activation_buffer,
+                                        int num_new_tokens,
+                                        int total_tokens,
+                                        int max_finetuning_seq_len,
+                                        int num_q_heads) {
+  CUDA_KERNEL_LOOP(i, num_new_tokens * total_tokens * num_q_heads) {
+    // qk_prods_softmax: [num_new_tokens, total_tokens, num_q_heads]
+    // softmax activation buffer: [MAX_FINETUNING_LENGTH(num_new_tokens), MAX_FINETUNING_LENGTH(total_tokens), num_q_heads]
+    int tokens_previous_steps = total_tokens - num_new_tokens;
+    int new_tokens_idx = i % num_new_tokens;
+    int total_tokens_idx = (i / num_new_tokens) % total_tokens;
+    int head_idx = i / (num_new_tokens * total_tokens);
+    int src_idx = head_idx * num_new_tokens * total_tokens + total_tokens_idx * num_new_tokens + new_tokens_idx;
+    int dst_idx = head_idx * max_finetuning_seq_len * max_finetuning_seq_len +
+                  total_tokens_idx * max_finetuning_seq_len + (tokens_previous_steps + new_tokens_idx);
+
+    softmax_activation_buffer[dst_idx] = qk_prods_softmax[src_idx];
+  }
+}
+
+
+template <typename DT>
+void store_peft_activations(IncMultiHeadSelfAttentionMeta const *m,
+                            BatchConfig const *bc,
+                            cudaStream_t stream) {
+  assert(m->enable_peft_finetuning);
+  assert(bc->num_finetuning_fwd_tokens() >= 1);
+  
+  int num_new_tokens = bc->num_finetuning_fwd_tokens();
+  int i = bc->finetuning_request_index();
+  int tokens_previous_requests = bc->requestsInfo[i].first_token_offset_in_batch;
+  int tokens_previous_steps = bc->requestsInfo[i].first_token_depth_in_request;
+  int total_tokens = num_new_tokens + tokens_previous_steps;
+  int max_dataset_entry_size = bc->requestsInfo[i].max_length;
+  assert(bc->requestsInfo[i].num_tokens_in_batch == num_new_tokens);
+  
+  // query activation
+  {
+    size_t data_size = m->num_q_heads * m->qProjSize * num_new_tokens * sizeof(DT);
+    assert(m->allocated_peft_buffer_size1 >= data_size);
+    int parallelism = m->qProjSize * m->num_q_heads * num_new_tokens;
+    store_query_cache<<<GET_BLOCKS(parallelism),
+                        min(CUDA_NUM_THREADS, parallelism),
+                        0,
+                        stream>>>(
+        static_cast<DT *>(m->devQKVProjArray),
+        static_cast<DT *>(m->query_activation_buffer),
+        num_new_tokens,
+        tokens_previous_requests,
+        tokens_previous_steps,
+        m->qProjSize,
+        m->num_q_heads,
+        m->num_kv_heads);
+  }
+  // softmax activation
+  {
+    int parallelism = m->num_q_heads * total_tokens * num_new_tokens;
+    size_t data_size = max_dataset_entry_size * max_dataset_entry_size * m->num_q_heads * sizeof(DT);
+    assert(m->allocated_peft_buffer_size2 >= data_size);
+    // printf("Storing softmax activation for %d new tokens, %d total tokens, %d max dataset entry size, %d heads\n",
+    //        num_new_tokens, total_tokens, max_dataset_entry_size, m->num_q_heads);
+    store_softmax_activation<<<GET_BLOCKS(parallelism),
+                              min(CUDA_NUM_THREADS, parallelism),
+                              0,
+                              stream>>>(
+        static_cast<DT *>(m->qk_prods_softmax),
+        static_cast<DT *>(m->softmax_activation_buffer),
+        num_new_tokens,
+        total_tokens,
+        max_dataset_entry_size,
+        m->num_q_heads);
+  }
+}
+
+
+template <typename DT>
 void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                                      BatchConfig const *bc,
                                      DT *attn_heads,
@@ -321,41 +398,6 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                        bc->requestsInfo[req_idx].num_tokens_in_batch;
     if (num_new_tokens <= 0) {
       continue;
-    }
-    // Copy query to m->query_activation_buffer if we need to compute
-    // PEFT backward
-    if (bc->requestsInfo[req_idx].finetuning_request &&
-        !bc->requestsInfo[req_idx].finetuning_backward_phase) {
-      int max_peft_tokens = BatchConfig::max_finetuning_sequence_length();
-      size_t activation_size_needed =
-          sizeof(DT) * max_peft_tokens * m->num_q_heads * m->qProjSize;
-      if (activation_size_needed != m->allocated_peft_buffer_size1) {
-        std::cout << "activation_size_needed: " << activation_size_needed
-                  << std::endl;
-        std::cout << "m->allocated_peft_buffer_size1: "
-                  << m->allocated_peft_buffer_size1 << std::endl;
-        std::cout << "max_peft_tokens: " << max_peft_tokens << std::endl;
-        std::cout << "m->num_q_heads: " << m->num_q_heads << std::endl;
-        std::cout << "m->qProjSize: " << m->qProjSize << std::endl;
-        std::cout << "BatchConfig::max_finetuning_sequence_length()"
-                  << BatchConfig::max_finetuning_sequence_length() << std::endl;
-        std::cout << "sizeof(DT)" << sizeof(DT) << std::endl;
-      }
-      assert(activation_size_needed == m->allocated_peft_buffer_size1);
-      int parallelism = m->qProjSize * m->num_q_heads *
-                        bc->requestsInfo[req_idx].num_tokens_in_batch;
-      store_query_cache<<<GET_BLOCKS(parallelism),
-                          min(CUDA_NUM_THREADS, parallelism),
-                          0,
-                          stream>>>(
-          static_cast<DT *>(m->devQKVProjArray),
-          static_cast<DT *>(m->query_activation_buffer),
-          bc->requestsInfo[req_idx].num_tokens_in_batch,
-          bc->requestsInfo[req_idx].first_token_offset_in_batch,
-          bc->requestsInfo[req_idx].first_token_depth_in_request,
-          m->qProjSize,
-          m->num_q_heads,
-          m->num_kv_heads);
     }
     // Step 1: compute query-key product QK.T/sqrt(d_k)
     {
@@ -525,21 +567,6 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
         save_tensor(static_cast<DT const *>(m->qk_prods_softmax),
                     num_new_tokens * total_tokens * m->num_q_heads,
                     fpath.c_str());
-      }
-      // Copy C_softmax to m->softmax_activation_buffer if we need to compute
-      // PEFT backward
-      if (bc->requestsInfo[req_idx].finetuning_request) {
-        int max_peft_tokens = BatchConfig::max_finetuning_sequence_length();
-        DT *C_softmax = static_cast<DT *>(m->qk_prods_softmax);
-        size_t activation_size_needed =
-            sizeof(DT) * max_peft_tokens * max_peft_tokens * m->num_q_heads;
-        assert(activation_size_needed == m->allocated_peft_buffer_size2);
-        checkCUDA(cudaMemcpyAsync(m->softmax_activation_buffer,
-                                  C_softmax,
-                                  sizeof(DT) * total_tokens * num_new_tokens *
-                                      m->num_q_heads,
-                                  cudaMemcpyDeviceToDevice,
-                                  stream));
       }
     }
 
@@ -1422,12 +1449,12 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
 
   if (m->inference_debugging) {
     std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".devQKVProjArray";
-    std::cout << "save tensor to: " << fpath << std::endl;
-    std::cout << "qkv_proj_size: " << qkv_proj_size
-              << " (m->qProjSize=" << m->qProjSize
-              << ", tot_num_heads=" << tot_num_heads
-              << ", bc->num_active_tokens()=" << bc->num_active_tokens() << ")"
-              << std::endl;
+    // std::cout << "save tensor to: " << fpath << std::endl;
+    // std::cout << "qkv_proj_size: " << qkv_proj_size
+    //           << " (m->qProjSize=" << m->qProjSize
+    //           << ", tot_num_heads=" << tot_num_heads
+    //           << ", bc->num_active_tokens()=" << bc->num_active_tokens() << ")"
+    //           << std::endl;
     save_tensor(static_cast<DT const *>(m->devQKVProjArray),
                 qkv_proj_size,
                 fpath.c_str());
@@ -1466,6 +1493,10 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   if (bc->num_tokens > bc->num_generation_tokens) {
     // phase 4: Compute attention score for prompt tokens;
     compute_attention_kernel_prompt<DT>(m, bc, output_ptr, shard_id, stream);
+  }
+
+  if (bc->num_finetuning_fwd_requests() > 0) {
+    store_peft_activations<DT>(m,bc,stream);
   }
 }
 
@@ -1571,12 +1602,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   // Currently assume we are calculating gradients for all tokens
   // of a request
   assert(num_tokens == num_total_tokens);
-  int kt_block_size = m->kProjSize;
-  int kt_req_block_size = kt_block_size * m->num_kv_heads *
-                          BatchConfig::max_finetuning_sequence_length();
-  int vt_block_size = m->vProjSize;
-  int vt_req_block_size = vt_block_size * m->num_kv_heads *
-                          BatchConfig::max_finetuning_sequence_length();
+  assert(num_total_tokens == bc->requestsInfo[i].max_length);
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
   // Step 1: copy gradient before final projection into workspace
   {
@@ -1668,7 +1694,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     DT const *A = static_cast<DT *>(m->handle.workSpace);
     // matrix B: value cache
     // matrix B's layout: [vProjSize * num_kv_heads, max_num_tokens, num_req]
-    DT const *B = static_cast<DT *>(m->valueCache) + i * vt_req_block_size;
+    DT const *B = static_cast<DT *>(m->valueCache) + i * m->vProjSize * m->num_kv_heads * BatchConfig::max_finetuning_sequence_length();
     // matrix C: qk_prods_softmax gradients
     // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
     DT *C = static_cast<DT *>(m->qk_prods_softmax);
@@ -1688,23 +1714,12 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                            m->handle.blas,
                            CUBLAS_OP_T,
                            CUBLAS_OP_N,
-                           m_,
-                           n_,
-                           k_,
+                           m_, n_, k_,
                            &alpha,
-                           A,
-                           cublas_data_type,
-                           lda,
-                           strideA,
-                           B,
-                           cublas_data_type,
-                           ldb,
-                           strideB,
+                           A, cublas_data_type, lda, strideA,
+                           B, cublas_data_type, ldb, strideB,
                            &beta,
-                           C,
-                           cublas_data_type,
-                           ldc,
-                           strideC,
+                           C, cublas_data_type, ldc, strideC,
                            m->num_q_heads,
                            compute_type,
                            CUBLAS_GEMM_DEFAULT_TENSOR_OP,
@@ -1714,13 +1729,10 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                            1,
                            true);
     if (m->inference_debugging) {
-      std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad";
-      save_tensor(
-          C, num_tokens * num_tokens * m->num_q_heads, filename.c_str());
+      std::string filename = get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad";
+      save_tensor(C, num_tokens * num_tokens * m->num_q_heads, filename.c_str());
       std::string filename2 = get_peft_dbg_folder(m, shard_id) + ".vcache";
-      save_tensor(
-          B, m->vProjSize * m->num_q_heads * num_tokens, filename2.c_str());
+      save_tensor(B, m->vProjSize * m->num_kv_heads * BatchConfig::max_finetuning_sequence_length(), filename2.c_str());
     }
   }
   // Step 4: softmax backpropagation
@@ -1755,6 +1767,10 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
           get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad_in";
       save_tensor(
           C, num_tokens * num_tokens * m->num_q_heads, filename.c_str());
+      filename =
+          get_peft_dbg_folder(m, shard_id) + ".softmax_activation_buffer";
+      save_tensor(
+          static_cast<DT*>(m->softmax_activation_buffer), num_tokens * num_tokens * m->num_q_heads, filename.c_str());
     }
 
     //  TODO: fill all elements above diagonal to force causal attention
@@ -1856,7 +1872,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     DT const *A = static_cast<DT *>(m->qk_prods);
     // matrix B: key cache
     // matrix B's layout: [vProjSize * num_kv_heads, max_num_tokens, num_req]
-    DT const *B = static_cast<DT *>(m->keyCache) + i * kt_req_block_size;
+    DT const *B = static_cast<DT *>(m->keyCache) + i * m->kProjSize * m->num_kv_heads * BatchConfig::max_finetuning_sequence_length();
     // matrix C: gradients for query (saved as part of m->devQKVProjArray)
     // matrix C's layout: [num_tokens, qProjsize * num_q_heads, 3]
     DT *C = static_cast<DT *>(m->devQKVProjArray);

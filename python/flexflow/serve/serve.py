@@ -444,6 +444,8 @@ class LLM:
         max_tokens_per_batch: int = 64,
         max_concurrent_adapters: int = 1,
         enable_peft_finetuning: bool = False,
+        max_finetuning_seq_length: int = -1,
+        num_bwd_layers_per_ft_step: int = -1,
         ssms: list = [],
     ):
         """Compile the LLM for inference and load the weights into memory
@@ -460,6 +462,10 @@ class LLM:
         :type max_concurrent_adapters: int, optional
         :param enable_peft_finetuning: Whether to enable support for PEFT fine-tuning, defaults to False
         :type enable_peft_finetuning: bool, optional
+        :param max_finetuning_seq_length: The maximum sequence length to allow for finetuning, defaults to -1 (i.e. same as max_seq_length)
+        :type max_finetuning_seq_length: int, optional
+        :param num_bwd_layers_per_ft_step: The number of backward layers to run per finetuning step, defaults to -1 (i.e. all layers)
+        :type num_bwd_layers_per_ft_step: int, optional
         :param ssms: The SSMs to use when operating in speculative inference mode, defaults to []
         :type ssms: list, optional
         """
@@ -479,6 +485,7 @@ class LLM:
             mode = InferenceMode.INC_DECODING_MODE
 
         self.max_seq_length = max_seq_length
+        self.ffconfig.enable_peft_finetuning = enable_peft_finetuning
 
         # Create request manager and set serving configuration
         self.rm = RequestManager()
@@ -487,6 +494,17 @@ class LLM:
         self.rm.set_max_sequence_length(max_seq_length)
         self.rm.set_max_concurrent_adapters(max_concurrent_adapters)
         self.rm.set_enable_peft_finetuning(enable_peft_finetuning)
+        if max_finetuning_seq_length == -1:
+            self.rm.set_max_finetuning_sequence_length(max_seq_length)
+        else:
+            self.rm.set_max_finetuning_sequence_length(max_finetuning_seq_length)
+        self.rm.set_num_transformers_layers(self.hf_config.num_hidden_layers)
+        if num_bwd_layers_per_ft_step != -1:
+            self.rm.set_num_layers_per_finetuning_step(num_bwd_layers_per_ft_step)
+        else:
+            self.rm.set_num_layers_per_finetuning_step(
+                self.hf_config.num_hidden_layers
+            )
 
         # Instantiate the relevant model
         self.model = self.model_class(
@@ -753,6 +771,8 @@ class SSM(LLM):
         max_tokens_per_batch: int = 2048,
         max_concurrent_adapters: int = 1,
         enable_peft_finetuning: bool = False,
+        max_finetuning_seq_length: int = -1,
+        num_bwd_layers_per_ft_step: int = -1,
         ssms: list = [],
     ):
         """Compile the SSM for inference and load the weights into memory
@@ -768,6 +788,10 @@ class SSM(LLM):
         :type max_concurrent_adapters: int, optional
         :param enable_peft_finetuning: Whether to enable support for PEFT fine-tuning, defaults to False
         :type enable_peft_finetuning: bool, optional
+        :param max_finetuning_seq_length: The maximum sequence length to allow for finetuning, defaults to -1 (i.e. same as max_seq_length)
+        :type max_finetuning_seq_length: int, optional
+        :param num_bwd_layers_per_ft_step: The number of backward layers to run per finetuning step, defaults to -1 (i.e. all layers)
+        :type num_bwd_layers_per_ft_step: int, optional
         :param ssms: The SSMs to use when operating in speculative inference mode, defaults to []
         :type ssms: list, optional
         """
@@ -778,5 +802,7 @@ class SSM(LLM):
             max_tokens_per_batch,
             max_concurrent_adapters,
             enable_peft_finetuning,
+            max_finetuning_seq_length,
+            num_bwd_layers_per_ft_step,
             ssms,
         )

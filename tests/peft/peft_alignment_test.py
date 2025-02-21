@@ -605,6 +605,7 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.o_proj"
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
+            # o_proj_hf = hf_tensor.clone()
             ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"Attn O-proj {i} gradient input")
 
@@ -617,6 +618,62 @@ class LlamaAlignmentTest(AlignmentTest):
             hf_tensor = hf_tensor.squeeze().T
             ff_tensor = get_ff_tensor(ff_tensor_name, mixed_comparison, hf_tensor.shape, tp_type=TPType.PARTITION, shard_axis=1)
             compare(hf_tensor, ff_tensor, label=f"V-proj {i} gradient input")
+
+
+            # # compare vcache
+            # print("\nComparing V-cache")
+            # hf_fp=f"/usr/.cache/flexflow/debug/huggingface/fwd/step_0/layers.{i}.self_attn.value_states.output_0"
+            # ff_fp = f"/usr/.cache/flexflow/debug/flexflow/bwd/step_0/shard_0/layers.{i}.layers.{i}.self_attn.vcache"
+            # hf_vcache = torch.load(hf_fp, map_location='cpu')
+            # ff_vcache = load_ff_tensor(ff_fp, [64,12,256])[:,:,:24]
+            # # print("HF vcache shape:", hf_vcache.shape)
+            # # print("FF vcache shape:", ff_vcache.shape)
+            # hf_vcache=hf_vcache.squeeze().permute(2,0,1)
+            # torch.testing.assert_close(hf_vcache, torch.from_numpy(ff_vcache).to(hf_vcache.dtype), rtol=1.3e-6, atol=1e-5)
+
+            # # attn heads gradients
+            # print("\nComparing Attn head gradients")
+            # attn_heads_grad = load_ff_tensor(f"/usr/.cache/flexflow/debug/flexflow/bwd/step_0/shard_0/layers.{i}.layers.{i}.self_attn.o_proj.input_gradient_0", [64, 12, 24])
+            # o_proj_ff = load_ff_tensor(f"/usr/.cache/flexflow/debug/flexflow/bwd/step_0/shard_0/layers.{i}.layers.{i}.self_attn.o_proj.input_gradient_0", [768, 24])
+            # torch.testing.assert_close(o_proj_hf.squeeze().T, torch.from_numpy(o_proj_ff).to(o_proj_hf.dtype), rtol=1.3e-6, atol=1e-5)
+            # # print(attn_heads_grad.shape)
+            
+            # print("\nComparing Softmax grad out")
+            # hf_tensor_name = f"layers.{i}.self_attn.softmax"
+            # ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.qk_prods.softmax_grad"
+            # softmax_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="", hf_tensor_idx=0, ff_tensor_idx=None)
+            # hf_tensor = get_hf_tensor(hf_tensor_name, softmax_comparison).squeeze()
+            # ff_tensor = get_ff_tensor(ff_tensor_name, softmax_comparison, hf_tensor.shape, tp_type=TPType.PARTITION).squeeze()
+            # # print("Result shape HF: ", hf_tensor.shape)
+            # softmax_grad_out = torch.einsum('abc,abd->cdb', torch.from_numpy(attn_heads_grad).to(hf_vcache.dtype), torch.from_numpy(ff_vcache).to(hf_vcache.dtype))
+            # # print("Simulated shape: ", softmax_grad_out.shape)
+            # torch.testing.assert_close(hf_tensor, softmax_grad_out.permute(2,0,1), rtol=1.3e-3, atol=1e-3)
+            # # print("FF shape: ", ff_tensor.shape)
+            # torch.testing.assert_close(ff_tensor.to(softmax_grad_out.dtype), softmax_grad_out, rtol=1.3e-3, atol=1e-3)
+
+            # print("\nComparing softmax activation buffer")
+            # hf_softmax_buff_fp = f"/usr/.cache/flexflow/debug/huggingface/fwd/step_0/layers.{i}.self_attn.softmax.output_0"
+            # ff_softmax_buff_fp = f"/usr/.cache/flexflow/debug/flexflow/bwd/step_0/shard_0/layers.{i}.layers.{i}.self_attn.softmax_activation_buffer"
+            # hf_softmax_buff = torch.load(hf_softmax_buff_fp, map_location='cpu')
+            # ff_softmax_buff = load_ff_tensor(ff_softmax_buff_fp, [24,24,12])
+            # hf_softmax_buff = hf_softmax_buff.squeeze().permute(1,2,0)
+            # torch.testing.assert_close(hf_softmax_buff, torch.from_numpy(ff_softmax_buff).to(hf_softmax_buff.dtype), rtol=1.3e-3, atol=1e-3)
+            
+            # print("\nComparing Softmax grad in")
+            # hf_tensor_name = f"layers.{i}.self_attn.softmax"
+            # ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.qk_prods.softmax_grad_in"
+            # softmax_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="", hf_tensor_idx=0, ff_tensor_idx=None)
+            # hf_tensor = get_hf_tensor(hf_tensor_name, softmax_comparison).squeeze()
+            # ff_tensor = get_ff_tensor(ff_tensor_name, softmax_comparison, hf_tensor.shape, tp_type=TPType.PARTITION).squeeze()
+            # # hf_tensor = hf_tensor.permute(1,2,0)
+            # print("Result shape HF: ", hf_tensor.shape)
+            # print("FF shape: ", ff_tensor.shape)
+            # print(hf_tensor[0,:,:])
+            # print(ff_tensor[:,:,0])
+            # # turns out cudnn already applies the mask, huggingface doesn't
+            # # torch.testing.assert_close(hf_tensor, ff_tensor.to(hf_tensor.dtype), rtol=1.3e-3, atol=1e-3)
+
+            
 
             # K-proj grads
             # FF shape: (num_tokens, qProjSize, num_heads)

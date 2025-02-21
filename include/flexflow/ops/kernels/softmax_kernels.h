@@ -28,6 +28,7 @@ public:
   // PEFT related fields
   Realm::RegionInstance reserveInst;
   void *output_grad_ptr = nullptr;
+  BatchConfig::TokenId peft_token_ids[BatchConfig::MAX_NUM_TOKENS];
   size_t allocated_peft_buffer_size = 0;
 };
 
@@ -42,7 +43,7 @@ void backward_kernel_wrapper(SoftmaxMeta const *m,
                              GenericTensorAccessorW const &input_grad,
                              GenericTensorAccessorR const &output_grad);
 
-void inference_kernel_wrapper(SoftmaxMeta const *m,
+void inference_kernel_wrapper(SoftmaxMeta *m,
                               BatchConfig const *bc,
                               bool is_last_op,
                               GenericTensorAccessorR const &input,
@@ -80,6 +81,13 @@ void peft_bwd_kernel(SoftmaxMeta const *m,
                      DT *input_grad_ptr,
                      int num_classes,
                      ffStream_t stream);
+
+template <typename DT>
+void store_peft_activations(SoftmaxMeta *m,
+                            BatchConfig const *bc,
+                            int num_classes,
+                          DT *output_ptr,
+                          cudaStream_t stream);
 
 } // namespace Internal
 } // namespace Softmax
