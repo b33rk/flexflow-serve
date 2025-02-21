@@ -45,7 +45,7 @@ LinearMeta::LinearMeta(FFHandler handler,
   allocated_peft_buffer_size =
       enable_peft_finetuning
           ? (data_type_size(data_type) *
-             BatchConfig::max_finetuning_sequence_length() * out_dim)
+             BatchConfig::max_sequence_length() * out_dim)
           : 0;
   size_t totalSize =
       data_type_size(data_type) * batch_size + allocated_peft_buffer_size;

@@ -885,7 +885,7 @@ template <typename DT>
 void update_kv_cache_kernel(IncMultiHeadSelfAttentionMeta const *m,
                             BatchConfig const *bc,
                             hipStream_t stream) {
-  int num_tokens = bc->num_active_infr_tokens();
+  int num_tokens = bc->num_active_tokens();
   if (num_tokens > 0) {
     int parallelism = m->hidden_size * num_tokens;
     hipLaunchKernelGGL(HIP_KERNEL_NAME(store_kv_cache),

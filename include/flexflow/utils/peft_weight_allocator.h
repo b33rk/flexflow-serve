@@ -53,7 +53,7 @@ struct LoraLinearWeight {
       : w0_ptr(w0), w1_ptr(w1), w0_grad_ptr(w0_grad), w1_grad_ptr(w1_grad),
         w0_v_values_ptr(w0_v_values), w1_v_values_ptr(w1_v_values),
         low_rank_activation(low_rank_activation_),
-        input_activation(input_activation_), log_instance_creation(false) {}
+        input_activation(input_activation_) {}
 };
 
 void init_peft_weight_wrapper(LoraLinearWeight const &weight,
@@ -81,7 +81,7 @@ public:
         max_peft_tokens(max_peft_tokens_),
         lora_layername_substr(lora_layername_substr_), dt(dt_),
         base_ptr(nullptr), finetuning_ptr(nullptr),
-        finetuning_model_id(PEFTModelID::NO_ID) {
+        finetuning_model_id(PEFTModelID::NO_ID), log_instance_creation(false)  {
     max_lora_size =
         data_type_size(dt) * (max_rank * in_dim + max_rank * out_dim);
     assert(max_concurrent_adapters > 0 &&

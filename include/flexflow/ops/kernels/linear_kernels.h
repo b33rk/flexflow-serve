@@ -92,6 +92,12 @@ void forward_kernel(LinearMeta const *m,
                     int batch_size,
                     ffStream_t stream);
 template <typename DT>
+void store_peft_activations(LinearMeta const *m,
+                            BatchConfig const *bc,
+                            size_t out_dim,
+                            DT *output_ptr,
+                            cudaStream_t stream);
+template <typename DT>
 void peft_bwd_kernel(LinearMeta const *m,
                      BatchConfig const *bc,
                      void *input_grad_ptr,

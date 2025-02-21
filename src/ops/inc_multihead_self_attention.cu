@@ -95,6 +95,16 @@ __global__ void fill_entries_above_diagonal(DT *matrix,
   }
 }
 
+bool is_finetuning_bwd_request(BatchConfig const *bc, int request_id) {
+  return bc->requestsInfo[request_id].finetuning_request &&
+         bc->requestsInfo[request_id].finetuning_backward_phase;
+}
+
+bool is_decoding_request(BatchConfig const *bc, int request_id) {
+  return !bc->requestsInfo[request_id].finetuning_request &&
+         !bc->requestsInfo[request_id].prompt_phase;
+}
+
 template <typename DT>
 void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                                      BatchConfig const *bc,
@@ -119,25 +129,35 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
   assert(m->qProjSize == m->kProjSize);
 
   for (int i = 0; i < bc->max_requests_per_batch(); i++) {
-    if (bc->request_completed[i] ||
-        (!bc->requestsInfo[i].prompt_phase && !bc->requestsInfo[i].peft_bwd)) {
+    if (bc->request_completed[i] || is_decoding_request(bc, i) || is_finetuning_bwd_request(bc, i)) {
       continue;
     }
     int num_new_tokens = bc->requestsInfo[i].num_tokens_in_batch;
     int total_tokens = bc->requestsInfo[i].first_token_depth_in_request +
                        bc->requestsInfo[i].num_tokens_in_batch;
-    int max_peft_tokens = bc->requestsInfo[i].max_length;
+    if (num_new_tokens <= 0) {
+      continue;
+    }
     // Copy query to m->query_activation_buffer if we need to compute
     // PEFT backward
-    if (bc->requestsInfo[i].peft_bwd) {
+    if (bc->requestsInfo[i].finetuning_request && !bc->requestsInfo[i].finetuning_backward_phase) {
+      // int max_peft_tokens = bc->requestsInfo[i].max_length;
+      int max_peft_tokens = BatchConfig::max_sequence_length();
       size_t activation_size_needed =
           sizeof(DT) * max_peft_tokens * m->num_q_heads * m->qProjSize;
-      if (activation_size_needed > m->allocated_peft_buffer_size1) {
-        MemoryAllocator *allocator = m->handle.peft_activation_allocator;
-        m->query_activation_buffer =
-            allocator->allocate_instance_untyped(activation_size_needed);
-        m->allocated_peft_buffer_size1 = activation_size_needed;
+      if (activation_size_needed != m->allocated_peft_buffer_size1) {
+        std::cout << "activation_size_needed: " << activation_size_needed
+                  << std::endl;
+        std::cout << "m->allocated_peft_buffer_size1: "
+                  << m->allocated_peft_buffer_size1 << std::endl;
+        std::cout << "max_peft_tokens: " << max_peft_tokens << std::endl;
+        std::cout << "m->num_q_heads: " << m->num_q_heads << std::endl;
+        std::cout << "m->qProjSize: " << m->qProjSize << std::endl;
+        std::cout << "BatchConfig::max_sequence_length()"
+                  << BatchConfig::max_sequence_length() << std::endl;
+        std::cout << "sizeof(DT)" << sizeof(DT) << std::endl;
       }
+      assert(activation_size_needed == m->allocated_peft_buffer_size1);
       int parallelism = m->hidden_size * num_tokens;
       store_query_cache<<<GET_BLOCKS(parallelism),
                           min(CUDA_NUM_THREADS, parallelism),
@@ -281,16 +301,12 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
     }
     // Copy C_softmax to m->softmax_activation_buffer if we need to compute
     // PEFT backward
-    if (bc->requestsInfo[i].peft_bwd) {
+    if (bc->requestsInfo[i].finetuning_request) {
+      int max_peft_tokens = BatchConfig::max_sequence_length();
       DT *C_softmax = static_cast<DT *>(m->qk_prods_softmax);
       size_t activation_size_needed =
           sizeof(DT) * max_peft_tokens * max_peft_tokens * m->num_q_heads;
-      if (activation_size_needed > m->allocated_peft_buffer_size2) {
-        MemoryAllocator *allocator = m->handle.peft_activation_allocator;
-        m->softmax_activation_buffer =
-            allocator->allocate_instance_untyped(activation_size_needed);
-        m->allocated_peft_buffer_size2 = activation_size_needed;
-      }
+      assert(activation_size_needed == m->allocated_peft_buffer_size2);
       checkCUDA(cudaMemcpyAsync(m->softmax_activation_buffer,
                                 C_softmax,
                                 sizeof(DT) * total_tokens * num_new_tokens *
@@ -298,6 +314,7 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                                 cudaMemcpyDeviceToDevice,
                                 stream));
     }
+    
     // Step 5: Matmul softmax(QK.T/sqrt(d_k)) by V. Implemented as V @
     // softmax(QK.T/sqrt(d_k)).T
     {
@@ -860,7 +877,7 @@ template <typename DT>
 void update_kv_cache_kernel(IncMultiHeadSelfAttentionMeta const *m,
                             BatchConfig const *bc,
                             cudaStream_t stream) {
-  int num_tokens = bc->num_active_infr_tokens();
+  int num_tokens = bc->num_active_tokens();
   if (num_tokens > 0) {
     int parallelism = m->hidden_size * num_tokens;
     store_kv_cache<<<GET_BLOCKS(parallelism),
@@ -1713,12 +1730,22 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     size_t complex_size = (max_tokens_per_batch * (qProjSize * num_q_heads +
                                                    kProjSize * num_q_heads)) /
                           2;
+    if (enable_peft_finetuning) {
+      allocated_peft_buffer_size1 = BatchConfig::max_sequence_length() * num_q_heads * qProjSize * size_of_dt;
+      allocated_peft_buffer_size2 = BatchConfig::max_sequence_length() * BatchConfig::max_sequence_length() * num_q_heads * size_of_dt;
+    } else {
+      allocated_peft_buffer_size1 = 0;
+      allocated_peft_buffer_size2 = 0;
+    }
     size_t totalSize =
         (qkv_max_proj_size + key_cache_size + value_cache_size +
          2 * qk_prod_size + attn_heads_size) *
             size_of_dt +
         complex_size * sizeof(cuFloatComplex); // more components will
                                                // be added here later
+    if (enable_peft_finetuning) {
+      totalSize += allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
+    }
     if (offload) {
       // assert that we have enough reserved work space left
       size_t totalSharedSize =
@@ -1785,6 +1812,13 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
           gpu_mem_allocator.allocate_instance<cuFloatComplex>(complex_size);
     }
 
+    if (enable_peft_finetuning) {
+      query_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
+          allocated_peft_buffer_size1);
+      softmax_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
+          allocated_peft_buffer_size2);
+    }
+
     // allocate more size for quantization data
     if (quantization_type != DT_NONE) {
       assert(offload);
@@ -1794,8 +1828,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
              gpu_mem_allocator.reserved_allocated_size);
     }
   }
-  allocated_peft_buffer_size1 = 0;
-  allocated_peft_buffer_size2 = 0;
+
   cudaStreamSynchronize(stream);
 }
 

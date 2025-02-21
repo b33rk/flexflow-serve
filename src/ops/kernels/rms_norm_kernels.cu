@@ -43,7 +43,7 @@ RMSNormMeta::RMSNormMeta(FFHandler handler,
   allocated_peft_buffer_size =
       enable_peft_finetuning
           ? (data_type_size(data_type) *
-             BatchConfig::max_finetuning_sequence_length() * in_dim)
+             BatchConfig::max_sequence_length() * in_dim)
           : 0;
   size_t totalSize =
       (rms_ptr_size + norm_ptr_size) * data_type_size(data_type) +
@@ -223,21 +223,21 @@ void inference_kernel_wrapper(RMSNormMeta *m,
     int in_dim = input.domain.hi()[0] - input.domain.lo()[0] + 1;
     if (m->allocated_peft_buffer_size !=
         data_type_size(m->input_type[0]) *
-            BatchConfig::max_finetuning_sequence_length() * in_dim) {
+            BatchConfig::max_sequence_length() * in_dim) {
       std::cout << "allocated_peft_buffer_size = "
                 << m->allocated_peft_buffer_size << ", expected = "
                 << data_type_size(m->input_type[0]) *
-                       BatchConfig::max_finetuning_sequence_length() * in_dim
+                       BatchConfig::max_sequence_length() * in_dim
                 << std::endl;
       std::cout << "in_dim = " << in_dim << std::endl;
       std::cout << "max_sequence_length = "
-                << BatchConfig::max_finetuning_sequence_length() << std::endl;
+                << BatchConfig::max_sequence_length() << std::endl;
       std::cout << "data_type_size = " << data_type_size(m->input_type[0])
                 << std::endl;
     }
     assert(m->allocated_peft_buffer_size ==
            data_type_size(m->input_type[0]) *
-               BatchConfig::max_finetuning_sequence_length() * in_dim);
+               BatchConfig::max_sequence_length() * in_dim);
     int num_peft_tokens = bc->requestsInfo[i].num_tokens_in_batch;
     assert(num_peft_tokens == bc->num_finetuning_fwd_tokens());
     int first_token_offset = bc->requestsInfo[i].first_token_offset_in_batch;

@@ -81,6 +81,12 @@ void peft_bwd_kernel(SoftmaxMeta const *m,
                      DT *input_grad_ptr,
                      int num_classes,
                      ffStream_t stream);
+template <typename DT>
+void store_peft_activations(SoftmaxMeta *m,
+                            BatchConfig const *bc,
+                            int num_classes,
+                          DT *output_ptr,
+                          cudaStream_t stream);
 
 } // namespace Internal
 } // namespace Softmax

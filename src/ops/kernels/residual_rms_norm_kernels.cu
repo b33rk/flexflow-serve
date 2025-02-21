@@ -43,7 +43,7 @@ ResidualRMSNormMeta::ResidualRMSNormMeta(FFHandler handler,
   allocated_peft_buffer_size =
       enable_peft_finetuning
           ? (data_type_size(data_type) *
-             BatchConfig::max_finetuning_sequence_length() * in_dim)
+             BatchConfig::max_sequence_length() * in_dim)
           : 0;
   size_t totalSize =
       (rms_ptr_size + norm_ptr_size) * data_type_size(data_type) +

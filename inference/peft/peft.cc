@@ -384,15 +384,13 @@ void FlexFlow::top_level_task(Task const *task,
   rm->start_background_server(&model);
 
   // Add PEFT adapter(s)
-  // PEFTModelID *peft_model_id = nullptr, *peft_model_id_finetuning = nullptr;
-  // if (!peft_model_name.empty()) {
-  //   peft_model_id = model.register_peft_adapter(peft_config);
-  //   if (enable_peft_finetuning) {
-  //     peft_model_id_finetuning =
-  //         model.register_peft_adapter(peft_config_finetuning);
-  //   }
-  // }
-  PEFTModelID *peft_model_id_finetuning = model.register_peft_adapter(peft_config_finetuning);
+  PEFTModelID *peft_model_id = nullptr, *peft_model_id_finetuning = nullptr;
+  if (!peft_model_name.empty() && !enable_peft_finetuning) {
+    peft_model_id = model.register_peft_adapter(peft_config);
+  }
+  if (enable_peft_finetuning) {
+    peft_model_id_finetuning = model.register_peft_adapter(peft_config_finetuning);
+  }
 
   if (run_warmup) {
     std::vector<Request> warmup_requests = make_warmup_requests(10, 1000, peft_model_id_finetuning);
@@ -439,8 +437,8 @@ void FlexFlow::top_level_task(Task const *task,
       fine_tuning_req.peft_model_id = (peft_model_id_finetuning != nullptr)
                                           ? *peft_model_id_finetuning
                                           : PEFTModelID::NO_ID;
-      fine_tuning_req.dataset_filepath = file_paths.dataset_file_path;
-      fine_tuning_req.max_training_steps = max_training_steps;
+      fine_tuning_req.peft_finetuning_info.dataset_filepath = file_paths.dataset_file_path;
+      fine_tuning_req.peft_finetuning_info.max_training_steps = max_training_steps;
       requests.push_back(fine_tuning_req);
     }
     std::vector<GenerationResult> result = model.generate(requests);
@@ -476,9 +474,9 @@ void FlexFlow::top_level_task(Task const *task,
                                    10); // num_warmup_requests
   }
 
-  // if (peft_model_id != nullptr) {
-  //   free(peft_model_id);
-  // }
+  if (peft_model_id != nullptr) {
+    free(peft_model_id);
+  }
   if (peft_model_id_finetuning != nullptr) {
     free(peft_model_id_finetuning);
   }
