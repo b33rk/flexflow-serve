@@ -826,7 +826,7 @@ __global__ void
 }
 
 template <typename DT>
-void compute_qkv_kernel(IncMultiHeadSelfAttentionMeta const *m,
+void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
                         BatchConfig const *bc,
                         int shard_id,
                         DT *output_ptr,
@@ -983,7 +983,7 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                  stream);
 
   // phase 1: Implement kernel to apply rotary embedding and scaling
-  compute_qkv_kernel(
+  apply_scaling_and_rotary(
       m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), stream);
   update_kv_cache_kernel<DT>(m, bc, stream);
 
@@ -1848,14 +1848,14 @@ template void
         half *output_ptr,
         hipStream_t stream);
 
-template void Kernels::IncMultiHeadAttention::compute_qkv_kernel<float>(
+template void Kernels::IncMultiHeadAttention::apply_scaling_and_rotary<float>(
     IncMultiHeadSelfAttentionMeta const *m,
     BatchConfig const *bc,
     int shard_id,
     float *output_ptr,
     hipStream_t stream);
 
-template void Kernels::IncMultiHeadAttention::compute_qkv_kernel<half>(
+template void Kernels::IncMultiHeadAttention::apply_scaling_and_rotary<half>(
     IncMultiHeadSelfAttentionMeta const *m,
     BatchConfig const *bc,
     int shard_id,

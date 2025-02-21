@@ -66,9 +66,7 @@ void peft_bwd_kernel_wrapper(LinearMeta const *m,
                              void *output_grad_ptr,
                              void const *kernel_ptr,
                              int in_dim,
-                             int out_dim,
-                             int num_infr_tokens,
-                             int num_peft_tokens);
+                             int out_dim);
 void backward_kernel_wrapper(LinearMeta const *m,
                              void const *input_ptr,
                              void *input_grad_ptr,
@@ -101,8 +99,6 @@ void peft_bwd_kernel(LinearMeta const *m,
                      void const *kernel_ptr,
                      int in_dim,
                      int out_dim,
-                     int num_infr_tokens,
-                     int num_peft_tokens,
                      ffStream_t stream);
 template <typename DT>
 void backward_kernel(LinearMeta const *m,

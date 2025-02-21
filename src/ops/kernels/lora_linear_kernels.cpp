@@ -464,65 +464,81 @@ void peft_bwd_kernel(Context ctx,
                               compute_type,
                               HIPBLAS_GEMM_DEFAULT));
     }
+    checkCUDA(hipblasGemmEx(m->handle.blas,
+                            CUBLAS_OP_N,
+                            CUBLAS_OP_T,
+                            lora_config.rank,
+                            out_dim,
+                            num_peft_tokens,
+                            &scaling_constant,
+                            weight.low_rank_activation,
+                            lr_actv_type,
+                            lora_config.rank,
+                            output_grad_ptr,
+                            output_type,
+                            out_dim,
+                            &beta,
+                            weight.w1_grad_ptr,
+                            weight_type,
+                            lora_config.rank,
+                            compute_type,
+                            HIPBLAS_GEMM_DEFAULT));
+  }
 
-    if (bc->requestsInfo[i].optimizer_tasks.update_weights) {
-      assert(lora_config.optimizer_config != nullptr);
-      int w0_num_elements = lora_config.rank * in_dim;
-      int w1_num_elements = lora_config.rank * out_dim;
+  if (bc->requestsInfo[i].optimizer_tasks.update_weights) {
+    assert(lora_config.optimizer_config != nullptr);
+    int w0_num_elements = lora_config.rank * in_dim;
+    int w1_num_elements = lora_config.rank * out_dim;
 
-      // Get optimizer config
+    // Get optimizer config
 
-      if (lora_config.optimizer_config->getType() == "SGD") {
-        LoraSGDOptimizerConfig const *sgd_config =
-            static_cast<LoraSGDOptimizerConfig const *>(
-                lora_config.optimizer_config);
-        // LoRA_A weight is split in tensor parallelism, so no need to apply
-        // all-reduce
-        sgd_update<<<GET_BLOCKS(w0_num_elements),
-                     CUDA_NUM_THREADS,
-                     0,
-                     stream>>>(w0_num_elements,
-                               sgd_config->lr,
-                               sgd_config->weight_decay,
-                               sgd_config->momentum,
-                               sgd_config->nesterov,
-                               static_cast<DT const *>(weight.w0_grad_ptr),
-                               static_cast<DT *>(weight.w0_v_values_ptr),
-                               static_cast<DT *>(weight.w0_ptr));
-        // LoRA_B weight is replicated w tensor parallelism, so we need to sync
-        // and sum first
+    if (lora_config.optimizer_config->getType() == "SGD") {
+      LoraSGDOptimizerConfig const *sgd_config =
+          static_cast<LoraSGDOptimizerConfig const *>(
+              lora_config.optimizer_config);
+      // LoRA_A weight is split in tensor parallelism, so no need to apply
+      // all-reduce
+      sgd_update<<<GET_BLOCKS(w0_num_elements), CUDA_NUM_THREADS, 0, stream>>>(
+          w0_num_elements,
+          sgd_config->lr,
+          sgd_config->weight_decay,
+          sgd_config->momentum,
+          sgd_config->nesterov,
+          static_cast<DT const *>(weight.w0_grad_ptr),
+          static_cast<DT *>(weight.w0_v_values_ptr),
+          static_cast<DT *>(weight.w0_ptr));
+      // LoRA_B weight is replicated w tensor parallelism, so we need to sync
+      // and sum first
 #ifdef FF_USE_NCCL
-        ncclDataType_t nccl_data_type = ff_to_nccl_datatype(m->output_type[0]);
-        runtime->concurrent_task_barrier(ctx);
-        checkNCCL(ncclAllReduce(static_cast<DT const *>(weight.w1_grad_ptr),
-                                static_cast<DT *>(weight.w1_grad_ptr),
-                                w1_num_elements,
-                                nccl_data_type,
-                                ncclSum,
-                                m->handle.ncclComm,
-                                stream));
-        runtime->concurrent_task_barrier(ctx);
+      ncclDataType_t nccl_data_type = ff_to_nccl_datatype(m->output_type[0]);
+      runtime->concurrent_task_barrier(ctx);
+      checkNCCL(ncclAllReduce(static_cast<DT const *>(weight.w1_grad_ptr),
+                              static_cast<DT *>(weight.w1_grad_ptr),
+                              w1_num_elements,
+                              nccl_data_type,
+                              ncclSum,
+                              m->handle.ncclComm,
+                              stream));
+      runtime->concurrent_task_barrier(ctx);
 #else
-        assert(false && "Must enable FF_USE_NCCL to use AllReduce operators");
+      assert(false && "Must enable FF_USE_NCCL to use AllReduce operators");
 #endif
-        sgd_update<<<GET_BLOCKS(w1_num_elements),
-                     CUDA_NUM_THREADS,
-                     0,
-                     stream>>>(w1_num_elements,
-                               sgd_config->lr,
-                               sgd_config->weight_decay,
-                               sgd_config->momentum,
-                               sgd_config->nesterov,
-                               static_cast<DT const *>(weight.w1_grad_ptr),
-                               static_cast<DT *>(weight.w1_v_values_ptr),
-                               static_cast<DT *>(weight.w1_ptr));
-      } else if (lora_config.optimizer_config->getType() == "Adam") {
-        assert(false && "Adam optimizer type not implemented yet");
-      } else {
-        assert(false && "Unsupported optimizer type");
-      }
+      sgd_update<<<GET_BLOCKS(w1_num_elements), CUDA_NUM_THREADS, 0, stream>>>(
+          w1_num_elements,
+          sgd_config->lr,
+          sgd_config->weight_decay,
+          sgd_config->momentum,
+          sgd_config->nesterov,
+          static_cast<DT const *>(weight.w1_grad_ptr),
+          static_cast<DT *>(weight.w1_v_values_ptr),
+          static_cast<DT *>(weight.w1_ptr));
+    } else if (lora_config.optimizer_config->getType() == "Adam") {
+      assert(false && "Adam optimizer type not implemented yet");
+    } else {
+      assert(false && "Unsupported optimizer type");
     }
   }
+}
 }
 
 } // namespace Internal

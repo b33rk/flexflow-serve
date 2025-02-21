@@ -177,6 +177,14 @@ bool flexflow_config_get_enable_peft(flexflow_config_t handle_) {
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
   return handle->enable_peft;
 }
+bool flexflow_config_get_enable_peft_finetuning(flexflow_config_t handle_) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->enable_peft_finetuning;
+}
+void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_, bool value) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->enable_peft_finetuning = value;
+}
 
 int flexflow_config_get_python_data_loader_type(flexflow_config_t handle_) {
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
@@ -1739,8 +1747,9 @@ void flexflow_model_generate(flexflow_model_t handle_,
         fine_tuning_req.peft_model_id = *peft_model_id;
       }
       std::string const dataset_fp(dataset_filepaths[i]);
-      fine_tuning_req.dataset_filepath = dataset_fp;
-      fine_tuning_req.max_training_steps = training_steps[i];
+      fine_tuning_req.peft_finetuning_info.dataset_filepath = dataset_fp;
+      fine_tuning_req.peft_finetuning_info.max_training_steps =
+          training_steps[i];
       requests.push_back(fine_tuning_req);
       DEBUG_PRINT("[Model] finetune[%d] %p %s %i %i %i %i",
                   i,
@@ -2789,6 +2798,22 @@ void flexflow_request_manager_set_enable_peft_finetuning(
   handle->set_enable_peft_finetuning(enable_peft_finetuning_);
   DEBUG_PRINT("[RequestManager] set_enable_peft_finetuning %d",
               enable_peft_finetuning_);
+}
+
+void flexflow_request_manager_set_num_transformers_layers(
+    flexflow_request_manager_t handle_, int num_transformers_layers_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_num_transformer_layers(num_transformers_layers_);
+  DEBUG_PRINT("[RequestManager] set num_transformers_layers %d",
+    num_transformers_layers_);
+}
+
+void flexflow_request_manager_set_num_layers_per_finetuning_step(
+    flexflow_request_manager_t handle_, int num_layers_per_finetuning_step_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_num_layers_per_finetuning_step(num_layers_per_finetuning_step_);
+  DEBUG_PRINT("[RequestManager] set num layers per finetuning step %d",
+    num_layers_per_finetuning_step_);
 }
 
 void flexflow_request_manager_register_tokenizer(

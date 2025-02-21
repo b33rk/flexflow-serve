@@ -382,7 +382,7 @@ template <typename DT>
 void update_kv_cache_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
                             BeamSearchBatchConfig const *bc,
                             hipStream_t stream) {
-  int num_tokens = bc->num_active_infr_tokens();
+  int num_tokens = bc->num_active_tokens();
   int curr_depth = bc->beamRequestsInfo[0].current_depth;
   if (num_tokens > 0) {
     int parallelism = m->hidden_size * KV_WEIGHT_NUM * num_tokens;
@@ -719,7 +719,7 @@ void inference_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
   // phase 1: Implement kernel to compute KQV for input tokens
   // TODO WARNING: this is commented out only because we are fixing the inc_attn
   // first
-  compute_qkv_kernel(
+  apply_scaling_and_rotary(
       m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), stream);
   // phase 2: Update key/val cache
   update_kv_cache_kernel<DT>(m, bc, stream);

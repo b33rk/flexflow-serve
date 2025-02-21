@@ -75,6 +75,7 @@ enum TaskIDs {
   EMBED_INIT_TASK_ID,
   EMBED_FWD_TASK_ID,
   EMBED_INF_TASK_ID,
+  EMBED_PEFT_BWD_TASK_ID,
   EMBED_BWD_TASK_ID,
   GATHER_INIT_TASK_ID,
   GATHER_FWD_TASK_ID,
@@ -843,6 +844,9 @@ public:
   // Inference APIs
   // ========================================
   std::vector<GenerationResult> generate(std::vector<Request> const &requests);
+  std::vector<GenerationResult>
+      generate_online(std::vector<Request> const &inference_requests,
+                      std::vector<Request> const &ft_requests);
 
   Tensor create_tensor_legion_ordering(int num_dim,
                                        int const dims[],

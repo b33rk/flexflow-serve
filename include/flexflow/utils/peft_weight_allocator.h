@@ -18,10 +18,19 @@
 
 #include "flexflow/config.h"
 #include "flexflow/ffconst_utils.h"
+#include "flexflow/mapper.h"
 #include "flexflow/ops/lora_linear_params.h"
 // #include <mutex>
 
 namespace FlexFlow {
+
+using Legion::coord_t;
+using Legion::Machine;
+using Legion::Memory;
+using Legion::Processor;
+using Realm::RegionInstance;
+using namespace Legion;
+using namespace Mapping;
 
 struct LoraLinearWeight {
   // weights
@@ -44,7 +53,7 @@ struct LoraLinearWeight {
       : w0_ptr(w0), w1_ptr(w1), w0_grad_ptr(w0_grad), w1_grad_ptr(w1_grad),
         w0_v_values_ptr(w0_v_values), w1_v_values_ptr(w1_v_values),
         low_rank_activation(low_rank_activation_),
-        input_activation(input_activation_) {}
+        input_activation(input_activation_), log_instance_creation(false) {}
 };
 
 void init_peft_weight_wrapper(LoraLinearWeight const &weight,
@@ -82,6 +91,15 @@ public:
     allocate_inference_memory();
     // finetuning memory is allocated upon the first finetuning request, so we
     // can skip for inference-only workloads
+    InputArgs const &command_args = HighLevelRuntime::get_input_args();
+    char **argv = command_args.argv;
+    int argc = command_args.argc;
+    for (int i = 1; i < argc; i++) {
+      if (!strcmp(argv[i], "--log-instance-creation")) {
+        log_instance_creation = true;
+        break;
+      }
+    }
   }
 
   // allocate memory for all the PEFT adapters for a given layer on a given
@@ -130,6 +148,7 @@ private:
   std::string lora_layername_substr;
   DataType dt;
   PEFTModelID finetuning_model_id;
+  bool log_instance_creation;
 };
 
 } // namespace FlexFlow

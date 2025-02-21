@@ -23,7 +23,9 @@ using Legion::Domain;
 
 SoftmaxMeta::SoftmaxMeta(FFHandler handler,
                          Softmax const *softmax,
-                         Domain const &input_domain)
+                         Domain const &input_domain,
+                         bool is_last_op,
+                         MemoryAllocator &gpu_mem_allocator)
     : OpMeta(handler, softmax) {
   checkCUDNN(cudnnCreateTensorDescriptor(&inputTensor));
   checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
@@ -34,6 +36,18 @@ SoftmaxMeta::SoftmaxMeta(FFHandler handler,
   dim = softmax->dim;
   profiling = softmax->profiling;
   inference_debugging = softmax->inference_debugging;
+  enable_peft_finetuning = softmax->enable_peft_finetuning;
+  if (enable_peft_finetuning && is_last_op) {
+    allocated_peft_buffer_size =
+        input_domain.get_volume() * data_type_size(softmax->data_type);
+    gpu_mem_allocator.create_legion_instance(
+        reserveInst, allocated_peft_buffer_size, "SoftmaxMeta");
+    output_grad_ptr =
+        gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
+  } else {
+    allocated_peft_buffer_size = 0;
+    output_grad_ptr = nullptr;
+  }
   std::strcpy(op_name, softmax->name);
 }
 
@@ -118,12 +132,11 @@ void backward_kernel_wrapper(SoftmaxMeta const *m,
   }
 }
 
-void inference_kernel_wrapper(SoftmaxMeta const *m,
+void inference_kernel_wrapper(SoftmaxMeta *m,
                               BatchConfig const *bc,
                               bool is_last_op,
                               GenericTensorAccessorR const &input,
-                              GenericTensorAccessorW const &output,
-                              GenericTensorAccessorW const &output_grad) {
+                              GenericTensorAccessorW const &output) {
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
   cudaEvent_t t_start, t_end;
@@ -140,12 +153,8 @@ void inference_kernel_wrapper(SoftmaxMeta const *m,
                                output.get_float_ptr(),
                                num_classes,
                                stream);
-    if (is_last_op) {
-      checkCUDA(cudaMemcpyAsync(output_grad.get_float_ptr(),
-                                output.get_float_ptr(),
-                                output.domain.get_volume() * sizeof(float),
-                                cudaMemcpyDeviceToDevice,
-                                stream));
+    if (is_last_op && bc->num_finetuning_fwd_requests() > 0) {
+      Internal::store_peft_activations(m, bc, num_classes, output.get_float_ptr(), stream);
     }
   } else if (m->output_type[0] == DT_HALF) {
     Internal::inference_kernel(m,
@@ -154,12 +163,8 @@ void inference_kernel_wrapper(SoftmaxMeta const *m,
                                output.get_half_ptr(),
                                num_classes,
                                stream);
-    if (is_last_op) {
-      checkCUDA(cudaMemcpyAsync(output_grad.get_half_ptr(),
-                                output.get_half_ptr(),
-                                output.domain.get_volume() * sizeof(half),
-                                cudaMemcpyDeviceToDevice,
-                                stream));
+    if (is_last_op && bc->num_finetuning_fwd_requests() > 0) {
+      Internal::store_peft_activations(m, bc, num_classes, output.get_half_ptr(), stream);
     }
   } else {
     assert(false && "Unsupported data type");
@@ -181,8 +186,7 @@ void inference_kernel_wrapper(SoftmaxMeta const *m,
 
 void peft_bwd_kernel_wrapper(SoftmaxMeta const *m,
                              BatchConfig const *bc,
-                             GenericTensorAccessorW const &input_grad,
-                             GenericTensorAccessorR const &output_grad) {
+                             GenericTensorAccessorW const &input_grad) {
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
   cudaEvent_t t_start, t_end;
@@ -192,21 +196,13 @@ void peft_bwd_kernel_wrapper(SoftmaxMeta const *m,
     cudaEventRecord(t_start, stream);
   }
 
-  int num_classes = output_grad.domain.hi()[0] - output_grad.domain.lo()[0] + 1;
+  int num_classes = input_grad.domain.hi()[0] - input_grad.domain.lo()[0] + 1;
   if (m->output_type[0] == DT_FLOAT) {
-    Internal::peft_bwd_kernel(m,
-                              bc,
-                              input_grad.get_float_ptr(),
-                              output_grad.get_float_ptr(),
-                              num_classes,
-                              stream);
+    Internal::peft_bwd_kernel(
+        m, bc, input_grad.get_float_ptr(), num_classes, stream);
   } else if (m->output_type[0] == DT_HALF) {
-    Internal::peft_bwd_kernel(m,
-                              bc,
-                              input_grad.get_half_ptr(),
-                              output_grad.get_half_ptr(),
-                              num_classes,
-                              stream);
+    Internal::peft_bwd_kernel(
+        m, bc, input_grad.get_half_ptr(), num_classes, stream);
   } else {
     assert(false && "Unsupported data type");
   }
@@ -288,6 +284,37 @@ void inference_kernel(SoftmaxMeta const *m,
 }
 
 template <typename DT>
+void store_peft_activations(SoftmaxMeta *m,
+                    BatchConfig const *bc,
+                    int num_classes,
+                    DT *output_ptr,
+                    cudaStream_t stream) {
+  assert(m->enable_peft_finetuning);
+  assert(m->output_grad_ptr != nullptr);
+  
+  int num_ft_tokens = bc->num_finetuning_fwd_tokens();
+  int i = bc->finetuning_request_index();
+  int tokens_previous_requests = bc->requestsInfo[i].first_token_offset_in_batch;
+  int prev_steps_tokens = bc->requestsInfo[i].first_token_depth_in_request;
+  assert(bc->requestsInfo[i].num_tokens_in_batch == num_ft_tokens);
+
+  // shift labels by 1 position to the left (ignore first token label)
+  for (int j = 0; j < num_ft_tokens-1; j++) {
+    m->peft_token_ids[j] = bc->tokensInfo[tokens_previous_requests + prev_steps_tokens + j + 1].token_id;
+  }
+
+  size_t batch_offset = num_classes * tokens_previous_requests;
+  size_t req_offset = num_classes * prev_steps_tokens;
+  size_t data_size = num_classes * num_ft_tokens * sizeof(DT);
+  assert(m->allocated_peft_buffer_size >= data_size);
+  checkCUDA(cudaMemcpyAsync(static_cast<DT*>(m->output_grad_ptr) + req_offset,
+                            output_ptr + batch_offset,
+                            data_size,
+                            cudaMemcpyDeviceToDevice,
+                            stream));
+}
+
+template <typename DT>
 __global__ void sparse_categorical_crossentropy_loss_peft_backward(
     DT *input_grad,
     DT const *output_grad,
@@ -308,63 +335,42 @@ template <typename DT>
 void peft_bwd_kernel(SoftmaxMeta const *m,
                      BatchConfig const *bc,
                      DT *input_grad_ptr,
-                     DT const *output_grad_ptr,
                      int num_classes,
                      cudaStream_t stream) {
-  BatchConfig::TokenId token_ids[BatchConfig::MAX_NUM_TOKENS];
-  int tokens_previous_requests = 0;
-  for (int i = 0; i < bc->max_requests_per_batch(); i++) {
-    if (bc->request_completed[i]) {
-      continue;
-    }
-    // Skip non-PEFT requests
-    if (!bc->requestsInfo[i].peft_bwd) {
-      tokens_previous_requests += bc->requestsInfo[i].num_tokens_in_batch;
-      continue;
-    }
-    int num_bwd_tokens = bc->requestsInfo[i].num_tokens_in_batch - 1;
-    // shift labels by 1 position to the left (ignore first token label)
-    for (int j = 0; j < num_bwd_tokens; j++) {
-      token_ids[j] = bc->tokensInfo[j + tokens_previous_requests + 1].token_id;
-    }
+  assert(
+      bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id));
+  int i = bc->finetuning_request_index();
 
-    DT scale_factor = 1.0 / (bc->requestsInfo[i].num_tokens_in_batch );
-    // ignore last token
-    checkCUDA(cudaMemsetAsync(
-        input_grad_ptr + (tokens_previous_requests +
-                          bc->requestsInfo[i].num_tokens_in_batch - 1) *
-                             num_classes,
-        0,
-        num_classes * sizeof(DT),
-        stream));
-    checkCUDA(cudaMemcpyAsync(m->handle.workSpace,
-                              token_ids,
-                              sizeof(BatchConfig::TokenId) * num_bwd_tokens,
-                              cudaMemcpyHostToDevice,
-                              stream));
-    sparse_categorical_crossentropy_loss_peft_backward<<<
-        GET_BLOCKS(num_bwd_tokens * num_classes),
-        CUDA_NUM_THREADS,
-        0,
-        stream>>>(
-        input_grad_ptr + tokens_previous_requests * num_classes,
-        output_grad_ptr + tokens_previous_requests * num_classes,
-        static_cast<BatchConfig::TokenId const *>(m->handle.workSpace),
-        num_bwd_tokens,
-        num_classes);
-    // scale
-    scale_kernel<<<GET_BLOCKS(num_bwd_tokens * num_classes),
-                   CUDA_NUM_THREADS,
-                   0,
-                   stream>>>(input_grad_ptr +
-                                 tokens_previous_requests * num_classes,
-                             num_bwd_tokens * num_classes,
-                             DT(0.0),
-                             scale_factor);
+  int num_bwd_tokens = bc->requestsInfo[i].num_tokens_in_batch - 1;
 
-    tokens_previous_requests += num_bwd_tokens + 1;
-  }
-  assert(tokens_previous_requests == bc->num_active_tokens());
+  DT scale_factor = 1.0 / (bc->requestsInfo[i].num_tokens_in_batch );
+  // ignore last token
+    checkCUDA(cudaMemsetAsync(input_grad_ptr + num_bwd_tokens * num_classes,
+                            0,
+                            num_classes * sizeof(DT),
+                            stream));
+  checkCUDA(cudaMemcpyAsync(m->handle.workSpace,
+                            m->peft_token_ids,
+                            sizeof(BatchConfig::TokenId) * num_bwd_tokens,
+                            cudaMemcpyHostToDevice,
+                            stream));
+  sparse_categorical_crossentropy_loss_peft_backward<<<
+      GET_BLOCKS(num_bwd_tokens * num_classes),
+      CUDA_NUM_THREADS,
+      0,
+      stream>>>(input_grad_ptr,
+                static_cast<DT *>(m->output_grad_ptr),
+                static_cast<BatchConfig::TokenId const *>(m->handle.workSpace),
+                num_bwd_tokens,
+                num_classes);
+  // scale
+  scale_kernel<<<GET_BLOCKS(num_bwd_tokens * num_classes),
+                 CUDA_NUM_THREADS,
+                 0,
+                 stream>>>(input_grad_ptr,
+                           num_bwd_tokens * num_classes,
+                           DT(0.0),
+                           scale_factor);
 }
 
 } // namespace Internal
