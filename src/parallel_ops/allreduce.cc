@@ -45,7 +45,8 @@ using namespace FlexFlow::Kernels::AllReduce;
 
 /* Params */
 bool operator==(AllReduceParams const &lhs, AllReduceParams const &rhs) {
-  return lhs.allreduce_legion_dim == rhs.allreduce_legion_dim &&
+  return lhs.layer_guid == rhs.layer_guid &&
+         lhs.allreduce_legion_dim == rhs.allreduce_legion_dim &&
          std::strcmp(lhs.name, rhs.name) == 0;
 }
 
@@ -55,6 +56,7 @@ bool AllReduceParams::is_valid(ParallelTensorShape const &input) const {
 
 AllReduceParams AllReduce::get_params() const {
   AllReduceParams params;
+  params.layer_guid = this->layer_guid;
   params.allreduce_legion_dim = this->allreduce_dim;
   if (strlen(this->name) < MAX_OPNAME) {
     strcpy(params.name, this->name);
@@ -63,10 +65,11 @@ AllReduceParams AllReduce::get_params() const {
 }
 
 AllReduce::AllReduce(FFModel &model,
+                     LayerID const &_layer_guid,
                      const ParallelTensor _input,
                      int _allreduce_legion_dim,
                      char const *name)
-    : ParallelOp(model, OP_ALLREDUCE, name, _input),
+    : ParallelOp(model, OP_ALLREDUCE, name, _input), layer_guid(_layer_guid),
       allreduce_dim(_allreduce_legion_dim) {
   int numdim = _input->num_dims;
   ParallelDim dims[MAX_TENSOR_DIM];
@@ -83,7 +86,11 @@ AllReduce::AllReduce(FFModel &model,
                      AllReduceParams const &params,
                      ParallelTensor const input,
                      char const *name)
-    : AllReduce(model, input, params.allreduce_legion_dim, params.name) {}
+    : AllReduce(model,
+                params.layer_guid,
+                input,
+                params.allreduce_legion_dim,
+                params.name) {}
 
 void AllReduce::create_input_partition(FFModel &ff) {
   // Do nothing
@@ -112,6 +119,7 @@ OpMeta *AllReduce::init_task(Task const *task,
   meta->output_type[0] = ar->outputs[0]->data_type;
   assert(meta->input_type[0] == meta->output_type[0]);
   std::strcpy(meta->op_name, ar->name);
+  meta->layer_guid = ar->layer_guid;
   return meta;
 }
 
