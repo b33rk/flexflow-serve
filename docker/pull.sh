@@ -6,7 +6,7 @@ set -euo pipefail
 
 set_cuda_version_version() {
   # If the user provided a cuda_version, use that.
-  if [[ -n "$cuda_version" ]]; then
+  if [[ -n "${cuda_version:-}" ]]; then
     return 0
   fi
 

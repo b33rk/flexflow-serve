@@ -23,7 +23,7 @@ get_cuda_docker_image() {
   # Otherwise, use nvidia-smi to extract the CUDA version.
   local cuda_full_version
   local installed_major_minor
-  if [[ -n "$cuda_version" ]]; then
+  if [[ -n "${cuda_version:-}" ]]; then
       cuda_full_version="$cuda_version"
       installed_major_minor="$cuda_version"
   else
@@ -102,7 +102,7 @@ get_cuda_docker_image() {
 
 set_cuda_version_version() {
   # If the user provided a cuda_version, use that.
-  if [[ -n "$cuda_version" ]]; then
+  if [[ -n "${cuda_version:-}" ]]; then
     return 0
   fi
 
