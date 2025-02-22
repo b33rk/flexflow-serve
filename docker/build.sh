@@ -4,13 +4,134 @@ set -euo pipefail
 # Usage: ./build.sh <docker_image_name>
 # Optional environment variables: FF_GPU_BACKEND, cuda_version, hip_version
 
+get_cuda_docker_image() {
+  local docker_user="nvidia"
+  local docker_image="cuda"
+  local page=1
+  local per_page=100
+
+  # Determine Ubuntu version: use lsb_release if available, else default to 22.04.
+  local ubuntu_version
+  if command -v lsb_release >/dev/null 2>&1; then
+      ubuntu_version=$(lsb_release -rs)
+  else
+      ubuntu_version="22.04"
+  fi
+
+  # Determine CUDA version.
+  # If the environment variable 'cuda_version' is set (in "<major>.<minor>" format), use that.
+  # Otherwise, use nvidia-smi to extract the CUDA version.
+  local cuda_full_version
+  local installed_major_minor
+  if [[ -n "${cuda_version:-}" ]]; then
+      cuda_full_version="$cuda_version"
+      installed_major_minor="$cuda_version"
+  else
+      if ! command -v nvidia-smi >/dev/null 2>&1; then
+          echo "Error: nvidia-smi not found and cuda_version is not set." >&2
+          return 1
+      fi
+      local nvidia_smi_output
+      nvidia_smi_output=$(nvidia-smi)
+      local cuda_version_line
+      cuda_version_line=$(echo "$nvidia_smi_output" | grep "CUDA Version")
+      cuda_full_version=$(echo "$cuda_version_line" | sed -n 's/.*CUDA Version:\s*\([0-9]\+\.[0-9]\+\).*/\1/p')
+      if [[ -z "$cuda_full_version" ]]; then
+          echo "Error: Unable to determine CUDA version from nvidia-smi." >&2
+          return 1
+      fi
+      installed_major_minor="$cuda_full_version"
+  fi
+
+  # Query Docker Hub for matching tags.
+  local -a tags_list=()
+  while true; do
+      local response new_tags
+      response=$(curl -s "https://hub.docker.com/v2/repositories/${docker_user}/${docker_image}/tags?page=${page}&page_size=${per_page}")
+      new_tags=$(echo "$response" | jq -r --arg v "$ubuntu_version" '.results[].name | select(contains("cudnn") and contains("devel-ubuntu") and test("ubuntu"+$v+"$"))')
+      if [[ -z "$new_tags" ]]; then
+          break
+      fi
+      while read -r tag; do
+          tags_list+=("$tag")
+      done <<< "$new_tags"
+      ((page++))
+  done
+
+  if [ ${#tags_list[@]} -eq 0 ]; then
+      echo "Error: No docker images found matching criteria." >&2
+      return 1
+  fi
+
+  # Sort the tags in descending order based on the CUDA version.
+  local sorted_tags
+  sorted_tags=$(printf "%s\n" "${tags_list[@]}" | sort -rV -t '-' -k1,1)
+
+  # Find the most appropriate tag.
+  local selected_tag=""
+  while read -r tag; do
+      local version tag_major_minor
+      version=$(echo "$tag" | cut -d '-' -f1)
+      tag_major_minor=$(echo "$version" | awk -F. '{print $1"."$2}')
+      if [[ "$tag_major_minor" == "$installed_major_minor" ]]; then
+          selected_tag="$tag"
+          break
+      fi
+  done <<< "$sorted_tags"
+
+  # If no exact match, choose the highest version lower than the installed version.
+  if [[ -z "$selected_tag" ]]; then
+      while read -r tag; do
+          local version
+          version=$(echo "$tag" | cut -d '-' -f1)
+          if [[ $(printf '%s\n' "$version" "$cuda_full_version" | sort -V | head -n1) == "$version" && "$version" != "$cuda_full_version" ]]; then
+              selected_tag="$tag"
+              break
+          fi
+      done <<< "$sorted_tags"
+  fi
+
+  if [[ -n "$selected_tag" ]]; then
+      echo "${docker_user}/${docker_image}:${selected_tag}"
+      return 0
+  else
+      echo "Error: No suitable docker image found." >&2
+      return 1
+  fi
+}
+
+set_cuda_version_version() {
+  # If the user provided a cuda_version, use that.
+  if [[ -n "${cuda_version:-}" ]]; then
+    return 0
+  fi
+
+  # Otherwise, check that nvidia-smi is available.
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "Error: nvidia-smi not found and cuda_version is not set." >&2
+    return 1
+  fi
+
+  # Extract the CUDA version from nvidia-smi output.
+  local nvidia_output cuda_ver
+  nvidia_output=$(nvidia-smi)
+  cuda_ver=$(echo "$nvidia_output" | grep "CUDA Version" | sed -n 's/.*CUDA Version:\s*\([0-9]\+\.[0-9]\+\).*/\1/p')
+  
+  if [[ -z "$cuda_ver" ]]; then
+    echo "Error: Unable to detect CUDA version from nvidia-smi." >&2
+    return 1
+  fi
+
+  export cuda_version="$cuda_ver"
+  return 0
+}
+
 # Cd into flexflow-serve. Assumes this script is in flexflow-serve/docker
 cd "${BASH_SOURCE[0]%/*}/.."
 
 # Parse input params
 image=${1:-flexflow}
 FF_GPU_BACKEND=${FF_GPU_BACKEND:-cuda}
-cuda_version=${cuda_version:-"empty"}
 hip_version=${hip_version:-"empty"}
 python_version=${python_version:-latest}
 
@@ -36,36 +157,10 @@ ff_environment_base_image="ubuntu:20.04"
 gpu_backend_version=""
 
 if [[ "${FF_GPU_BACKEND}" == "cuda" || "${FF_GPU_BACKEND}" == "hip_cuda" ]]; then
-  # Autodetect cuda version if not specified
-  if [[ $cuda_version == "empty" ]]; then
-    # shellcheck disable=SC2015
-    cuda_version=$(command -v nvcc >/dev/null 2>&1 && nvcc --version | grep "release" | awk '{print $NF}' || true)
-    # Change cuda_version eg. V11.7.99 to 11.7
-    cuda_version=${cuda_version:1:4}
-    if [[ -z "$cuda_version" ]]; then
-      echo "Could not detect CUDA version. Please specify one manually by setting the 'cuda_version' env."
-      exit 1
-    fi
-  fi
-  # Check that CUDA version is supported, and modify cuda version to include default subsubversion
-  if [[ "$cuda_version" == @(11.1|11.3|11.7|12.0|12.1) ]]; then
-    cuda_version_input=${cuda_version}.1
-  elif [[ "$cuda_version" == @(11.2|11.5|11.6|12.2) ]]; then 
-    cuda_version_input=${cuda_version}.2
-  elif [[ "$cuda_version" == @(11.4) ]]; then 
-    cuda_version_input=${cuda_version}.3
-  elif [[ "$cuda_version" == @(11.8) ]]; then 
-    cuda_version_input=${cuda_version}.0
-  elif [[ "$cuda_version" == @(12.3|12.4|12.5|12.6|12.7|12.8|12.9) ]]; then
-    # Use CUDA 12.2 for all versions greater or equal to 12.2 for now (the Docker machine with CUDNN is not yet available)
-    cuda_version=12.2
-    cuda_version_input=${cuda_version}.2
-  else
-    echo "cuda_version is not supported, please choose among {11.1|11.2|11.3|11.4|11.5|11.6|11.7|11.8|12.0|12.1|12.2}"
-    exit 1
-  fi
-  echo "Building $image docker image with CUDA $cuda_version"
-  ff_environment_base_image="nvidia/cuda:${cuda_version_input}-cudnn8-devel-ubuntu20.04"
+  ff_environment_base_image=$(get_cuda_docker_image) || { echo "Failed to get docker image." >&2; exit 1; }
+  echo "Using base docker image: $ff_environment_base_image"
+  set_cuda_version_version || { echo "Failed to set gpu_backend_version." >&2; exit 1; }
+  echo "GPU Backend Version is set to: $cuda_version"
   gpu_backend_version="-${cuda_version}"
 fi
 
@@ -90,6 +185,7 @@ if [[ "${FF_GPU_BACKEND}" == "hip_rocm" || "${FF_GPU_BACKEND}" == "hip_cuda" ]];
   if [[ "${FF_GPU_BACKEND}" == "hip_rocm" ]]; then
     gpu_backend_version="-${hip_version}"
   fi
+  cuda_version="empty"
 fi
 
 # Get number of cores available on the machine. Build with all cores but one, to prevent RAM choking
