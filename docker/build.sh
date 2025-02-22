@@ -185,6 +185,7 @@ if [[ "${FF_GPU_BACKEND}" == "hip_rocm" || "${FF_GPU_BACKEND}" == "hip_cuda" ]];
   if [[ "${FF_GPU_BACKEND}" == "hip_rocm" ]]; then
     gpu_backend_version="-${hip_version}"
   fi
+  cuda_version="empty"
 fi
 
 # Get number of cores available on the machine. Build with all cores but one, to prevent RAM choking
