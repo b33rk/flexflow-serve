@@ -12,7 +12,7 @@ concurrency:
 jobs:
   cmake-build:
     name: Build FlexFlow Serve
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     defaults:
       run:
         shell: bash -l {0} # required to use an activated conda environment
@@ -68,14 +68,14 @@ jobs:
           ../config/config.linux
           make -j $n_build_cores 
           make install
-          # sudo make install
-          # sudo ldconfig
 
       - name: Check availability of flexflow modules in Python
         run: |
           if [[ "${FF_GPU_BACKEND}" == "cuda" ]]; then
             export LD_LIBRARY_PATH="$CUDA_PATH/lib64/stubs:$LD_LIBRARY_PATH"
             sudo ln -s $CUDA_PATH/lib64/stubs/libcuda.so $CUDA_PATH/lib64/stubs/libcuda.so.1
+          else
+            sudo ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 $CONDA_PREFIX/lib/libstdc++.so.6
           fi
           # Remove build folder to check that the installed version can run independently of the build files
           rm -rf build

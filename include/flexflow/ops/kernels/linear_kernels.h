@@ -96,7 +96,7 @@ void store_peft_activations(LinearMeta const *m,
                             BatchConfig const *bc,
                             size_t out_dim,
                             DT *output_ptr,
-                            cudaStream_t stream);
+                            ffStream_t stream);
 template <typename DT>
 void peft_bwd_kernel(LinearMeta const *m,
                      BatchConfig const *bc,

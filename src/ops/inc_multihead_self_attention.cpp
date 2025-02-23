@@ -116,14 +116,14 @@ __global__ void fill_entries_above_diagonal(DT *matrix,
   }
 }
 
-bool is_inf_req_decoding_mode(BatchConfig const *bc, int i) {
-  return !bc->requestsInfo[i].finetuning_request &&
-         !bc->requestsInfo[i].prompt_phase;
+bool is_finetuning_bwd_request(BatchConfig const *bc, int request_id) {
+  return bc->requestsInfo[request_id].finetuning_request &&
+         bc->requestsInfo[request_id].finetuning_backward_phase;
 }
 
-bool is_finetuning_req_bwd_phase(BatchConfig const *bc, int i) {
-  return bc->requestsInfo[i].finetuning_request &&
-         bc->requestsInfo[i].finetuning_backward_phase;
+bool is_decoding_request(BatchConfig const *bc, int request_id) {
+  return !bc->requestsInfo[request_id].finetuning_request &&
+         !bc->requestsInfo[request_id].prompt_phase;
 }
 
 template <typename DT>
@@ -150,29 +150,37 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
   assert(m->qProjSize == m->kProjSize);
 
   for (int i = 0; i < bc->max_requests_per_batch(); i++) {
-    if (bc->request_completed[i] || (!bc->requestsInfo[i].prompt_phase &&
-                                     !bc->requestsInfo[i].finetuning_request)) {
+    if (bc->request_completed[i] || is_decoding_request(bc, i) ||
+        is_finetuning_bwd_request(bc, i)) {
       continue;
     }
     int num_new_tokens = bc->requestsInfo[i].num_tokens_in_batch;
     int total_tokens = bc->requestsInfo[i].first_token_depth_in_request +
                        bc->requestsInfo[i].num_tokens_in_batch;
+    if (num_new_tokens <= 0) {
+      continue;
+    }
     // Copy query to m->query_activation_buffer if we need to compute
     // PEFT backward
     if (bc->requestsInfo[i].finetuning_request &&
         !bc->requestsInfo[i].finetuning_backward_phase) {
-      int max_peft_tokens = BatchConfig::max_finetuning_sequence_length();
-      // Check that we have at most one request that requires peft_bwd
-      assert(bc->num_finetuning_fwd_requests() == 1);
-      assert(bc->num_finetuning_bwd_requests() == 1);
-      assert(bc->requestsInfo[i].peft_model_id != PEFTModelID::NO_ID);
-      assert(!is_finetuning_req_bwd_phase(bc, i));
-      int num_peft_tokens = bc->requestsInfo[i].num_tokens_in_batch;
-      assert(num_peft_tokens == bc->num_finetuning_fwd_tokens());
+      // int max_peft_tokens = bc->requestsInfo[i].max_length;
+      int max_peft_tokens = BatchConfig::max_sequence_length();
       size_t activation_size_needed =
           sizeof(DT) * max_peft_tokens * m->num_q_heads * m->qProjSize;
-      assert(m->allocated_peft_buffer_size1 == activation_size_needed);
-
+      if (activation_size_needed != m->allocated_peft_buffer_size1) {
+        std::cout << "activation_size_needed: " << activation_size_needed
+                  << std::endl;
+        std::cout << "m->allocated_peft_buffer_size1: "
+                  << m->allocated_peft_buffer_size1 << std::endl;
+        std::cout << "max_peft_tokens: " << max_peft_tokens << std::endl;
+        std::cout << "m->num_q_heads: " << m->num_q_heads << std::endl;
+        std::cout << "m->qProjSize: " << m->qProjSize << std::endl;
+        std::cout << "BatchConfig::max_sequence_length()"
+                  << BatchConfig::max_sequence_length() << std::endl;
+        std::cout << "sizeof(DT)" << sizeof(DT) << std::endl;
+      }
+      assert(activation_size_needed == m->allocated_peft_buffer_size1);
       int parallelism = m->hidden_size * num_tokens;
       hipLaunchKernelGGL(HIP_KERNEL_NAME(store_query_cache),
                          GET_BLOCKS(parallelism),
@@ -317,18 +325,11 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
     // Copy C_softmax to m->softmax_activation_buffer if we need to compute
     // PEFT backward
     if (bc->requestsInfo[i].finetuning_request) {
-      int max_peft_tokens = BatchConfig::max_finetuning_sequence_length();
-      // Check that we have at most one request that requires peft_bwd
-      assert(bc->num_finetuning_fwd_requests() == 1);
-      assert(bc->num_finetuning_bwd_requests() == 0);
-      assert(bc->requestsInfo[i].peft_model_id != PEFTModelID::NO_ID);
-      assert(!is_finetuning_req_bwd_phase(bc, i));
-      int num_peft_tokens = bc->requestsInfo[i].num_tokens_in_batch;
-      assert(num_peft_tokens == bc->num_finetuning_fwd_tokens());
+      int max_peft_tokens = BatchConfig::max_sequence_length();
+      DT *C_softmax = static_cast<DT *>(m->qk_prods_softmax);
       size_t activation_size_needed =
           sizeof(DT) * max_peft_tokens * max_peft_tokens * m->num_q_heads;
       assert(activation_size_needed == m->allocated_peft_buffer_size2);
-      DT *C_softmax = static_cast<DT *>(m->qk_prods_softmax);
       checkCUDA(hipMemcpyAsync(m->softmax_activation_buffer,
                                C_softmax,
                                sizeof(DT) * total_tokens * num_new_tokens *
@@ -336,6 +337,7 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                                hipMemcpyDeviceToDevice,
                                stream));
     }
+
     // Step 5: Matmul softmax(QK.T/sqrt(d_k)) by V. Implemented as V @
     // softmax(QK.T/sqrt(d_k)).T
     {
@@ -993,11 +995,11 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   size_t qkv_proj_size =
       m->qProjSize * m->num_q_heads * QKV_WEIGHT_NUM * bc->num_active_tokens();
 
-  hipMemcpyAsync(m->devQKVProjArray,
-                 qkv_ptr,
-                 qkv_proj_size * sizeof(DT),
-                 hipMemcpyDeviceToDevice,
-                 stream);
+  checkCUDA(hipMemcpyAsync(m->devQKVProjArray,
+                           qkv_ptr,
+                           qkv_proj_size * sizeof(DT),
+                           hipMemcpyDeviceToDevice,
+                           stream));
 
   // phase 1: Implement kernel to apply rotary embedding and scaling
   apply_scaling_and_rotary(
@@ -1015,13 +1017,27 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
     compute_attention_kernel_prompt<DT>(m, bc, shard_id, stream);
   }
 
-  // compute output production and bias together for all tokens
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    assert(m->peft_token_infos != nullptr);
+    assert(m->peft_token_infos_size == sizeof(BatchConfig::PerTokenInfo) *
+                                           BatchConfig::max_sequence_length());
+    int num_ft_tokens = bc->num_finetuning_fwd_tokens();
+    int i = bc->finetuning_request_index();
+    int tokens_previous_requests =
+        bc->requestsInfo[i].first_token_offset_in_batch;
+    int prev_steps_tokens = bc->requestsInfo[i].first_token_depth_in_request;
+    for (int j = 0; j < num_ft_tokens; j++) {
+      m->peft_token_infos[prev_steps_tokens + j] =
+          bc->tokensInfo[tokens_previous_requests + j];
+    }
+  }
+
   int num_tokens = bc->num_active_tokens();
-  hipMemcpyAsync(output_ptr,
-                 m->attn_heads,
-                 m->oProjSize * num_tokens * sizeof(DT),
-                 hipMemcpyDeviceToDevice,
-                 stream);
+  checkCUDA(hipMemcpyAsync(output_ptr,
+                           m->attn_heads,
+                           m->oProjSize * num_tokens * sizeof(DT),
+                           hipMemcpyDeviceToDevice,
+                           stream));
 }
 
 std::string get_peft_dbg_folder(IncMultiHeadSelfAttentionMeta const *m,
@@ -1120,32 +1136,33 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   assert(
       bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id));
   int i = bc->finetuning_request_index();
-
   int num_tokens = bc->requestsInfo[i].num_tokens_in_batch;
   int num_total_tokens = bc->requestsInfo[i].first_token_depth_in_request +
                          bc->requestsInfo[i].num_tokens_in_batch;
   // Currently assume we are calculating gradients for all tokens
   // of a request
   assert(num_tokens == num_total_tokens);
-  int kt_block_size = m->kProjSize;
-  int kt_req_block_size = kt_block_size * m->num_q_heads *
-                          BatchConfig::max_finetuning_sequence_length();
-  int vt_block_size = m->vProjSize;
-  int vt_req_block_size = vt_block_size * m->num_q_heads *
-                          BatchConfig::max_finetuning_sequence_length();
+  assert(num_total_tokens == bc->requestsInfo[i].max_length);
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
+  int kt_block_size = m->kProjSize;
+  int kt_req_block_size =
+      kt_block_size * m->num_q_heads * BatchConfig::max_sequence_length();
+  int vt_block_size = m->vProjSize;
+  int vt_req_block_size =
+      vt_block_size * m->num_q_heads * BatchConfig::max_sequence_length();
+
   // Step 1: copy gradient before final projection into workspace
   {
     int m_ = m->vProjSize * m->num_q_heads;
     int n_ = num_tokens;
     DT *C = static_cast<DT *>(m->handle.workSpace);
-    hipMemcpyAsync(C,
-                   output_grad_ptr +
-                       bc->requestsInfo[i].first_token_offset_in_batch *
-                           m->oProjSize,
-                   m_ * n_ * sizeof(DT),
-                   hipMemcpyDeviceToDevice,
-                   stream);
+    checkCUDA(hipMemcpyAsync(
+        C,
+        output_grad_ptr +
+            bc->requestsInfo[i].first_token_offset_in_batch * m->oProjSize,
+        m_ * n_ * sizeof(DT),
+        hipMemcpyDeviceToDevice,
+        stream));
     if (m->inference_debugging) {
       // save result to file for checking
       std::string filename =
@@ -1446,6 +1463,11 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   // Step 7: perform rotary position embeddings (RoPE) bwd
   {
     if (m->rotary_embedding_meta->apply_rotary_embedding) {
+      checkCUDA(hipMemcpyAsync(m->peft_token_infos_device,
+                               m->peft_token_infos,
+                               m->peft_token_infos_size,
+                               hipMemcpyHostToDevice,
+                               stream));
       assert(m->hidden_size == m->qProjSize * m->num_q_heads);
       assert(m->qProjSize == m->kProjSize);
       /*q&k*/
@@ -1459,7 +1481,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
           stream,
           A,
           m->complex_input,
-          m->token_infos,
+          m->peft_token_infos_device,
           m->rotary_embedding_meta->rope_theta,
           (m->rotary_embedding_meta->rope_type == "llama3"),
           m->rotary_embedding_meta->factor,
@@ -1752,24 +1774,34 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     size_t complex_size = (max_tokens_per_batch * (qProjSize * num_q_heads +
                                                    kProjSize * num_q_heads)) /
                           2;
-    allocated_peft_buffer_size1 =
-        enable_peft_finetuning
-            ? (BatchConfig::max_finetuning_sequence_length() * num_q_heads *
-               qProjSize * size_of_dt)
-            : 0;
-    allocated_peft_buffer_size2 =
-        enable_peft_finetuning
-            ? (BatchConfig::max_finetuning_sequence_length() *
-               BatchConfig::max_finetuning_sequence_length() * num_q_heads *
-               size_of_dt)
-            : 0;
+    if (enable_peft_finetuning) {
+      allocated_peft_buffer_size1 = BatchConfig::max_sequence_length() *
+                                    num_q_heads * qProjSize * size_of_dt;
+      allocated_peft_buffer_size2 = BatchConfig::max_sequence_length() *
+                                    BatchConfig::max_sequence_length() *
+                                    num_q_heads * size_of_dt;
+      peft_token_infos = (BatchConfig::PerTokenInfo *)calloc(
+          1,
+          sizeof(BatchConfig::PerTokenInfo) *
+              BatchConfig::max_sequence_length());
+      peft_token_infos_size = sizeof(BatchConfig::PerTokenInfo) *
+                              BatchConfig::max_sequence_length();
+    } else {
+      allocated_peft_buffer_size1 = 0;
+      allocated_peft_buffer_size2 = 0;
+      peft_token_infos = nullptr;
+      peft_token_infos_size = 0;
+    }
     size_t totalSize =
         (qkv_max_proj_size + key_cache_size + value_cache_size +
          2 * qk_prod_size + attn_heads_size) *
             size_of_dt +
         complex_size * sizeof(hipFloatComplex); // more components will
                                                 // be added here later
-    totalSize += allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
+    if (enable_peft_finetuning) {
+      totalSize += allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
+      totalSize += peft_token_infos_size;
+    }
     if (offload) {
       // assert that we have enough reserved work space left
       size_t totalSharedSize =
@@ -1841,6 +1873,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
           allocated_peft_buffer_size1);
       softmax_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size2);
+      peft_token_infos_device = (BatchConfig::PerTokenInfo *)
+                                    gpu_mem_allocator.allocate_instance_untyped(
+                                        peft_token_infos_size);
     }
 
     // allocate more size for quantization data
@@ -1852,8 +1887,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
              gpu_mem_allocator.reserved_allocated_size);
     }
   }
-  allocated_peft_buffer_size1 = 0;
-  allocated_peft_buffer_size2 = 0;
+
   checkCUDA(hipStreamSynchronize(stream));
 }
 

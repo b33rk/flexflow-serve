@@ -39,14 +39,24 @@ ResidualRMSNormMeta::ResidualRMSNormMeta(FFHandler handler,
   DataType data_type = rms->weights[0]->data_type;
   size_t rms_ptr_size = batch_size;
   size_t norm_ptr_size = num_elements;
-  size_t totalSize = (rms_ptr_size + norm_ptr_size) * data_type_size(data_type);
+  size_t in_dim = rms->inputs[0]->dims[0].size / rms->inputs[0]->dims[0].degree;
+  allocated_peft_buffer_size =
+      enable_peft_finetuning ? (data_type_size(data_type) *
+                                BatchConfig::max_sequence_length() * in_dim)
+                             : 0;
+  size_t totalSize =
+      (rms_ptr_size + norm_ptr_size) * data_type_size(data_type) +
+      allocated_peft_buffer_size;
   gpu_mem_allocator.create_legion_instance(
       reserveInst, totalSize, "ResidualRMSNormMeta");
   rms_ptr = gpu_mem_allocator.allocate_instance_untyped(
       rms_ptr_size * data_type_size(data_type));
   norm_ptr = gpu_mem_allocator.allocate_instance_untyped(
       norm_ptr_size * data_type_size(data_type));
-  allocated_peft_buffer_size = 0;
+  if (enable_peft_finetuning) {
+    input_activation =
+        gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
+  }
 }
 ResidualRMSNormMeta::~ResidualRMSNormMeta(void) {
   if (reserveInst != Realm::RegionInstance::NO_INST) {
@@ -206,6 +216,35 @@ void forward_kernel_wrapper(ResidualRMSNormMeta const *m,
   }
 }
 
+template <typename DT>
+void store_peft_activations(ResidualRMSNormMeta const *m,
+                            BatchConfig const *bc,
+                            size_t in_dim,
+                            DT *residual_output_ptr,
+                            hipStream_t stream) {
+  assert(m->enable_peft_finetuning);
+  assert(bc->num_finetuning_fwd_tokens() >= 1);
+
+  int num_ft_tokens = bc->num_finetuning_fwd_tokens();
+  int i = bc->finetuning_request_index();
+  int tokens_previous_requests =
+      bc->requestsInfo[i].first_token_offset_in_batch;
+  int tokens_previous_steps = bc->requestsInfo[i].first_token_offset_in_batch;
+  assert(bc->requestsInfo[i].num_tokens_in_batch == num_ft_tokens);
+
+  size_t batch_offset = in_dim * tokens_previous_requests;
+  size_t request_offset = in_dim * tokens_previous_steps;
+  size_t data_size = in_dim * num_ft_tokens * sizeof(DT);
+  assert(m->allocated_peft_buffer_size >= data_size);
+
+  checkCUDA(
+      hipMemcpyAsync(static_cast<DT *>(m->input_activation) + request_offset,
+                     residual_output_ptr + batch_offset,
+                     data_size,
+                     hipMemcpyDeviceToDevice,
+                     stream));
+}
+
 void inference_kernel_wrapper(ResidualRMSNormMeta *m,
                               BatchConfig const *bc,
                               GenericTensorAccessorR const &input1,
@@ -226,6 +265,7 @@ void inference_kernel_wrapper(ResidualRMSNormMeta *m,
   assert(output.data_type == input1.data_type);
   assert(weight.data_type == output.data_type);
   assert(residual_output.data_type == output.data_type);
+  int in_dim = input1.domain.hi()[0] - input1.domain.lo()[0] + 1;
 
   if (output.data_type == DT_HALF) {
     forward_kernel(m,
@@ -235,6 +275,10 @@ void inference_kernel_wrapper(ResidualRMSNormMeta *m,
                    residual_output.get_half_ptr(),
                    output.get_half_ptr(),
                    stream);
+    if (bc->num_finetuning_fwd_requests() > 0) {
+      store_peft_activations(
+          m, bc, in_dim, residual_output.get_half_ptr(), stream);
+    }
   } else if (output.data_type == DT_FLOAT) {
     forward_kernel(m,
                    input1.get_float_ptr(),
@@ -243,43 +287,12 @@ void inference_kernel_wrapper(ResidualRMSNormMeta *m,
                    residual_output.get_float_ptr(),
                    output.get_float_ptr(),
                    stream);
+    if (bc->num_finetuning_fwd_requests() > 0) {
+      store_peft_activations(
+          m, bc, in_dim, residual_output.get_float_ptr(), stream);
+    }
   } else {
     assert(false && "Unsupported data type");
-  }
-
-  // save input activation if needed for PEFT. This must be done after the
-  // forward kernel since that's where we add the residual
-  if (bc->num_finetuning_fwd_requests() > 0) {
-    // Check that we have at most one request that requires peft_bwd
-    assert(bc->num_finetuning_fwd_tokens() >= 1);
-    int i = bc->finetuning_request_index();
-    assert(bc->requestsInfo[i].peft_model_id != PEFTModelID::NO_ID);
-    assert(!bc->requestsInfo[i].finetuning_backward_phase);
-    int in_dim = input.domain.hi()[0] - input.domain.lo()[0] + 1;
-    assert(m->allocated_peft_buffer_size ==
-           data_type_size(m->input_type[0]) *
-               BatchConfig::max_finetuning_sequence_length() * in_dim);
-    int num_peft_tokens = bc->requestsInfo[i].num_tokens_in_batch;
-    assert(num_peft_tokens == bc->num_finetuning_fwd_tokens());
-    int first_token_offset = bc->requestsInfo[i].first_token_offset_in_batch;
-    // copy input activation
-    if (m->input_type[0] == DT_FLOAT) {
-      checkCUDA(hipMemcpyAsync(
-          m->input_activation,
-          added_output.get_float_ptr() + first_token_offset * in_dim,
-          data_type_size(m->input_type[0]) * num_peft_tokens * in_dim,
-          hipMemcpyDeviceToDevice,
-          stream));
-    } else if (m->input_type[0] == DT_HALF) {
-      checkCUDA(hipMemcpyAsync(
-          m->input_activation,
-          added_output.get_half_ptr() + first_token_offset * in_dim,
-          data_type_size(m->input_type[0]) * num_peft_tokens * in_dim,
-          hipMemcpyDeviceToDevice,
-          stream));
-    } else {
-      assert(false && "unsupport datatype in layernorm");
-    }
   }
 
   if (m->profiling) {

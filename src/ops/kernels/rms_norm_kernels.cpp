@@ -22,6 +22,7 @@
 namespace FlexFlow {
 // declare Legion names
 using Legion::coord_t;
+
 #define C10_WARP_SIZE 32
 
 RMSNormMeta::RMSNormMeta(FFHandler handler,
@@ -32,6 +33,7 @@ RMSNormMeta::RMSNormMeta(FFHandler handler,
 
   in_dim = rms->data_dim;
   batch_size = rms->effective_batch_size;
+  enable_peft_finetuning = rms->enable_peft_finetuning;
   num_elements = in_dim * batch_size;
 
   DataType data_type = rms->weights[0]->data_type;
@@ -39,10 +41,9 @@ RMSNormMeta::RMSNormMeta(FFHandler handler,
   size_t norm_ptr_size = num_elements;
   size_t in_dim = rms->inputs[0]->dims[0].size / rms->inputs[0]->dims[0].degree;
   allocated_peft_buffer_size =
-      enable_peft_finetuning
-          ? (data_type_size(data_type) *
-             BatchConfig::max_finetuning_sequence_length() * in_dim)
-          : 0;
+      enable_peft_finetuning ? (data_type_size(data_type) *
+                                BatchConfig::max_sequence_length() * in_dim)
+                             : 0;
   size_t totalSize =
       (rms_ptr_size + norm_ptr_size) * data_type_size(data_type) +
       allocated_peft_buffer_size;
@@ -222,25 +223,39 @@ void inference_kernel_wrapper(RMSNormMeta *m,
     assert(bc->requestsInfo[i].peft_model_id != PEFTModelID::NO_ID);
     assert(!bc->requestsInfo[i].finetuning_backward_phase);
     int in_dim = input.domain.hi()[0] - input.domain.lo()[0] + 1;
+    if (m->allocated_peft_buffer_size !=
+        data_type_size(m->input_type[0]) * BatchConfig::max_sequence_length() *
+            in_dim) {
+      std::cout << "allocated_peft_buffer_size = "
+                << m->allocated_peft_buffer_size << ", expected = "
+                << data_type_size(m->input_type[0]) *
+                       BatchConfig::max_sequence_length() * in_dim
+                << std::endl;
+      std::cout << "in_dim = " << in_dim << std::endl;
+      std::cout << "max_sequence_length = "
+                << BatchConfig::max_sequence_length() << std::endl;
+      std::cout << "data_type_size = " << data_type_size(m->input_type[0])
+                << std::endl;
+    }
     assert(m->allocated_peft_buffer_size ==
            data_type_size(m->input_type[0]) *
-               BatchConfig::max_finetuning_sequence_length() * in_dim);
+               BatchConfig::max_sequence_length() * in_dim);
     int num_peft_tokens = bc->requestsInfo[i].num_tokens_in_batch;
     assert(num_peft_tokens == bc->num_finetuning_fwd_tokens());
     int first_token_offset = bc->requestsInfo[i].first_token_offset_in_batch;
     // copy input activation
-    if (m->input_type[0] == DT_FLOAT) {
+    if (input.data_type == DT_FLOAT) {
       checkCUDA(hipMemcpyAsync(
           m->input_activation,
-          added_output.get_float_ptr() + first_token_offset * in_dim,
-          data_type_size(m->input_type[0]) * num_peft_tokens * in_dim,
+          input.get_float_ptr() + first_token_offset * in_dim,
+          data_type_size(input.data_type) * num_peft_tokens * in_dim,
           hipMemcpyDeviceToDevice,
           stream));
-    } else if (m->input_type[0] == DT_HALF) {
+    } else if (input.data_type == DT_HALF) {
       checkCUDA(hipMemcpyAsync(
           m->input_activation,
-          added_output.get_half_ptr() + first_token_offset * in_dim,
-          data_type_size(m->input_type[0]) * num_peft_tokens * in_dim,
+          input.get_half_ptr() + first_token_offset * in_dim,
+          data_type_size(input.data_type) * num_peft_tokens * in_dim,
           hipMemcpyDeviceToDevice,
           stream));
     } else {

@@ -3513,7 +3513,11 @@ void FFModel::create_operators_from_layers() {
           std::to_string(
               transformer_layer_allreduce_count[transformer_layer_id]));
       transformer_layer_allreduce_count[transformer_layer_id]++;
+      LayerID ar_guid = LayerID(this->layer_global_guid++,
+                                op->layer_guid.transformer_layer_id,
+                                this->model_id);
       AllReduce *allreduce = new AllReduce(*this,
+                                           ar_guid,
                                            op->outputs[0],
                                            op->outputs[0]->num_dims - 1,
                                            allreduce_name.c_str());
@@ -3542,15 +3546,20 @@ void FFModel::create_operators_from_layers() {
               transformer_layer_parallel_identity_count[transformer_layer_id]));
       transformer_layer_parallel_identity_count[transformer_layer_id]++;
       ParallelIdentity *parallel_identity = nullptr;
+      LayerID pi_guid = LayerID(this->layer_global_guid++,
+                                op->layer_guid.transformer_layer_id,
+                                this->model_id);
       if (op->numOutputs == 1) {
         parallel_identity =
             new ParallelIdentity(*this,
+                                 pi_guid,
                                  op->outputs[0],
                                  op->outputs[0]->num_dims - 1,
                                  parallel_identity_name.c_str());
       } else if (op->numOutputs == 2) {
         parallel_identity =
             new ParallelIdentity(*this,
+                                 pi_guid,
                                  op->outputs[1],
                                  op->outputs[1]->num_dims - 1,
                                  parallel_identity_name.c_str());
@@ -4685,25 +4694,6 @@ void register_flexflow_internal_tasks(Runtime *runtime,
           registrar);
     }
   }
-  // RequestManager process_work_from_old_batches_task
-  // {
-  //   TaskVariantRegistrar registrar(
-  //       RM_PROCESS_WORK_FROM_OLD_BATCHES_TASK_ID,
-  //       "RequestManager Process Work from Old Batches");
-  //   registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
-  //   registrar.set_leaf();
-  //   if (pre_register) {
-  //     Runtime::preregister_task_variant<bool,
-  //         RequestManager::process_work_from_old_batches_task>(
-  //         registrar, "RequestManager Process Work from Old Batches Task");
-  //   } else {
-  //     if (enable_control_replication) {
-  //       registrar.global_registration = false;
-  //     }
-  //     runtime->register_task_variant<bool,
-  //         RequestManager::process_work_from_old_batches_task>(registrar);
-  //   }
-  // }
   // RequestManager prepare_next_batch_task
   {
     TaskVariantRegistrar registrar(RM_PREPARE_NEXT_BATCH_TASK_ID,

@@ -1927,10 +1927,13 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   }
 
   // Step 7: perform rotary position embeddings (RoPE) bwd
-  // todo: first sum the gradients wrt each q_head to obtain the gradients wrt
-  // each key head
   {
     if (m->rotary_embedding_meta->apply_rotary_embedding) {
+      checkCUDA(cudaMemcpyAsync(m->peft_token_infos_device,
+                                m->peft_token_infos,
+                                m->peft_token_infos_size,
+                                cudaMemcpyHostToDevice,
+                                stream));
       assert(m->hidden_size == m->qProjSize * m->num_q_heads);
       assert(m->qProjSize == m->kProjSize);
       /*q&k*/
@@ -1942,7 +1945,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                    stream>>>(
           A,
           m->complex_input,
-          m->token_infos,
+          m->peft_token_infos_device,
           m->rotary_embedding_meta->rope_theta,
           (m->rotary_embedding_meta->rope_type == "llama3"),
           m->rotary_embedding_meta->factor,
@@ -2257,15 +2260,23 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                           2;
     if (enable_peft_finetuning) {
       allocated_peft_buffer_size1 =
-          BatchConfig::max_finetuning_sequence_length() * num_q_heads *
+          BatchConfig::max_sequence_length() * num_q_heads *
           qProjSize * size_of_dt;
       allocated_peft_buffer_size2 =
-          BatchConfig::max_finetuning_sequence_length() *
-          BatchConfig::max_finetuning_sequence_length() * num_q_heads *
+          BatchConfig::max_sequence_length() *
+          BatchConfig::max_sequence_length() * num_q_heads *
           size_of_dt;
+      peft_token_infos = (BatchConfig::PerTokenInfo *)calloc(
+          1,
+          sizeof(BatchConfig::PerTokenInfo) *
+              BatchConfig::max_sequence_length());
+      peft_token_infos_size = sizeof(BatchConfig::PerTokenInfo) *
+                              BatchConfig::max_sequence_length();
     } else {
       allocated_peft_buffer_size1 = 0;
       allocated_peft_buffer_size2 = 0;
+      peft_token_infos = nullptr;
+      peft_token_infos_size = 0;
     }
     size_t totalSize = (qkv_max_proj_size + query_tmp_size + key_cache_size +
                         value_cache_size + 2 * qk_prod_size + attn_heads_size +
@@ -2275,6 +2286,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                        3 * gqa_ptr_array_size;
     if (enable_peft_finetuning) {
       totalSize += allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
+      totalSize += peft_token_infos_size;
       totalSize += 3 * gqa_ptr_array_size;
     }
     if (offload) {
@@ -2382,6 +2394,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
           allocated_peft_buffer_size1);
       softmax_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size2);
+      peft_token_infos_device = (BatchConfig::PerTokenInfo *)
+                                    gpu_mem_allocator.allocate_instance_untyped(
+                                        peft_token_infos_size);
     }
 
     // allocate more size for quantization data

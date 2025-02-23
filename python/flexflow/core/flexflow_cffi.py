@@ -825,7 +825,7 @@ class FFConfig(object):
         if type(value) is not bool:
             raise ValueError("enable_peft_finetuning must be specified as a boolean value")
         ffc().flexflow_config_set_enable_peft_finetuning(self.handle, value)
-
+    
     @property
     def cpu_offload(self):
         return ffc().flexflow_config_get_offload(self.handle)
@@ -1643,6 +1643,15 @@ class RequestManager(object):
 
     def get_max_sequence_length(self):
         return ffc().flexflow_request_manager_get_max_sequence_length(self.handle)
+
+    def set_num_transformers_layers(self, num_layers):
+        return ffc().flexflow_request_manager_set_num_transformers_layers(
+            self.handle, num_layers
+        )
+    def set_num_layers_per_finetuning_step(self, num_layers):
+        return ffc().flexflow_request_manager_set_num_layers_per_finetuning_step(
+            self.handle, num_layers
+        )
     
     def set_max_finetuning_sequence_length(self, max_length):
         return ffc().flexflow_request_manager_set_max_finetuning_sequence_length(

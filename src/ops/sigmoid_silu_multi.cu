@@ -30,8 +30,7 @@ SigmoidSiluMultiMeta::SigmoidSiluMultiMeta(FFHandler handle,
     size_t in_dim =
         ssm->inputs[0]->dims[0].size / ssm->inputs[0]->dims[0].degree;
     allocated_peft_buffer_size = 2 * data_type_size(input_type[0]) *
-                                 BatchConfig::max_finetuning_sequence_length() *
-                                 in_dim;
+                                 BatchConfig::max_sequence_length() * in_dim;
     gpu_mem_allocator.create_legion_instance(
         reserveInst, allocated_peft_buffer_size, "SigmoidSiluMultiMeta");
     input_activation =
@@ -122,7 +121,7 @@ void SigmoidSiluMulti::inference_kernel_wrapper(
     int in_dim = input1.domain.hi()[0] - input1.domain.lo()[0] + 1;
     int num_peft_tokens = bc->requestsInfo[i].num_tokens_in_batch;
     assert(num_peft_tokens == bc->num_finetuning_fwd_tokens());
-    int max_peft_tokens = BatchConfig::max_finetuning_sequence_length();
+    int max_peft_tokens = BatchConfig::max_sequence_length();
     int first_token_offset = bc->requestsInfo[i].first_token_offset_in_batch;
     size_t input_tensor_size =
         data_type_size(m->input_type[0]) * num_peft_tokens * in_dim;

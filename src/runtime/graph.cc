@@ -2453,6 +2453,9 @@ GraphOptimalViewSerialized
       }
       case OP_ALLREDUCE: {
         AllReduce *allreduce = (AllReduce *)op;
+        sez.serialize(allreduce->layer_guid.id);
+        sez.serialize(allreduce->layer_guid.transformer_layer_id);
+        sez.serialize(allreduce->layer_guid.model_id);
         sez.serialize(allreduce->allreduce_dim);
         sez.serialize(strlen(allreduce->name));
         sez.serialize(allreduce->name, strlen(allreduce->name));
@@ -2460,6 +2463,9 @@ GraphOptimalViewSerialized
       }
       case OP_PARALLEL_IDENTITY: {
         ParallelIdentity *parallel_identity = (ParallelIdentity *)op;
+        sez.serialize(parallel_identity->layer_guid.id);
+        sez.serialize(parallel_identity->layer_guid.transformer_layer_id);
+        sez.serialize(parallel_identity->layer_guid.model_id);
         sez.serialize(parallel_identity->parallel_identity_dim);
         sez.serialize(strlen(parallel_identity->name));
         sez.serialize(parallel_identity->name, strlen(parallel_identity->name));
@@ -3154,6 +3160,11 @@ void FFModel::deserialize_graph_optimal_view(
         break;
       }
       case OP_ALLREDUCE: {
+        size_t id, transformer_layer_id, deserialized_model_id;
+        dez.deserialize(id);
+        dez.deserialize(transformer_layer_id);
+        dez.deserialize(deserialized_model_id);
+        LayerID layer_guid(id, transformer_layer_id, deserialized_model_id);
         assert(num_inputs == 1);
         int allreduce_dim;
         dez.deserialize(allreduce_dim);
@@ -3162,12 +3173,18 @@ void FFModel::deserialize_graph_optimal_view(
         dez.deserialize(name_len);
         dez.deserialize(name, name_len);
         AllReduceParams params;
+        params.layer_guid = layer_guid;
         params.allreduce_legion_dim = allreduce_dim;
         strcpy(params.name, name);
         node = get_or_create_node<AllReduce>(inputs[0], params);
         break;
       }
       case OP_PARALLEL_IDENTITY: {
+        size_t id, transformer_layer_id, deserialized_model_id;
+        dez.deserialize(id);
+        dez.deserialize(transformer_layer_id);
+        dez.deserialize(deserialized_model_id);
+        LayerID layer_guid(id, transformer_layer_id, deserialized_model_id);
         assert(num_inputs == 1);
         int parallel_identity_dim;
         dez.deserialize(parallel_identity_dim);
@@ -3176,6 +3193,7 @@ void FFModel::deserialize_graph_optimal_view(
         dez.deserialize(name_len);
         dez.deserialize(name, name_len);
         ParallelIdentityParams params;
+        params.layer_guid = layer_guid;
         params.parallel_identity_legion_dim = parallel_identity_dim;
         strcpy(params.name, name);
         node = get_or_create_node<ParallelIdentity>(inputs[0], params);

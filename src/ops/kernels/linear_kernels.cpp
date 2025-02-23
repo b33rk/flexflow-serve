@@ -40,11 +40,24 @@ LinearMeta::LinearMeta(FFHandler handler,
           gpu_mem_allocator.allocate_reserved<char>(quantized_weightSize);
     }
   }
-  // Allocate an all-one's vector
+  // peft activation
+  size_t out_dim =
+      li->outputs[0]->dims[0].size / li->outputs[0]->dims[0].degree;
+  allocated_peft_buffer_size =
+      enable_peft_finetuning ? (data_type_size(data_type) *
+                                BatchConfig::max_sequence_length() * out_dim)
+                             : 0;
+  size_t totalSize =
+      data_type_size(data_type) * batch_size + allocated_peft_buffer_size;
   gpu_mem_allocator.create_legion_instance(
-      reserveInst, data_type_size(data_type) * batch_size, "LinearMeta");
+      reserveInst, totalSize, "LinearMeta");
+  // Allocate an all-one's vector
   one_ptr = gpu_mem_allocator.allocate_instance_untyped(
       data_type_size(data_type) * batch_size);
+  if (enable_peft_finetuning) {
+    output_activation_buffer =
+        gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
+  }
   int parallelism = batch_size;
   hipStream_t stream;
   checkCUDA(get_legion_stream(&stream));
@@ -211,6 +224,11 @@ void inference_kernel_wrapper(LinearMeta *m,
                                     out_dim,
                                     batch_size,
                                     stream);
+    if ((m->activation == AC_MODE_RELU || m->activation == AC_MODE_SIGMOID) &&
+        bc->num_finetuning_fwd_requests() > 0) {
+      Internal::store_peft_activations<float>(
+          m, bc, out_dim, static_cast<float *>(output_ptr), stream);
+    }
   } else if (m->input_type[0] == DT_HALF) {
     Internal::forward_kernel<half>(m,
                                    input_ptr,
@@ -221,41 +239,10 @@ void inference_kernel_wrapper(LinearMeta *m,
                                    out_dim,
                                    batch_size,
                                    stream);
-  }
-
-  if (m->activation == AC_MODE_RELU || m->activation == AC_MODE_SIGMOID) {
-    // save input activation if needed for PEFT
-    if (bc->num_finetuning_fwd_requests() > 0) {
-      // Check that we have at most one request that requires peft_bwd
-      assert(bc->num_finetuning_fwd_tokens() >= 1);
-      int i = bc->finetuning_request_index();
-      assert(bc->requestsInfo[i].peft_model_id != PEFTModelID::NO_ID);
-      assert(!bc->requestsInfo[i].finetuning_backward_phase);
-      int in_dim = input.domain.hi()[0] - input.domain.lo()[0] + 1;
-      assert(m->allocated_peft_buffer_size ==
-             data_type_size(m->input_type[0]) *
-                 BatchConfig::max_finetuning_sequence_length() * in_dim);
-      int num_peft_tokens = bc->requestsInfo[i].num_tokens_in_batch;
-      assert(num_peft_tokens == bc->num_finetuning_fwd_tokens());
-      int first_token_offset = bc->requestsInfo[i].first_token_offset_in_batch;
-      // copy input activation
-      if (m->input_type[0] == DT_FLOAT) {
-        checkCUDA(hipMemcpyAsync(
-            m->input_activation,
-            added_output.get_float_ptr() + first_token_offset * in_dim,
-            data_type_size(m->input_type[0]) * num_peft_tokens * in_dim,
-            hipMemcpyDeviceToDevice,
-            stream));
-      } else if (m->input_type[0] == DT_HALF) {
-        checkCUDA(hipMemcpyAsync(
-            m->input_activation,
-            added_output.get_half_ptr() + first_token_offset * in_dim,
-            data_type_size(m->input_type[0]) * num_peft_tokens * in_dim,
-            hipMemcpyDeviceToDevice,
-            stream));
-      } else {
-        assert(false && "unsupport datatype in layernorm");
-      }
+    if ((m->activation == AC_MODE_RELU || m->activation == AC_MODE_SIGMOID) &&
+        bc->num_finetuning_fwd_requests() > 0) {
+      Internal::store_peft_activations<half>(
+          m, bc, out_dim, static_cast<half *>(output_ptr), stream);
     }
   }
 
@@ -276,9 +263,7 @@ void peft_bwd_kernel_wrapper(LinearMeta const *m,
                              void *output_grad_ptr,
                              void const *weight_ptr,
                              int in_dim,
-                             int out_dim,
-                             int num_infr_tokens,
-                             int num_peft_tokens) {
+                             int out_dim) {
   hipStream_t stream;
   checkCUDA(get_legion_stream(&stream));
   hipEvent_t t_start, t_end;
@@ -295,8 +280,6 @@ void peft_bwd_kernel_wrapper(LinearMeta const *m,
                                      weight_ptr,
                                      in_dim,
                                      out_dim,
-                                     num_infr_tokens,
-                                     num_peft_tokens,
                                      stream);
   } else if (m->input_type[0] == DT_HALF) {
     Internal::peft_bwd_kernel<half>(m,
@@ -306,8 +289,6 @@ void peft_bwd_kernel_wrapper(LinearMeta const *m,
                                     weight_ptr,
                                     in_dim,
                                     out_dim,
-                                    num_infr_tokens,
-                                    num_peft_tokens,
                                     stream);
   }
 
@@ -562,6 +543,34 @@ void forward_kernel(LinearMeta const *m,
 }
 
 template <typename DT>
+void store_peft_activations(LinearMeta const *m,
+                            BatchConfig const *bc,
+                            size_t out_dim,
+                            DT *output_ptr,
+                            hipStream_t stream) {
+  int i = bc->finetuning_request_index();
+  int num_ft_tokens = bc->num_finetuning_fwd_tokens();
+  int tokens_previous_requests =
+      bc->requestsInfo[i].first_token_offset_in_batch;
+  int tokens_previous_steps = bc->requestsInfo[i].first_token_offset_in_batch;
+  size_t data_size = out_dim * num_ft_tokens * sizeof(DT);
+  size_t batch_offset = out_dim * tokens_previous_requests;
+  size_t request_offset = out_dim * tokens_previous_steps;
+  assert(bc->num_finetuning_fwd_tokens() >= 1);
+  assert(bc->requestsInfo[i].peft_model_id != PEFTModelID::NO_ID);
+  assert(!bc->requestsInfo[i].finetuning_backward_phase);
+  assert(bc->requestsInfo[i].num_tokens_in_batch == num_ft_tokens);
+  assert(m->allocated_peft_buffer_size >= data_size);
+
+  checkCUDA(hipMemcpyAsync(static_cast<DT *>(m->output_activation_buffer) +
+                               request_offset,
+                           output_ptr + batch_offset,
+                           data_size,
+                           hipMemcpyDeviceToDevice,
+                           stream));
+}
+
+template <typename DT>
 void peft_bwd_kernel(LinearMeta const *m,
                      BatchConfig const *bc,
                      void *input_grad_ptr,
@@ -569,21 +578,22 @@ void peft_bwd_kernel(LinearMeta const *m,
                      void const *kernel_ptr,
                      int in_dim,
                      int out_dim,
-                     int num_infr_tokens,
-                     int num_peft_tokens,
                      ffStream_t stream) {
   checkCUDA(hipblasSetStream(m->handle.blas, stream));
   checkCUDNN(miopenSetStream(m->handle.dnn, stream));
 
+  assert(
+      bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id));
+  int i = bc->finetuning_request_index();
+  int num_peft_tokens = bc->num_finetuning_bwd_tokens();
+  assert(bc->num_finetuning_bwd_requests() == 1);
+
   hipblasDatatype_t input_type = ff_to_cuda_datatype(m->input_type[0]);
   hipblasDatatype_t weight_type = ff_to_cuda_datatype(m->weight_type[0]);
   hipblasDatatype_t output_type = ff_to_cuda_datatype(m->output_type[0]);
-  // update input_grad_ptr and output_grad_ptr offset
-  int num_infr_only_tokens = num_infr_tokens - num_peft_tokens;
-  input_grad_ptr =
-      static_cast<DT *>(input_grad_ptr) + num_infr_only_tokens * in_dim;
-  output_grad_ptr =
-      static_cast<DT *>(output_grad_ptr) + num_infr_only_tokens * out_dim;
+  input_grad_ptr = static_cast<DT *>(input_grad_ptr);
+  output_grad_ptr = static_cast<DT *>(output_grad_ptr);
+
   hipblasDatatype_t compute_type = output_type;
   int output_size = out_dim * num_peft_tokens;
   if (m->activation == AC_MODE_RELU) {
@@ -607,31 +617,13 @@ void peft_bwd_kernel(LinearMeta const *m,
   // NOTE: we use beta=1 for input_grad to accumulate gradients when needed
   DT alpha = 1.0f;
   DT beta = m->reset_input_grads[0] ? 0.0f : 1.0f;
-
-  // ensure that we only have one finetuning request, with a single lora
-  int num_peft_requests = 0;
-  bool lora_applies = false;
-  for (int i = 0; i < bc->max_requests_per_batch(); i++) {
-    if (bc->request_completed[i] ||
-        bc->requestsInfo[i].peft_model_id == PEFTModelID::NO_ID ||
-        !bc->requestsInfo[i].peft_bwd) {
-      continue;
-    }
-    num_peft_requests++;
-    std::string peft_model_config_str =
-        std::string(bc->requestsInfo[i].peft_model_config_str);
-    LoraLinearConfig lora_config =
-        LoraLinearConfig::deserialize_from_json_string(peft_model_config_str);
-    if (!lora_applies_to_this_layer(m, lora_config)) {
-      continue;
-    }
-    lora_applies = true;
-  }
-  assert(num_peft_requests == 1 &&
-         "Exactly one PEFT finetuning request is required");
+  std::string peft_model_config_str =
+      std::string(bc->requestsInfo[i].peft_model_config_str);
+  LoraLinearConfig lora_config =
+      LoraLinearConfig::deserialize_from_json_string(peft_model_config_str);
+  bool lora_applies = lora_applies_to_this_layer(m, lora_config);
   // if the request does not have any active lora in the current layer, reset
-  // beta to 0 std::cout << m->op_name << " original beta: " << (float)beta << "
-  // lora_applies: " << lora_applies << std::endl;
+  // beta to 0
   if (lora_applies) {
     beta = 1.0f;
   }

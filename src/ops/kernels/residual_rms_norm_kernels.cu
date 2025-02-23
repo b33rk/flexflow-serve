@@ -41,10 +41,9 @@ ResidualRMSNormMeta::ResidualRMSNormMeta(FFHandler handler,
   size_t norm_ptr_size = num_elements;
   size_t in_dim = rms->inputs[0]->dims[0].size / rms->inputs[0]->dims[0].degree;
   allocated_peft_buffer_size =
-      enable_peft_finetuning
-          ? (data_type_size(data_type) *
-             BatchConfig::max_finetuning_sequence_length() * in_dim)
-          : 0;
+      enable_peft_finetuning ? (data_type_size(data_type) *
+                                BatchConfig::max_sequence_length() * in_dim)
+                             : 0;
   size_t totalSize =
       (rms_ptr_size + norm_ptr_size) * data_type_size(data_type) +
       allocated_peft_buffer_size;
@@ -222,23 +221,25 @@ void store_peft_activations(ResidualRMSNormMeta const *m,
                             cudaStream_t stream) {
   assert(m->enable_peft_finetuning);
   assert(bc->num_finetuning_fwd_tokens() >= 1);
-  
+
   int num_ft_tokens = bc->num_finetuning_fwd_tokens();
   int i = bc->finetuning_request_index();
-  int tokens_previous_requests = bc->requestsInfo[i].first_token_offset_in_batch;
+  int tokens_previous_requests =
+      bc->requestsInfo[i].first_token_offset_in_batch;
   int tokens_previous_steps = bc->requestsInfo[i].first_token_offset_in_batch;
   assert(bc->requestsInfo[i].num_tokens_in_batch == num_ft_tokens);
-  
+
   size_t batch_offset = in_dim * tokens_previous_requests;
   size_t request_offset = in_dim * tokens_previous_steps;
   size_t data_size = in_dim * num_ft_tokens * sizeof(DT);
   assert(m->allocated_peft_buffer_size >= data_size);
-  
-  checkCUDA(cudaMemcpyAsync(static_cast<DT*>(m->input_activation) + request_offset,
-                            residual_output_ptr + batch_offset,
-                            data_size,
-                            cudaMemcpyDeviceToDevice,
-                            stream));
+
+  checkCUDA(
+      cudaMemcpyAsync(static_cast<DT *>(m->input_activation) + request_offset,
+                      residual_output_ptr + batch_offset,
+                      data_size,
+                      cudaMemcpyDeviceToDevice,
+                      stream));
 }
 
 void inference_kernel_wrapper(ResidualRMSNormMeta *m,
@@ -272,7 +273,8 @@ void inference_kernel_wrapper(ResidualRMSNormMeta *m,
                    output.get_half_ptr(),
                    stream);
     if (bc->num_finetuning_fwd_requests() > 0) {
-      store_peft_activations(m, bc, in_dim, residual_output.get_half_ptr(), stream);
+      store_peft_activations(
+          m, bc, in_dim, residual_output.get_half_ptr(), stream);
     }
   } else if (output.data_type == DT_FLOAT) {
     forward_kernel(m,
@@ -283,13 +285,12 @@ void inference_kernel_wrapper(ResidualRMSNormMeta *m,
                    output.get_float_ptr(),
                    stream);
     if (bc->num_finetuning_fwd_requests() > 0) {
-      store_peft_activations(m, bc, in_dim, residual_output.get_float_ptr(), stream);
+      store_peft_activations(
+          m, bc, in_dim, residual_output.get_float_ptr(), stream);
     }
   } else {
     assert(false && "Unsupported data type");
   }
-
-  
 
   if (m->profiling) {
     cudaEventRecord(t_end, stream);

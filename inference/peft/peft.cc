@@ -34,7 +34,8 @@ struct FilePaths {
   std::string cache_folder_path;
   std::string prompt_file_path;
   std::string dataset_file_path;
-  std::string output_folder_path;
+  std::string output_file_path;
+  std::string profiling_folder_path;
 };
 
 void parse_input_args(char **argv,
@@ -52,7 +53,8 @@ void parse_input_args(char **argv,
                       int &max_tokens_per_batch,
                       int &max_sequence_length,
                       int &max_training_steps,
-                      int &num_layers_per_finetuning_step) {
+                      int &num_layers_per_finetuning_step,
+                      bool &run_warmup) {
   for (int i = 1; i < argc; i++) {
     // llm model type
     if (!strcmp(argv[i], "-llm-model")) {
@@ -93,8 +95,16 @@ void parse_input_args(char **argv,
       paths.output_folder_path = std::string(argv[++i]);
       continue;
     }
+    if (!strcmp(argv[i], "-profiling-folder")) {
+      paths.profiling_folder_path = std::string(argv[++i]);
+      continue;
+    }
     if (!strcmp(argv[i], "--use-full-precision")) {
       use_full_precision = true;
+      continue;
+    }
+    if (!strcmp(argv[i], "--warmup")) {
+      run_warmup = true;
       continue;
     }
     // verbose logging to stdout
@@ -147,44 +157,6 @@ void parse_input_args(char **argv,
   wordfree(&p);
 }
 
-std::vector<Request> parse_trace_file(std::string const &trace_file_path) {
-  using json = nlohmann::json;
-  std::ifstream file_handle(trace_file_path);
-  assert(file_handle.good() && "Trace file does not exist.");
-  nlohmann::ordered_json prompt_json =
-      nlohmann::ordered_json::parse(file_handle,
-                                    /*parser_callback_t */ nullptr,
-                                    /*allow_exceptions */ true,
-                                    /*ignore_comments */ true);
-  file_handle.close();
-  auto &metadata = prompt_json["metadata"];
-  int num_warmup_requests = metadata["num_warmup_requests"];
-  int num_regular_requests = 0, total_requests = 0;
-  std::vector<Request> warmup_requests, requests;
-  for (auto &entry : prompt_json["entries"]) {
-    int prompt_length = entry["prompt_length"];
-    int response_length = entry["response_length"];
-    std::string text = entry["prompt"];
-    bool is_warmup_request = total_requests < num_warmup_requests;
-
-    Request inference_req;
-    inference_req.prompt = text;
-    inference_req.add_special_tokens = false;
-    inference_req.max_new_tokens = response_length;
-
-    if (is_warmup_request) {
-      warmup_requests.push_back(inference_req);
-    } else {
-      // printf("Prompt[%d]: %s\n", total_requests, text.c_str());
-      requests.push_back(inference_req);
-      num_regular_requests++;
-    }
-
-    total_requests++;
-  }
-  return requests;
-}
-
 std::vector<Request> make_warmup_requests(int num_inf_request,
                                           int num_finetuning_steps,
                                           PEFTModelID *peft_model_id) {
@@ -228,9 +200,10 @@ void FlexFlow::top_level_task(Task const *task,
   int max_requests_per_batch = 1;
   int max_tokens_per_batch = 128;
   int max_sequence_length = 256;
-  int max_training_steps = -1;
+  int max_training_steps = 2;
   bool enable_peft_finetuning = true;
   int num_layers_per_finetuning_step = -1;
+  bool run_warmup = false;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -250,7 +223,8 @@ void FlexFlow::top_level_task(Task const *task,
                    max_tokens_per_batch,
                    max_sequence_length,
                    max_training_steps,
-                   num_layers_per_finetuning_step);
+                   num_layers_per_finetuning_step,
+                   run_warmup);
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
          ffconfig.numNodes * ffconfig.workersPerNode);
@@ -417,16 +391,23 @@ void FlexFlow::top_level_task(Task const *task,
   rm->start_background_server(&model);
 
   // Add PEFT adapter(s)
-  // PEFTModelID *peft_model_id = nullptr, *peft_model_id_finetuning = nullptr;
-  // if (!peft_model_name.empty()) {
-  //   peft_model_id = model.register_peft_adapter(peft_config);
-  //   if (enable_peft_finetuning) {
-  //     peft_model_id_finetuning =
-  //         model.register_peft_adapter(peft_config_finetuning);
-  //   }
-  // }
-  PEFTModelID *peft_model_id_finetuning =
-      model.register_peft_adapter(peft_config_finetuning);
+  PEFTModelID *peft_model_id = nullptr, *peft_model_id_finetuning = nullptr;
+  if (!peft_model_name.empty() && !enable_peft_finetuning) {
+    peft_model_id = model.register_peft_adapter(peft_config);
+  }
+  if (enable_peft_finetuning) {
+    peft_model_id_finetuning =
+        model.register_peft_adapter(peft_config_finetuning);
+  }
+
+  if (run_warmup) {
+    std::vector<Request> warmup_requests =
+        make_warmup_requests(10, 1000, peft_model_id_finetuning);
+    std::vector<GenerationResult> warmup_result =
+        model.generate(warmup_requests);
+    rm->set_inference_finished(false); // reset inference finished flag
+    std::cout << "----------warmup finished--------------" << std::endl;
+  }
 
   // Run workload
   {
@@ -452,6 +433,23 @@ void FlexFlow::top_level_task(Task const *task,
     finetuning_req.peft_finetuning_info.max_training_steps = max_training_steps;
     requests.push_back(finetuning_req);
 
+    // Add fine-tuning request
+    if (enable_peft_finetuning) {
+      assert(!file_paths.dataset_file_path.empty() &&
+             "Dataset file path is required for fine-tuning.");
+      printf("Finetuning request with dataset %s\n",
+             file_paths.dataset_file_path.c_str());
+      Request fine_tuning_req;
+      fine_tuning_req.req_type = RequestType::REQ_FINETUNING;
+      fine_tuning_req.peft_model_id = (peft_model_id_finetuning != nullptr)
+                                          ? *peft_model_id_finetuning
+                                          : PEFTModelID::NO_ID;
+      fine_tuning_req.peft_finetuning_info.dataset_filepath =
+          file_paths.dataset_file_path;
+      fine_tuning_req.peft_finetuning_info.max_training_steps =
+          max_training_steps;
+      requests.push_back(fine_tuning_req);
+    }
     std::vector<GenerationResult> result = model.generate(requests);
   }
 
@@ -474,6 +472,32 @@ void FlexFlow::top_level_task(Task const *task,
                                  0.0, // arrival rate
                                  10); // num_warmup_requests
 
+  if (!file_paths.profiling_folder_path.empty()) {
+    std::cout << "Saving profiling info..." << std::endl;
+    std::string dataset_name;
+    // set dataset name to "wildchat" if the prompt file path contains
+    // "wildchat"
+    if (file_paths.prompt_file_path.find("wildchat") != std::string::npos) {
+      dataset_name = "wildchat";
+    } else if (file_paths.prompt_file_path.find("sharegpt") !=
+               std::string::npos) {
+      dataset_name = "sharegpt";
+    } else {
+      dataset_name = "unknown";
+    }
+    rm->save_profiling_info_to_csv(file_paths.profiling_folder_path,
+                                   dataset_name,
+                                   llm_model_name,
+                                   model.config.tensor_parallelism_degree,
+                                   max_requests_per_batch,
+                                   max_tokens_per_batch,
+                                   0.0, // arrival rate
+                                   10); // num_warmup_requests
+  }
+
+  if (peft_model_id != nullptr) {
+    free(peft_model_id);
+  }
   if (peft_model_id_finetuning != nullptr) {
     free(peft_model_id_finetuning);
   }

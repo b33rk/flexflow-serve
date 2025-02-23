@@ -90,7 +90,7 @@ def init(
     - benchmarking: whether to run benchmaking only, without loading real weights, defaults to False
     - inference_debugging: whether to run inference in debugging mode, saving all inputs/outputs/weights to file, defaults to False
     - fusion: whether to enable the FlexFlow operator fusion optimization, defaults to True
-    - log_instance_creation: whether to log the creation of FlexFlow instances, defaults to False
+    - log_instance_cration: whether to log the creation of the FlexFlow instances, defaults to False
 
     The configurations are passed down to the FlexFlow runtime (implemented in C++) via command line arguments.
 
@@ -133,7 +133,7 @@ def init(
     :type inference_debugging: Optional[bool], optional
     :param fusion: whether to enable the FlexFlow operator fusion optimization, defaults to True
     :type fusion: Optional[bool], optional
-    :param log_instance_cration: whether to log the creation of FlexFlow instances, defaults to False
+    :param log_instance_cration: whether to log the creation of the FlexFlow instances, defaults to False
     :type log_instance_cration: Optional[bool], optional
 
     :raises ValueError: this function will raise an exception if the user passes both a configs_dict and some named parameters

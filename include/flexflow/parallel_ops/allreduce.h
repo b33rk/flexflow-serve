@@ -16,6 +16,7 @@ public:
   using Input = ParallelTensor;
 
   AllReduce(FFModel &model,
+            LayerID const &_layer_guid,
             const ParallelTensor input,
             int allreduce_legion_dim,
             char const *name = NULL);
@@ -75,6 +76,7 @@ public:
   Params get_params() const;
 
 public:
+  LayerID layer_guid;
   int allreduce_dim;
 };
 

@@ -4,6 +4,7 @@
 namespace FlexFlow {
 
 struct AllReduceParams {
+  LayerID layer_guid;
   int allreduce_legion_dim;
   char name[MAX_OPNAME];
   bool is_valid(ParallelTensorShape const &) const;

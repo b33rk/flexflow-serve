@@ -3,10 +3,8 @@ import torch.nn as nn
 import transformers
 from transformers import (
     TrainerCallback,
-    AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
-    LlamaTokenizer,
 )
 import os, shutil
 from peft import PeftConfig, PeftModel
@@ -306,21 +304,10 @@ def build_peft_model(args, peft_config):
 
 def get_peft_tokenizer(args, peft_config):
     # Get Tokenizer
-    hf_config = AutoConfig.from_pretrained(
-        peft_config.base_model_name_or_path, trust_remote_code=True
+    tokenizer = AutoTokenizer.from_pretrained(
+        peft_config.base_model_name_or_path,
+        torch_dtype=torch.float32 if args.use_full_precision else torch.float16,
     )
-    hf_arch = getattr(hf_config, "architectures")[0]
-    if hf_arch == "LLaMAForCausalLM" or hf_arch == "LlamaForCausalLM":
-        tokenizer = LlamaTokenizer.from_pretrained(
-            peft_config.base_model_name_or_path,
-            use_fast=True,
-            torch_dtype=torch.float32 if args.use_full_precision else torch.float16,
-        )
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(
-            peft_config.base_model_name_or_path,
-            torch_dtype=torch.float32 if args.use_full_precision else torch.float16,
-        )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = "[PAD]"
         tokenizer.padding_side = "left"

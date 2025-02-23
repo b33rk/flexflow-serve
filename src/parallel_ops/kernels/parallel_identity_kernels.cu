@@ -76,7 +76,7 @@ void peft_bwd_kernel_wrapper(ParallelIdentityMeta const *m,
   assert(input_grad.domain == output_grad.domain);
   size_t hidden_dim_size =
       input_grad.domain.hi()[0] - input_grad.domain.lo()[0] + 1;
-  size_t num_elements = bc->num_active_tokens() * hidden_dim_size;
+  size_t num_elements = bc->num_finetuning_bwd_tokens() * hidden_dim_size;
 #ifdef FF_USE_NCCL
   ncclDataType_t nccl_data_type = ff_to_nccl_datatype(input_grad.data_type);
   checkNCCL(ncclAllReduce(output_grad.ptr,

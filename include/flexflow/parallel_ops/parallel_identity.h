@@ -16,6 +16,7 @@ public:
   using Input = ParallelTensor;
 
   ParallelIdentity(FFModel &model,
+                   LayerID const &_layer_guid,
                    const ParallelTensor input,
                    int parallel_identity_legion_dim,
                    char const *name = NULL);
@@ -75,6 +76,7 @@ public:
   Params get_params() const;
 
 public:
+  LayerID layer_guid;
   int parallel_identity_dim;
 };
 

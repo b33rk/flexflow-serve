@@ -737,8 +737,6 @@ bool Linear::peft_bwd_task(Task const *task,
       ctx, task->regions[0].region.get_index_space());
   LinearMeta *m = *((LinearMeta **)task->local_args);
   BatchConfig const *bc = BatchConfig::from_future(task->futures[0]);
-  // std::string op_name_without_uid = get_op_name_without_uid(m);
-  // std::cout << "Linear PEFT BWD " << op_name_without_uid << std::endl;
   if (!bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id)) {
     return false;
   }
@@ -772,13 +770,8 @@ bool Linear::peft_bwd_task(Task const *task,
            in_dim,
            num_peft_tokens);
   }
-  peft_bwd_kernel_wrapper(m,
-                          bc,
-                          input_grad.ptr,
-                          output_grad.ptr,
-                          weight.ptr,
-                          in_dim,
-                          out_dim);
+  peft_bwd_kernel_wrapper(
+      m, bc, input_grad.ptr, output_grad.ptr, weight.ptr, in_dim, out_dim);
   if (m->inference_debugging) {
     assert(task->index_point.get_dim() == 1);
     int shard_id = task->index_point.point_data[0];

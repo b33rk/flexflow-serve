@@ -64,14 +64,12 @@ public:
   BatchConfig();
   int num_active_requests() const;
   int num_active_tokens() const;
-
   int finetuning_request_index() const;
   int num_finetuning_fwd_requests() const;
   int num_finetuning_fwd_tokens() const;
   int num_finetuning_bwd_requests() const;
   int num_finetuning_bwd_tokens() const;
   bool peft_bwd_applies_to_this_layer(int layer) const;
-
   static int max_requests_per_batch();
   static int max_tokens_per_batch();
   static int max_verify_tokens_per_batch();
@@ -91,8 +89,6 @@ public:
   static int const MAX_SPEC_TREE_TOKEN_NUM = 64;
   static int const MAX_PEFT_CONFIG_SIZE = 1024;
 
-  // number of tokens in prompt phase, start offset of tokens in inc_decoding
-  // phase. num_tokens - num_prompt_tokens = num_generation_tokens;
   int num_tokens = 0, num_generation_tokens = 0;
 
   struct PerRequestInfo {

@@ -259,17 +259,15 @@ class LLM:
 
     def __is_empty_dir(self, folder: str) -> bool:
         """Check whether a folder only contains the rev_sha.txt file
-
         Args:
             folder (str): Path to the folder to check
-
         Returns:
             bool: True if the folder is empty, False otherwise
         """
         if not os.path.isdir(folder) or not os.path.exists(folder):
             return True
         return len(os.listdir(folder)) == 1 and "rev_sha.txt" in os.listdir(folder)
-        
+    
     def __need_cache_refresh(
         self, model_name: str, resource_type: CachedResourceType
     ) -> bool:
@@ -285,7 +283,6 @@ class LLM:
         """
         resource_path = self.__get_resource_path(model_name, resource_type)
         ff_revision, latest_revision = self.__get_revision_hashes(self.model_name, resource_path)
-        
         if self.refresh_cache or not os.path.exists(resource_path) or self.__is_empty_dir(resource_path) or ff_revision != latest_revision:
             print(
                 f"Refreshing {resource_type} in cache for model {model_name} at path {resource_path} ..."
@@ -444,7 +441,6 @@ class LLM:
         max_tokens_per_batch: int = 64,
         max_concurrent_adapters: int = 1,
         enable_peft_finetuning: bool = False,
-        max_finetuning_seq_length: int = -1,
         num_bwd_layers_per_ft_step: int = -1,
         ssms: list = [],
     ):
@@ -462,8 +458,6 @@ class LLM:
         :type max_concurrent_adapters: int, optional
         :param enable_peft_finetuning: Whether to enable support for PEFT fine-tuning, defaults to False
         :type enable_peft_finetuning: bool, optional
-        :param max_finetuning_seq_length: The maximum sequence length to allow for finetuning, defaults to -1 (i.e. same as max_seq_length)
-        :type max_finetuning_seq_length: int, optional
         :param num_bwd_layers_per_ft_step: The number of backward layers to run per finetuning step, defaults to -1 (i.e. all layers)
         :type num_bwd_layers_per_ft_step: int, optional
         :param ssms: The SSMs to use when operating in speculative inference mode, defaults to []
@@ -494,10 +488,6 @@ class LLM:
         self.rm.set_max_sequence_length(max_seq_length)
         self.rm.set_max_concurrent_adapters(max_concurrent_adapters)
         self.rm.set_enable_peft_finetuning(enable_peft_finetuning)
-        if max_finetuning_seq_length == -1:
-            self.rm.set_max_finetuning_sequence_length(max_seq_length)
-        else:
-            self.rm.set_max_finetuning_sequence_length(max_finetuning_seq_length)
         self.rm.set_num_transformers_layers(self.hf_config.num_hidden_layers)
         if num_bwd_layers_per_ft_step != -1:
             self.rm.set_num_layers_per_finetuning_step(num_bwd_layers_per_ft_step)
@@ -771,7 +761,6 @@ class SSM(LLM):
         max_tokens_per_batch: int = 2048,
         max_concurrent_adapters: int = 1,
         enable_peft_finetuning: bool = False,
-        max_finetuning_seq_length: int = -1,
         num_bwd_layers_per_ft_step: int = -1,
         ssms: list = [],
     ):
@@ -788,8 +777,6 @@ class SSM(LLM):
         :type max_concurrent_adapters: int, optional
         :param enable_peft_finetuning: Whether to enable support for PEFT fine-tuning, defaults to False
         :type enable_peft_finetuning: bool, optional
-        :param max_finetuning_seq_length: The maximum sequence length to allow for finetuning, defaults to -1 (i.e. same as max_seq_length)
-        :type max_finetuning_seq_length: int, optional
         :param num_bwd_layers_per_ft_step: The number of backward layers to run per finetuning step, defaults to -1 (i.e. all layers)
         :type num_bwd_layers_per_ft_step: int, optional
         :param ssms: The SSMs to use when operating in speculative inference mode, defaults to []
@@ -802,7 +789,6 @@ class SSM(LLM):
             max_tokens_per_batch,
             max_concurrent_adapters,
             enable_peft_finetuning,
-            max_finetuning_seq_length,
             num_bwd_layers_per_ft_step,
             ssms,
         )

@@ -622,12 +622,12 @@ void inference_kernel(TreeIncMultiHeadSelfAttentionMeta *m,
   size_t qkv_proj_size =
       m->qProjSize * m->num_q_heads * QKV_WEIGHT_NUM * bc->num_active_tokens();
 
-  hipMemcpyAsync(m->devQKVProjArray,
-                 qkv_ptr,
-                 qkv_proj_size *
-                     sizeof(DT), // is this right, do we need layers etc here
-                 hipMemcpyDeviceToDevice,
-                 stream);
+  checkCUDA(hipMemcpyAsync(
+      m->devQKVProjArray,
+      qkv_ptr,
+      qkv_proj_size * sizeof(DT), // is this right, do we need layers etc here
+      hipMemcpyDeviceToDevice,
+      stream));
 
   // phase 1: Implement kernel to compute KQV for input tokens
   // TODO WARNING: this is commented out only because we are fixing the inc_attn

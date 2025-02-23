@@ -82,7 +82,6 @@ struct InferenceReqProfileInfo {
   int decoding_step_idx;
   long long timestamp;
 };
-
 struct Request {
   enum Status {
     PENDING = 101,   // loading prompt
@@ -133,10 +132,8 @@ struct Request {
   int ssm_cache_size = 0;
   int llm_cache_size = 0;
   std::vector<struct BeamTree> beam_trees;
-
   Request() = default;
   static Request from_other(Request const &other);
-
   friend std::ostream &operator<<(std::ostream &os, Request const &req);
 };
 
@@ -173,7 +170,6 @@ public:
   size_t get_num_ssms();
 
   bool load_request_token_ids(Request &request);
-
   void set_verbose(bool verbose);
   void set_max_requests_per_batch(int max_num_requests);
   int get_max_requests_per_batch();
@@ -186,8 +182,6 @@ public:
   int get_max_verify_tokens_per_batch();
   int get_max_sequence_length();
   void set_max_sequence_length(int max_seq_length);
-  int get_max_finetuning_sequence_length();
-  void set_max_finetuning_sequence_length(int max_seq_length);
   void push_spec_infer_tree_width(int tree_width);
   void set_enable_peft_finetuning(bool enable_peft_finetuning_);
   void set_inference_finished(bool finished = true);
@@ -244,7 +238,6 @@ public:
   void add_peft_config_to_request_info(BatchConfig &bc,
                                        int req_idx,
                                        LoraLinearConfig const &peft_config);
-
   // helpers for prepare_next_batch
   void process_inf_req_progress(BatchConfig const &old_fwd_bc,
                                 InferenceResult const &result);

@@ -95,6 +95,10 @@ bool flexflow_config_get_enable_peft(flexflow_config_t handle_);
 bool flexflow_config_get_enable_peft_finetuning(flexflow_config_t handle_);
 void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_, bool value);
 
+bool flexflow_config_get_enable_peft_finetuning(flexflow_config_t handle_);
+void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_,
+                                                bool value);
+
 void flexflow_config_set_data_parallelism_degree(flexflow_config_t handle_,
                                                  int value);
 

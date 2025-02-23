@@ -185,6 +185,8 @@ public:
   void *qk_prods, *qk_prods_softmax;
   void *attn_heads;
   BatchConfig::PerTokenInfo *token_infos;
+  BatchConfig::PerTokenInfo *peft_token_infos;
+  BatchConfig::PerTokenInfo *peft_token_infos_device;
   BatchConfig::PerRequestInfo *request_infos;
   DataType quantization_type;
   bool offload;
@@ -204,7 +206,8 @@ public:
   // PEFT specific fields
   void *softmax_activation_buffer;
   void *query_activation_buffer;
-  size_t allocated_peft_buffer_size1 = 0, allocated_peft_buffer_size2 = 0;
+  size_t allocated_peft_buffer_size1 = 0, allocated_peft_buffer_size2 = 0,
+         peft_token_infos_size = 0;
 };
 
 }; // namespace FlexFlow
