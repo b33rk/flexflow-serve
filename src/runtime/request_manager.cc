@@ -358,17 +358,6 @@ int RequestManager::get_max_sequence_length() {
   return max_sequence_length;
 }
 
-void RequestManager::set_max_finetuning_sequence_length(int max_seq_length) {
-  assert(max_finetuning_sequence_length == -1 ||
-         max_finetuning_sequence_length == max_seq_length);
-  max_finetuning_sequence_length = max_seq_length;
-}
-
-int RequestManager::get_max_finetuning_sequence_length() {
-  assert(max_finetuning_sequence_length > 0);
-  return max_finetuning_sequence_length;
-}
-
 void RequestManager::push_spec_infer_tree_width(int tree_width) {
   assert(tree_width <= BeamSearchBatchConfig::MAX_BEAM_WIDTH);
   spec_infer_tree_width.emplace_back(tree_width);

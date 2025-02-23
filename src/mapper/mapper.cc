@@ -281,8 +281,6 @@ void FFMapper::select_task_options(const MapperContext ctx,
     return;
   }
   if ((task.task_id == RM_PREPARE_NEXT_BATCH_TASK_ID) ||
-      // (task.task_id == RM_PREPARE_NEXT_FWD_BATCH_TASK_ID) ||
-      // (task.task_id == RM_PREPARE_NEXT_BWD_BATCH_TASK_ID) ||
       (task.task_id == RM_PREPARE_NEXT_BATCH_INIT_TASK_ID) ||
       (task.task_id == RM_PREPARE_NEXT_BATCH_BEAM_TASK_ID) ||
       (task.task_id == RM_PREPARE_NEXT_BATCH_VERIFY_TASK_ID) ||

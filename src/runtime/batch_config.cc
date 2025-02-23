@@ -186,12 +186,6 @@ int BatchConfig::max_sequence_length() {
   return RequestManager::get_request_manager()->get_max_sequence_length();
 }
 
-/*static*/
-int BatchConfig::max_finetuning_sequence_length() {
-  return RequestManager::get_request_manager()
-      ->get_max_finetuning_sequence_length();
-}
-
 int BatchConfig::max_spec_tree_token_num() {
   return RequestManager::get_request_manager()->get_max_spec_tree_token_num();
 }

@@ -40,7 +40,7 @@ python ./tests/peft/hf_finetune.py --peft-model-id goliaro/llama-160m-lora --sav
 echo "Python test"
 python ./inference/python/ff_peft.py
 # Check alignment
-python ./tests/peft/peft_alignment_test.py -tp 1 -lr 0.001
+python ./tests/peft/peft_alignment_test.py -tp 4 -lr 0.001
 
 # C++ test
 echo "C++ test"

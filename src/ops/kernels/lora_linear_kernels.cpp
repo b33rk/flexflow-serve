@@ -516,7 +516,6 @@ void peft_bwd_kernel(Context ctx,
     }
   }
 }
-}
 
 } // namespace Internal
 } // namespace LoraLinear

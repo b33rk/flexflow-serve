@@ -91,8 +91,8 @@ void parse_input_args(char **argv,
       continue;
     }
     // output file
-    if (!strcmp(argv[i], "-output-folder")) {
-      paths.output_folder_path = std::string(argv[++i]);
+    if (!strcmp(argv[i], "-output-file")) {
+      paths.output_file_path = std::string(argv[++i]);
       continue;
     }
     if (!strcmp(argv[i], "-profiling-folder")) {
@@ -339,11 +339,8 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_sequence_length(max_sequence_length);
   rm->register_tokenizer(
       model_type, bos_token_id, eos_token_ids, tokenizer_filepath);
-  std::string output_filepath =
-      join_path({file_paths.output_folder_path, "output.log"});
-  rm->register_output_filepath(output_filepath);
+  rm->register_output_filepath(file_paths.output_file_path);
   rm->set_enable_peft_finetuning(enable_peft_finetuning);
-  rm->set_max_finetuning_sequence_length(1024);
 
   FFModel model(ffconfig, ffconfig.cpu_offload);
   if (model_type == ModelType::LLAMA) {
@@ -411,27 +408,30 @@ void FlexFlow::top_level_task(Task const *task,
 
   // Run workload
   {
-    std::vector<Request> warmup_requests =
-        make_warmup_requests(10, 1000, peft_model_id_finetuning);
-    std::vector<Request> requests =
-        parse_trace_file(file_paths.prompt_file_path);
+    std::vector<Request> requests;
 
-    // run warmup
-    std::vector<GenerationResult> warmup_result =
-        model.generate(warmup_requests);
-    rm->set_inference_finished(false); // reset inference finished flag
-    std::cout << "----------warmup finished--------------" << std::endl;
-
-    // run real requests
-    Request finetuning_req;
-    finetuning_req.req_type = RequestType::REQ_FINETUNING;
-    finetuning_req.peft_model_id = (peft_model_id_finetuning != nullptr)
-                                       ? *peft_model_id_finetuning
-                                       : PEFTModelID::NO_ID;
-    finetuning_req.peft_finetuning_info.dataset_filepath =
-        file_paths.dataset_file_path;
-    finetuning_req.peft_finetuning_info.max_training_steps = max_training_steps;
-    requests.push_back(finetuning_req);
+    // Add inference requests
+    if (!file_paths.prompt_file_path.empty()) {
+      using json = nlohmann::json;
+      std::ifstream file_handle(file_paths.prompt_file_path);
+      assert(file_handle.good() && "Prompt file does not exist.");
+      json prompt_json = json::parse(file_handle,
+                                     /*parser_callback_t */ nullptr,
+                                     /*allow_exceptions */ true,
+                                     /*ignore_comments */ true);
+      int total_num_requests = 0;
+      for (auto &prompt : prompt_json) {
+        std::string text = prompt.get<std::string>();
+        printf("Inference prompt[%d]: %s\n", total_num_requests, text.c_str());
+        Request inference_req;
+        inference_req.prompt = text;
+        inference_req.max_new_tokens = 128;
+        inference_req.peft_model_id =
+            (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
+        requests.push_back(inference_req);
+        total_num_requests++;
+      }
+    }
 
     // Add fine-tuning request
     if (enable_peft_finetuning) {
@@ -461,16 +461,6 @@ void FlexFlow::top_level_task(Task const *task,
     Future future = runtime->issue_execution_fence(ctx);
     future.get_void_result();
   }
-  std::string dataset_name = "unknown";
-  std::cout << "Saving profiling info..." << std::endl;
-  rm->save_profiling_info_to_csv(file_paths.output_folder_path,
-                                 dataset_name,
-                                 llm_model_name,
-                                 ffconfig.tensor_parallelism_degree,
-                                 max_requests_per_batch,
-                                 max_tokens_per_batch,
-                                 0.0, // arrival rate
-                                 10); // num_warmup_requests
 
   if (!file_paths.profiling_folder_path.empty()) {
     std::cout << "Saving profiling info..." << std::endl;

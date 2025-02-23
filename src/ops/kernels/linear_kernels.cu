@@ -581,6 +581,7 @@ void peft_bwd_kernel(LinearMeta const *m,
   cudaDataType_t input_type = ff_to_cuda_datatype(m->input_type[0]);
   cudaDataType_t weight_type = ff_to_cuda_datatype(m->weight_type[0]);
   cudaDataType_t output_type = ff_to_cuda_datatype(m->output_type[0]);
+
   input_grad_ptr = static_cast<DT *>(input_grad_ptr);
   output_grad_ptr = static_cast<DT *>(output_grad_ptr);
   cudaDataType_t compute_type = output_type;

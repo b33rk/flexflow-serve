@@ -116,6 +116,7 @@ struct Request {
   int benchmarking_tokens = -1;
   bool add_special_tokens = true;
   bool warmup = false;
+
   Status status = PENDING;
   long long arrival_time_us = 0;
   // inference fields
@@ -385,7 +386,6 @@ private:
   int max_fwd_finetuning_tokens_per_batch;
   int max_spec_tree_token_num;
   int max_sequence_length;
-  int max_finetuning_sequence_length;
   Status request_manager_status;
 
   // peft

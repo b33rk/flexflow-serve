@@ -1653,24 +1653,6 @@ class RequestManager(object):
             self.handle, num_layers
         )
     
-    def set_max_finetuning_sequence_length(self, max_length):
-        return ffc().flexflow_request_manager_set_max_finetuning_sequence_length(
-            self.handle, max_length
-        )
-
-    def get_max_finetuning_sequence_length(self):
-        return ffc().flexflow_request_manager_get_max_finetuning_sequence_length(self.handle)
-    
-    def set_num_transformers_layers(self, num_layers):
-        return ffc().flexflow_request_manager_set_num_transformers_layers(
-            self.handle, num_layers
-        )
-    def set_num_layers_per_finetuning_step(self, num_layers):
-        return ffc().flexflow_request_manager_set_num_layers_per_finetuning_step(
-            self.handle, num_layers
-        )
-
-    
     def set_max_concurrent_adapters(self, max_adapters):
         return ffc().flexflow_request_manager_set_max_concurrent_adapters(
             self.handle, max_adapters
