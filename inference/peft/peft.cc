@@ -379,6 +379,10 @@ void FlexFlow::top_level_task(Task const *task,
   } else {
     assert(false && "unknow model type");
   }
+  rm->set_num_transformer_layers(model.current_transformer_layer_id + 1);
+  if (num_layers_per_finetuning_step > 0) {
+    rm->set_num_layers_per_finetuning_step(num_layers_per_finetuning_step);
+  }
 
   // Start background server
   rm->start_background_server(&model);
