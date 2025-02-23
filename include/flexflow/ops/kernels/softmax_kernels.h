@@ -86,7 +86,7 @@ void store_peft_activations(SoftmaxMeta *m,
                             BatchConfig const *bc,
                             int num_classes,
                             DT *output_ptr,
-                            cudaStream_t stream);
+                            ffStream_t stream);
 
 } // namespace Internal
 } // namespace Softmax

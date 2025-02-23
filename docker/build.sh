@@ -152,7 +152,7 @@ else
 fi
 
 # base image to use when building the flexflow environment docker image.
-ff_environment_base_image="ubuntu:20.04"
+ff_environment_base_image="ubuntu:22.04"
 # gpu backend version suffix for the docker image.
 gpu_backend_version=""
 

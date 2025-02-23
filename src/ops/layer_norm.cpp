@@ -259,14 +259,14 @@ void LayerNorm::inference_kernel_wrapper(LayerNormMeta *m,
     if (m->input_type[0] == DT_FLOAT) {
       checkCUDA(hipMemcpyAsync(
           m->input_activation,
-          added_output.get_float_ptr() + first_token_offset * in_dim,
+          input.get_float_ptr() + first_token_offset * in_dim,
           data_type_size(m->input_type[0]) * num_peft_tokens * in_dim,
           hipMemcpyDeviceToDevice,
           stream));
     } else if (m->input_type[0] == DT_HALF) {
       checkCUDA(hipMemcpyAsync(
           m->input_activation,
-          added_output.get_half_ptr() + first_token_offset * in_dim,
+          input.get_half_ptr() + first_token_offset * in_dim,
           data_type_size(m->input_type[0]) * num_peft_tokens * in_dim,
           hipMemcpyDeviceToDevice,
           stream));

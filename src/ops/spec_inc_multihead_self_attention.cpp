@@ -23,12 +23,11 @@
 
 namespace FlexFlow {
 
+#define WARP_SIZE 32
+
 // declare Legion names
 using Legion::coord_t;
 using Legion::Memory;
-
-#define WARP_SIZE 32
-
 using namespace Kernels::IncMultiHeadAttention;
 
 namespace Kernels {
@@ -576,6 +575,7 @@ void compute_attention_kernel_prompt(SpecIncMultiHeadSelfAttentionMeta const *m,
                                           compute_type,
                                           HIPBLAS_GEMM_DEFAULT));
 
+    // add alibi position bias to qk production
     if (*m->position_bias) {
       size_t parallelism = m->num_q_heads * total_tokens * num_new_tokens;
       hipLaunchKernelGGL(HIP_KERNEL_NAME(apply_position_bias_qkprd<DT>),
@@ -710,12 +710,12 @@ void inference_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
   size_t qkv_proj_size =
       m->qProjSize * m->num_q_heads * QKV_WEIGHT_NUM * bc->num_active_tokens();
 
-  hipMemcpyAsync(m->devQKVProjArray,
-                 qkv_ptr,
-                 qkv_proj_size *
-                     sizeof(DT), // is this right, do we need layers etc here
-                 hipMemcpyDeviceToDevice,
-                 stream);
+  checkCUDA(hipMemcpyAsync(
+      m->devQKVProjArray,
+      qkv_ptr,
+      qkv_proj_size * sizeof(DT), // is this right, do we need layers etc here
+      hipMemcpyDeviceToDevice,
+      stream));
   // phase 1: Implement kernel to compute KQV for input tokens
   // TODO WARNING: this is commented out only because we are fixing the inc_attn
   // first
@@ -735,11 +735,11 @@ void inference_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
 
   int num_tokens = bc->num_active_tokens();
 
-  hipMemcpyAsync(output_ptr,
-                 m->attn_heads,
-                 m->oProjSize * num_tokens * sizeof(DT),
-                 hipMemcpyDeviceToDevice,
-                 stream);
+  checkCUDA(hipMemcpyAsync(output_ptr,
+                           m->attn_heads,
+                           m->oProjSize * num_tokens * sizeof(DT),
+                           hipMemcpyDeviceToDevice,
+                           stream));
 }
 
 } // namespace SpecIncMultiHeadSelfAttention
