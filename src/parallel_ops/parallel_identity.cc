@@ -423,11 +423,6 @@ bool ParallelIdentity::peft_bwd_task(Task const *task,
   ParallelIdentityMeta *m = *((ParallelIdentityMeta **)task->local_args);
   BatchConfig const *bc = BatchConfig::from_future(task->futures[0]);
   if (!bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id)) {
-    printf("PEFT bwd does not apply to this ParallelIdentity layer %d\n",
-           m->layer_guid.transformer_layer_id);
-    std::string op_name_without_uid = get_op_name_without_uid(m);
-    std::cout << "PEFT bwd does not apply to this ParallelIdentity layer "
-              << op_name_without_uid << std::endl;
     return false;
   }
   GenericTensorAccessorW input_grad = helperGetGenericTensorAccessorRW(

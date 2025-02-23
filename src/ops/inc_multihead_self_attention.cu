@@ -990,6 +990,21 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
     compute_attention_kernel_prompt<DT>(m, bc, shard_id, stream);
   }
 
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    assert(m->peft_token_infos != nullptr);
+    assert(m->peft_token_infos_size == sizeof(BatchConfig::PerTokenInfo) *
+                                           BatchConfig::max_sequence_length());
+    int num_ft_tokens = bc->num_finetuning_fwd_tokens();
+    int i = bc->finetuning_request_index();
+    int tokens_previous_requests =
+        bc->requestsInfo[i].first_token_offset_in_batch;
+    int prev_steps_tokens = bc->requestsInfo[i].first_token_depth_in_request;
+    for (int j = 0; j < num_ft_tokens; j++) {
+      m->peft_token_infos[prev_steps_tokens + j] =
+          bc->tokensInfo[tokens_previous_requests + j];
+    }
+  }
+
   int num_tokens = bc->num_active_tokens();
   cudaMemcpyAsync(output_ptr,
                   m->attn_heads,
@@ -1424,6 +1439,11 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   // Step 7: perform rotary position embeddings (RoPE) bwd
   {
     if (m->rotary_embedding_meta->apply_rotary_embedding) {
+      checkCUDA(cudaMemcpyAsync(m->peft_token_infos_device,
+                                m->peft_token_infos,
+                                m->peft_token_infos_size,
+                                cudaMemcpyHostToDevice,
+                                stream));
       assert(m->hidden_size == m->qProjSize * m->num_q_heads);
       assert(m->qProjSize == m->kProjSize);
       /*q&k*/
@@ -1435,7 +1455,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                    stream>>>(
           A,
           m->complex_input,
-          m->token_infos,
+          m->peft_token_infos_device,
           m->rotary_embedding_meta->rope_theta,
           (m->rotary_embedding_meta->rope_type == "llama3"),
           m->rotary_embedding_meta->factor,
@@ -1734,9 +1754,17 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       allocated_peft_buffer_size2 = BatchConfig::max_sequence_length() *
                                     BatchConfig::max_sequence_length() *
                                     num_q_heads * size_of_dt;
+      peft_token_infos = (BatchConfig::PerTokenInfo *)calloc(
+          1,
+          sizeof(BatchConfig::PerTokenInfo) *
+              BatchConfig::max_sequence_length());
+      peft_token_infos_size = sizeof(BatchConfig::PerTokenInfo) *
+                              BatchConfig::max_sequence_length();
     } else {
       allocated_peft_buffer_size1 = 0;
       allocated_peft_buffer_size2 = 0;
+      peft_token_infos = nullptr;
+      peft_token_infos_size = 0;
     }
     size_t totalSize =
         (qkv_max_proj_size + key_cache_size + value_cache_size +
@@ -1746,6 +1774,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                                // be added here later
     if (enable_peft_finetuning) {
       totalSize += allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
+      totalSize += peft_token_infos_size;
     }
     if (offload) {
       // assert that we have enough reserved work space left
@@ -1818,6 +1847,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
           allocated_peft_buffer_size1);
       softmax_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size2);
+      peft_token_infos_device = (BatchConfig::PerTokenInfo *)
+                                    gpu_mem_allocator.allocate_instance_untyped(
+                                        peft_token_infos_size);
     }
 
     // allocate more size for quantization data

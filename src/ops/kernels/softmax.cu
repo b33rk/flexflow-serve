@@ -303,9 +303,8 @@ void store_peft_activations(SoftmaxMeta *m,
 
   // shift labels by 1 position to the left (ignore first token label)
   for (int j = 0; j < num_ft_tokens - 1; j++) {
-    m->peft_token_ids[j] =
-        bc->tokensInfo[tokens_previous_requests + prev_steps_tokens + j + 1]
-            .token_id;
+    m->peft_token_ids[prev_steps_tokens + j] =
+        bc->tokensInfo[tokens_previous_requests + j + 1].token_id;
   }
 
   size_t batch_offset = num_classes * tokens_previous_requests;
