@@ -446,6 +446,10 @@ void RequestManager::register_tokenizer(ModelType type,
 void RequestManager::register_output_filepath(
     std::string const &_output_filepath) {
   this->output_filepath = _output_filepath;
+  // delete the file if it already exists
+  if (std::filesystem::exists(output_filepath)) {
+    std::filesystem::remove(output_filepath);
+  }
 }
 
 int RequestManager::register_ssm_model(FFModel *model) {
@@ -935,40 +939,6 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
   //                   (profile_info.finish_time - profile_info.start_time)/1e3,
   //                   (profile_info.first_token_time -
   //                   profile_info.registration_time)/1e3);
-  // Write output to file if needed:
-  if (!output_filepath.empty()) {
-    std::ofstream outputFile(output_filepath, std::ios::app);
-    if (outputFile.is_open()) {
-      outputFile << "[" << (request.warmup ? "Warmup" : "Profile") << "] guid("
-                 << request.guid << ") llm_decoding_steps("
-                 << profile_info.llm_decoding_steps << ") initial_len("
-                 << request.initial_len << ") final_len("
-                 << request.tokens.size() << ") latency(" << std::fixed
-                 << std::setprecision(3)
-                 << (profile_info.finish_time - profile_info.start_time) / 1e3
-                 << ") ttft(" << std::fixed << std::setprecision(3)
-                 << (profile_info.first_token_time -
-                     profile_info.registration_time) /
-                        1e3
-                 << ")\n";
-      if (request.benchmarking_tokens <= 0) {
-        outputFile << "token IDs: ";
-        for (int i = 0; i < output_tokens.size(); i++) {
-          outputFile << output_tokens[i];
-          if (i < output_tokens.size() - 1) {
-            outputFile << ",";
-          }
-        }
-        outputFile << std::endl;
-        outputFile << output;
-      }
-      outputFile.close();
-    } else {
-      std::cout << "Unable to open the output file: " << output_filepath
-                << std::endl;
-      assert(false);
-    }
-  }
 }
 
 void RequestManager::add_continuing_inf_req_to_new_batch(
@@ -1608,6 +1578,62 @@ BatchConfig
   }
 
   return new_bc;
+}
+
+void RequestManager::save_output_to_json() {
+  if (!output_filepath.empty()) {
+    std::ofstream outputFile(output_filepath, std::ios::app);
+
+    // Extract keys and sort them in ascending order.
+    std::vector<RequestGuid> sortedKeys;
+    for (auto const &kv : request_generation_results) {
+      sortedKeys.push_back(kv.first);
+    }
+    std::sort(sortedKeys.begin(), sortedKeys.end());
+    // Create a JSON array.
+    json jsonList = json::array();
+    // Iterate over the sorted keys and add each dictionary to the JSON array.
+    for (auto const &key : sortedKeys) {
+      GenerationResult const &res = request_generation_results[key];
+      ProfileInfo profile_info = profiling_requests[key];
+      Request &request = all_requests[key];
+      if (request.req_type == RequestType::REQ_INFERENCE) {
+        json entry = {
+            {"guid", key},
+            {"warmup", request.warmup},
+
+            {"max_length", request.max_length},
+            {"input_tokens", res.input_tokens},
+            {"output_tokens", res.output_tokens},
+            {"prompt", res.input_text},
+            {"response", res.output_text},
+            {"num_decoding_steps", profile_info.llm_decoding_steps},
+            {"latency",
+             (profile_info.finish_time - profile_info.start_time) / 1e3},
+            {"ttft",
+             (profile_info.first_token_time - profile_info.registration_time) /
+                 1e3}};
+        jsonList.push_back(entry);
+      } else {
+        json entry = {
+            {"guid", key},
+            {"warmup", request.warmup},
+            {"req_type", "finetuning"},
+            {"max_length", request.max_length},
+            {"dataset_size", request.dataset.size()},
+            {"completed_training_steps",
+             request.peft_finetuning_info.completed_training_steps},
+            {"finetuning_losses",
+             request.peft_finetuning_info.finetuning_losses},
+            {"latency",
+             (profile_info.finish_time - profile_info.start_time) / 1e3}};
+        jsonList.push_back(entry);
+      }
+    }
+
+    // Output the formatted JSON.
+    std::cout << jsonList.dump(2) << std::endl;
+  }
 }
 
 void RequestManager::save_profiling_info_to_csv(std::string output_folder,
@@ -3481,6 +3507,7 @@ std::vector<GenerationResult>
     results.push_back(rm->get_generation_result(peft_guids[i]));
   }
   rm->run_idx++;
+  rm->save_output_to_json();
   return results;
 }
 
@@ -3555,6 +3582,7 @@ std::vector<GenerationResult>
   for (int i = 0; i < peft_guids.size(); i++) {
     results.push_back(rm->get_generation_result(peft_guids[i]));
   }
+  rm->save_output_to_json();
   return results;
 }
 

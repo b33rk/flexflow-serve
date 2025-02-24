@@ -1781,8 +1781,10 @@ void flexflow_model_generate(flexflow_model_t handle_,
         assert(total_tokens <= max_lengths[i] || num_output_tokens == 0);
       }
       output_length_and_tokens[i][0] = results[i].output_tokens.size();
-      assert(results[i].output_tokens.size() <= max_lengths[i]+100 && "Exceeding python buffer size for token ids");
-      assert(results[i].output_text.length() <= max_lengths[i]*10 && "Exceeding python buffer size for output text");
+      assert(results[i].output_tokens.size() <= max_lengths[i] + 100 &&
+             "Exceeding python buffer size for token ids");
+      assert(results[i].output_text.length() <= max_lengths[i] * 10 &&
+             "Exceeding python buffer size for output text");
       std::copy(results[i].output_tokens.begin(),
                 results[i].output_tokens.end(),
                 output_length_and_tokens[i] + 1);
