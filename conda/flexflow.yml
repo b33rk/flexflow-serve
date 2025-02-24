@@ -27,3 +27,4 @@ dependencies:
     - loralib
     - triton
     - peft
+    - pytest

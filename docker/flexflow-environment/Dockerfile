@@ -113,7 +113,7 @@ RUN rm /usr/local/bin/install_pytorch.sh
 RUN pip3 install transformers>=4.47.1 sentencepiece einops
 RUN pip3 install tensorflow notebook
 # PEFT-related
-RUN pip3 install scipy bitsandbytes datasets accelerate loralib triton peft
+RUN pip3 install scipy bitsandbytes datasets accelerate loralib triton peft pytest
 RUN pip3 install streamlit
 
 # Install Rust
