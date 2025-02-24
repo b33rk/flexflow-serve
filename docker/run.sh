@@ -131,7 +131,7 @@ if [ -f "$hf_token_path" ]; then
 fi
 
 ssh_key_volume=""
-ssh_key_path="~/.ssh/id_rsa"
+ssh_key_path="$HOME/.ssh/id_rsa"
 if [ -f "$ssh_key_path" ] && [ -f "$ssh_key_path.pub" ]; then
   ssh_key_volume="-v $ssh_key_path:/root/.ssh/id_rsa -v $ssh_key_path.pub:/root/.ssh/id_rsa.pub"
 fi
