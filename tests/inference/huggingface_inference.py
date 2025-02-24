@@ -83,25 +83,32 @@ def main():
 
     ###############################################
     # Generate output
+    output_list = []
+    for i, prompt in enumerate(prompt_list):
+        batch = tokenizer(prompt, return_tensors="pt", add_special_tokens=True).to(model.device)
+        generated = model.generate(
+            batch["input_ids"],
+            max_length=args.max_length,
+            generation_config=generation_config,
+        )
+        token_ids = list(generated[0].cpu().numpy())
+        # Remove eos token if present at the end
+        if token_ids[-1] == tokenizer.eos_token_id:
+            token_ids = token_ids[:-1]
+        out = tokenizer.decode(generated[0][len(batch["input_ids"]):])
+        out_str = out if i == (len(prompt_list) - 1) else out + "\n"
+        output_list.append({
+            "req_idx": i,
+            "req_type": "inference",
+            "prompt_length": len(batch["input_ids"]),
+            "response_length": len(generated[0])-len(batch["input_ids"]),
+            "prompt": prompt,
+            "input_tokens": ",".join(str(x) for x in batch["input_ids"].cpu().numpy()),
+            "output_tokens": ",".join(str(x) for x in token_ids[len(batch["input_ids"]):]),
+            "num_decoding_steps": len(generated[0])-len(batch["input_ids"]),
+        })
     with open(args.output_file, "w") as f:
-        for i, prompt in enumerate(prompt_list):
-            batch = tokenizer(prompt, return_tensors="pt", add_special_tokens=True).to(model.device)
-            generated = model.generate(
-                batch["input_ids"],
-                max_length=args.max_length,
-                generation_config=generation_config,
-            )
-            token_ids = list(generated[0].cpu().numpy())
-            # Remove eos token if present at the end
-            if token_ids[-1] == tokenizer.eos_token_id:
-                token_ids = token_ids[:-1]
-            out = tokenizer.decode(generated[0])
-            if out.endswith(tokenizer.eos_token):
-                out = out[:-len(tokenizer.eos_token)]
-            # Write output to file
-            out_str = out if i == (len(prompt_list) - 1) else out + "\n"
-            f.write("token IDs: " + ",".join(str(x) for x in token_ids) + "\n")
-            f.write(out_str)
+        json.dump(output_list, f, indent=2)
 
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ def gen_incr_dec_configs(prompt_file, output_folder, incr_dec_models, parallelis
                     + f"{tp}_tp_{pp}_pp"
                 )
                 test_configs_file = os.path.join(config_output_folder, f"{filename}.json")
-                output_file = os.path.join(output_folder, filename + ".txt")
+                output_file = os.path.join(output_folder, filename + ".json")
 
                 ff_init_configs["tensor_parallelism_degree"] = tp
                 ff_init_configs["pipeline_parallelism_degree"] = pp
@@ -98,7 +98,7 @@ def gen_spec_configs(prompt_file, output_folder, specinfer_model_pairs, parallel
                     + f"{tp}_tp_{pp}_pp"
                 )
                 test_configs_file = os.path.join(config_output_folder, f"{filename}.json")
-                output_file = os.path.join(output_folder, filename + ".txt")
+                output_file = os.path.join(output_folder, filename + ".json")
 
                 ff_init_configs["tensor_parallelism_degree"] = tp
                 ff_init_configs["pipeline_parallelism_degree"] = pp

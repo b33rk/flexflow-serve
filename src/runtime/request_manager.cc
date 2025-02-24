@@ -603,6 +603,13 @@ RequestGuid RequestManager::register_new_request(Request const &request_) {
   gr.input_tokens = request.tokens;
   gr.output_text = request_.prompt;
   gr.output_tokens = request.tokens;
+  if (model_type == ModelType::LLAMA && old_llama_tokenizer &&
+      request.add_special_tokens && request.tokens.at(0) == bos_token_id) {
+    // Unlike Huggingface, the sentencepiece C++ library automatically removes
+    // the BOS token
+    gr.input_text = "<s> " + gr.input_text;
+    gr.output_text = "<s> " + gr.output_text;
+  }
   request_generation_results[request.guid] = gr;
 
   ProfileInfo profile_info;
@@ -898,47 +905,30 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
   assert(request.req_type == RequestType::REQ_INFERENCE &&
          "Found misplaced finetuning request");
 
-  std::vector<int> output_tokens = request.tokens;
+  GenerationResult &gr = request_generation_results[request.guid];
+  std::vector<int> output_tokens = std::vector<int>(
+      request.tokens.begin() + gr.input_tokens.size(), request.tokens.end());
   if (is_eos_token(output_tokens.back())) {
     // remove the EOS token
     output_tokens.pop_back();
   }
-  std::string output = this->tokenizer_->Decode(output_tokens);
-  // Unlike Huggingface, the sentencepiece C++ library automatically
-  // removes the BOS token
-  if (model_type == ModelType::LLAMA && old_llama_tokenizer &&
-      request.add_special_tokens && output_tokens.at(0) == bos_token_id) {
-    output = "<s> " + output;
-  }
-  {
-    // update generation result
-    GenerationResult &gr = request_generation_results[request.guid];
-    assert(gr.guid == request.guid);
-    gr.output_tokens = request.tokens;
-    gr.output_text = output;
-  }
+  std::string output_text = this->tokenizer_->Decode(output_tokens);
+  // update generation result
+  assert(gr.guid == request.guid);
+  gr.output_tokens = output_tokens;
+  gr.output_text = output_text;
   request.status = Request::COMPLETED;
   trigger_request_completion_future(request.guid);
   log_req_mgr.print("[Done] guid(%zu) initial_len(%d) final_length(%zu)",
                     old_bc.requestsInfo[i].request_guid,
                     request.initial_len,
-                    output_tokens.size());
+                    gr.input_tokens.size() + gr.output_tokens.size());
   // log_req_mgr.print("Final output: %s", output.c_str());
   num_processed_requests++;
   ProfileInfo profile_info = profiling_requests[request.guid];
   profile_info.finish_time = Realm::Clock::current_time_in_microseconds();
   total_request_run_time += profile_info.finish_time - profile_info.start_time;
   profiling_requests[request.guid] = profile_info;
-  // log_req_mgr.print("[%s] guid(%zu) llm_decoding_steps(%d) initial_len(%d)
-  // final_len(%d) latency(%.1lf) ttft(%.1lf)",
-  //                   request.warmup ? "Warmup" : "Profile",
-  //                   request.guid,
-  //                   profile_info.llm_decoding_steps,
-  //                   request.initial_len,
-  //                   request.tokens.size(),
-  //                   (profile_info.finish_time - profile_info.start_time)/1e3,
-  //                   (profile_info.first_token_time -
-  //                   profile_info.registration_time)/1e3);
 }
 
 void RequestManager::add_continuing_inf_req_to_new_batch(
@@ -1138,35 +1128,6 @@ void RequestManager::handle_completed_finetuning_req(
                     request.peft_finetuning_info.completed_training_steps,
                     request.peft_finetuning_info.finetuning_losses.back(),
                     profile_info.finish_time - profile_info.start_time);
-  // if (!output_filepath.empty()) {
-  //   // std::ofstream outputFile(output_filepath, std::ios::app);
-  //   // if (outputFile.is_open()) {
-  //     // std::string tokens_str = "[";
-  //     // for (size_t i = 0; i < request.finetuning_tokens_per_batch.size();
-  //     //       i++) {
-  //     //   tokens_str +=
-  //     //       std::to_string(request.finetuning_tokens_per_batch[i]);
-  //     //   if (i != request.finetuning_tokens_per_batch.size() - 1) {
-  //     //     tokens_str += ", ";
-  //     //   }
-  //     // }
-  //     // tokens_str += "]";
-  //     // outputFile << "[" << (request.warmup ? "Warmup" : "Finetuning")
-  //     //             << "] guid(" << request.guid
-  //     //             << ") completed_training_steps("
-  //     //             << request.peft_finetuning_info.completed_training_steps
-  //     //             << ") processed_finetuning_tokens("
-  //     //             << request.processed_finetuning_tokens << ") latency("
-  //     //             << std::fixed << std::setprecision(3)
-  //     //             << (profile_info.finish_time - profile_info.start_time)
-  //     //             << ") tokens_per_batch(" << tokens_str << ")\n";
-  //     // outputFile.close();
-  //   } else {
-  //     std::cout << "Unable to open the output file: " << output_filepath
-  //               << std::endl;
-  //     assert(false);
-  //   }
-  // }
 }
 
 void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
@@ -1581,9 +1542,22 @@ BatchConfig
 }
 
 void RequestManager::save_output_to_json() {
-  if (!output_filepath.empty()) {
-    std::ofstream outputFile(output_filepath, std::ios::app);
+  auto toCSV = [](auto const &arr) -> std::string {
+    std::ostringstream oss;
+    for (size_t i = 0; i < arr.size(); i++) {
+      if constexpr (std::is_floating_point_v<decltype(arr[i])>) {
+        oss << std::fixed << std::setprecision(3) << arr[i];
+      } else {
+        oss << arr[i];
+      }
+      if (i != arr.size() - 1) {
+        oss << ",";
+      }
+    }
+    return oss.str();
+  };
 
+  if (!output_filepath.empty()) {
     // Extract keys and sort them in ascending order.
     std::vector<RequestGuid> sortedKeys;
     for (auto const &kv : request_generation_results) {
@@ -1599,12 +1573,15 @@ void RequestManager::save_output_to_json() {
       Request &request = all_requests[key];
       if (request.req_type == RequestType::REQ_INFERENCE) {
         json entry = {
-            {"guid", key},
+            {"req_idx", key - 1000000},
             {"warmup", request.warmup},
-
+            {"benchmarking tokens", request.benchmarking_tokens},
+            {"req_type", "inference"},
+            {"prompt_length", res.input_tokens.size()},
+            {"response_length", res.output_tokens.size()},
             {"max_length", request.max_length},
-            {"input_tokens", res.input_tokens},
-            {"output_tokens", res.output_tokens},
+            {"input_tokens", toCSV(res.input_tokens)},
+            {"output_tokens", toCSV(res.output_tokens)},
             {"prompt", res.input_text},
             {"response", res.output_text},
             {"num_decoding_steps", profile_info.llm_decoding_steps},
@@ -1616,23 +1593,27 @@ void RequestManager::save_output_to_json() {
         jsonList.push_back(entry);
       } else {
         json entry = {
-            {"guid", key},
+            {"req_idx", key - 1000000},
             {"warmup", request.warmup},
+            {"benchmarking tokens", request.benchmarking_tokens},
             {"req_type", "finetuning"},
             {"max_length", request.max_length},
             {"dataset_size", request.dataset.size()},
             {"completed_training_steps",
              request.peft_finetuning_info.completed_training_steps},
             {"finetuning_losses",
-             request.peft_finetuning_info.finetuning_losses},
+             toCSV(request.peft_finetuning_info.finetuning_losses)},
             {"latency",
              (profile_info.finish_time - profile_info.start_time) / 1e3}};
         jsonList.push_back(entry);
       }
     }
 
-    // Output the formatted JSON.
-    std::cout << jsonList.dump(2) << std::endl;
+    // Append the formatted JSON to the output_file.
+    std::ofstream outputFile(output_filepath, std::ios::app);
+    outputFile << jsonList.dump(2) << std::endl;
+    outputFile.close();
+    std::cout << "Output saved to " << output_filepath << std::endl;
   }
 }
 
@@ -1898,38 +1879,6 @@ BeamSearchBatchConfig
             profile_info.finish_time,
             profile_info.finish_time - profile_info.start_time);
 
-        // Write output to file if needed:
-        if (!output_filepath.empty()) {
-          std::ofstream outputFile(output_filepath, std::ios::app);
-          if (outputFile.is_open()) {
-            outputFile << "[Profile] guid(" << request.guid
-                       << ") llm_decoding_steps("
-                       << profile_info.llm_decoding_steps << ") latency("
-                       << std::fixed << std::setprecision(3)
-                       << (profile_info.finish_time - profile_info.start_time)
-                       << ")\n";
-            // outputFile << "end-to-end latency: " << std::fixed
-            //            << std::setprecision(3) << total_request_run_time
-            //            << std::endl;
-            // outputFile << "num decoding steps: "
-            //            << profile_info.llm_decoding_steps << std::endl;
-            outputFile << "token IDs: ";
-            for (int i = 0; i < request.tokens.size(); i++) {
-              outputFile << request.tokens[i];
-              if (i < request.tokens.size() - 1) {
-                outputFile << ",";
-              }
-            }
-            outputFile << std::endl;
-            outputFile << output;
-            outputFile.close();
-          } else {
-            std::cout << "Unable to open the output file: " << output_filepath
-                      << std::endl;
-            assert(false);
-          }
-        }
-
         // delete the old input tree from cache
         dfs_tree_inputs.erase(request.guid);
 
@@ -2173,6 +2122,20 @@ BeamSearchBatchConfig
               << std::endl;
     old_bc.print();
     new_bc.print();
+  }
+  if (new_bc.num_active_tokens() > BatchConfig::max_tokens_per_batch()) {
+    std::cout << "Error: new_bc.num_active_tokens() > "
+                 "BatchConfig::max_tokens_per_batch()"
+              << std::endl;
+    new_bc.print();
+    assert(false);
+  }
+  if (new_bc.num_active_requests() > BatchConfig::max_requests_per_batch()) {
+    std::cout << "Error: new_bc.num_active_requests() > "
+                 "BatchConfig::max_requests_per_batch()"
+              << std::endl;
+    new_bc.print();
+    assert(false);
   }
   return new_bc;
 }
@@ -2486,6 +2449,20 @@ BeamSearchBatchConfig
               << std::endl;
     old_bc.print();
     new_bc.print();
+  }
+  if (new_bc.num_active_tokens() > BatchConfig::max_tokens_per_batch()) {
+    std::cout << "Error: new_bc.num_active_tokens() > "
+                 "BatchConfig::max_tokens_per_batch()"
+              << std::endl;
+    new_bc.print();
+    assert(false);
+  }
+  if (new_bc.num_active_requests() > BatchConfig::max_requests_per_batch()) {
+    std::cout << "Error: new_bc.num_active_requests() > "
+                 "BatchConfig::max_requests_per_batch()"
+              << std::endl;
+    new_bc.print();
+    assert(false);
   }
   return new_bc;
 }
@@ -2810,6 +2787,20 @@ TreeVerifyBatchConfig RequestManager::prepare_next_batch_verify(
     }
   }
 
+  if (new_bc.num_active_tokens() > BatchConfig::max_tokens_per_batch()) {
+    std::cout << "Error: new_bc.num_active_tokens() > "
+                 "BatchConfig::max_tokens_per_batch()"
+              << std::endl;
+    new_bc.print();
+    assert(false);
+  }
+  if (new_bc.num_active_requests() > BatchConfig::max_requests_per_batch()) {
+    std::cout << "Error: new_bc.num_active_requests() > "
+                 "BatchConfig::max_requests_per_batch()"
+              << std::endl;
+    new_bc.print();
+    assert(false);
+  }
   return new_bc;
 }
 
