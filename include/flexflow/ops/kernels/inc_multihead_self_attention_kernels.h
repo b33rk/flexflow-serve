@@ -40,43 +40,37 @@ __global__ void apply_position_bias_qkprd(DT *input_ptr,
                                           int global_num_q_heads,
                                           int shard_id);
 
-#if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
 template <typename DT>
-__global__ void
-    apply_rotary_embedding(DT *input_ptr,
-                           cuFloatComplex *complex_input,
-                           BatchConfig::PerTokenInfo const *tokenInfos,
-                           int qProjSize,
-                           int kProjSize,
-                           int num_heads,
-                           int num_tokens,
-                           int num_kv_heads,
-                           int q_block_size,
-                           int k_block_size,
-                           int q_array_size,
-                           bool q_tensor);
-#elif defined(FF_USE_HIP_ROCM)
-template <typename DT>
-__global__ void
-    apply_rotary_embedding(DT *input_ptr,
-                           hipFloatComplex *complex_input,
-                           BatchConfig::PerTokenInfo const *tokenInfos,
-                           int qProjSize,
-                           int kProjSize,
-                           int num_heads,
-                           int num_tokens,
-                           int num_kv_heads,
-                           int q_block_size,
-                           int k_block_size,
-                           int q_array_size,
-                           bool q_tensor);
-#endif
+void run_batched_matmul(IncMultiHeadSelfAttentionMeta const *meta,
+                        cublasHandle_t handle,
+                        cublasOperation_t transa,
+                        cublasOperation_t transb,
+                        int m,
+                        int n,
+                        int k,
+                        void const *alpha,
+                        const DT *A,
+                        cudaDataType Atype,
+                        int lda,
+                        long long int strideA,
+                        const DT *B,
+                        cudaDataType Btype,
+                        int ldb,
+                        long long int strideB,
+                        void const *beta,
+                        DT *C,
+                        cudaDataType Ctype,
+                        int ldc,
+                        long long int strideC,
+                        int batchCount,
+                        cudaDataType computeType,
+                        cublasGemmAlgo_t algo,
+                        cudaStream_t stream,
+                        int batch_ratio_a = 1,
+                        int batch_ratio_b = 1,
+                        int batch_ratio_c = 1,
+                        bool bwd = false);
 
-template <typename DT>
-void pre_build_weight_kernel(IncMultiHeadSelfAttentionMeta const *m,
-                             GenericTensorAccessorR const weight,
-                             DataType data_type,
-                             ffStream_t stream);
 } // namespace IncMultiHeadAttention
 } // namespace Kernels
 } // namespace FlexFlow
