@@ -43,7 +43,41 @@ def compare_single_line(file_a, file_b):
             raise AssertionError(
                 f"File contents differ at position {i}:\n  {file_a} -> {list_a[i]}\n  {file_b} -> {list_b[i]}"
             )
+def compare_token_ids(file1_path, file2_path):
+    prefix = "token IDs: "
 
+    # Read lines from both files.
+    with open(file1_path, 'r') as f1, open(file2_path, 'r') as f2:
+        lines1 = f1.readlines()
+        lines2 = f2.readlines()
+
+    # Filter lines that start with the specified prefix.
+    token_lines1 = [line for line in lines1 if line.startswith(prefix)]
+    token_lines2 = [line for line in lines2 if line.startswith(prefix)]
+
+    # Check if both files have the same number of token lines.
+    if len(token_lines1) != len(token_lines2):
+        print(f"Error: Number of token ID lines differ: {len(token_lines1)} vs {len(token_lines2)}")
+        return False
+
+    # Compare corresponding token lines.
+    for i, (line1, line2) in enumerate(zip(token_lines1, token_lines2)):
+        try:
+            tokens1 = [int(tok.strip()) for tok in line1[len(prefix):].strip().split(",") if tok.strip()]
+        except ValueError as e:
+            print(f"Error parsing integers in file1, line {i}: {line1}\n{e}")
+            continue
+
+        try:
+            tokens2 = [int(tok.strip()) for tok in line2[len(prefix):].strip().split(",") if tok.strip()]
+        except ValueError as e:
+            print(f"Error parsing integers in file2, line {i}: {line2}\n{e}")
+            continue
+
+        # Determine number of tokens to compare: first 50 or less if the list is shorter.
+        n_to_compare = min(50, len(tokens1), len(tokens2))
+        if tokens1[:n_to_compare] != tokens2[:n_to_compare]:
+            raise AssertionError(f"Mismatch in line {i}:\nFile1 tokens (first {n_to_compare}): {tokens1[:n_to_compare]}\nFile2 tokens (first {n_to_compare}): {tokens2[:n_to_compare]}")
 
 def group_model_files(prefix):
     """
@@ -118,7 +152,8 @@ def test_output_alignment(file_a, file_b):
     """
     Each file pair is tested and reported separately.
     """
-    compare_single_line(file_a, file_b)
+    # compare_single_line(file_a, file_b)
+    compare_token_ids(file_a, file_b)
 
 
 

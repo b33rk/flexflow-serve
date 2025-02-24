@@ -18,7 +18,16 @@ CPP_INFERENCE_TESTS=${CPP_INFERENCE_TESTS:-OFF}
 rm -rf inference/prompt inference/output inference/inf_test_configs || true
 # Create test prompt file
 mkdir -p ./inference/prompt
-echo '["Three tips for staying healthy are: "]' > ./inference/prompt/test.json
+# echo '["Three tips for staying healthy are: "]' > ./inference/prompt/test.json
+sample_prompts='[
+  "The largest ocean on Earth is",
+  "The inventor of the telephone was",
+  "The speed of light is",
+  "The tallest mountain in the world is",
+  "The first man on the moon was"
+]'
+echo "$sample_prompts" > ./inference/prompt/test.json
+
 # Create output folder
 mkdir -p ./inference/output
 
