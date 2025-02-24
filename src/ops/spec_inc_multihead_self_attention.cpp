@@ -28,7 +28,8 @@ namespace FlexFlow {
 // declare Legion names
 using Legion::coord_t;
 using Legion::Memory;
-using namespace Kernels::IncMultiHeadAttention;
+
+#define WARP_SIZE 32
 
 namespace Kernels {
 namespace SpecIncMultiHeadSelfAttention {
@@ -65,13 +66,16 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
     DT const *value_cache,
     DT *output_ptr,
     float const scale,
-    int const max_seq_length,
+    int max_seq_length,
     int per_head_size,
-    int hidden_size,
+    int num_q_heads,
+    int num_kv_heads,
     BatchConfig::PerRequestInfo *request_infos,
     BeamSearchBatchConfig::BeamSearchPerRequestInfo *beam_request_infos,
     BatchConfig::BitMask *causalMask,
     bool *request_completed) {
+
+  int total_num_heads = num_q_heads + 2 * num_kv_heads;
 
   // q, k
   using Q_vec = typename VEC_K<DT, THREADS_PER_KEY>::Type;
@@ -90,7 +94,8 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
   int const tidx = threadIdx.x;
   // head id
   int const head_idx = blockIdx.x;
-  // nth request idx
+  int const kv_head_idx = head_idx / (num_q_heads / num_kv_heads);
+  // request idx
   int const request_idx = blockIdx.y;
 
   // request id in batch config
@@ -129,7 +134,7 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
   // first WARPS_PER_BLOCK for store qk_max, second WARPS_PER_BLOCK for sum
   __shared__ float red_smem[WARPS_PER_BLOCK * 2];
 
-  const DT *q_ptr = query + first_token_idx * hidden_size * QKV_WEIGHT_NUM +
+  const DT *q_ptr = query + first_token_idx * per_head_size * total_num_heads +
                     head_idx * per_head_size;
   __shared__ Q_vec q_vecs[THREADS_PER_KEY][K_VECS_PER_THREAD];
 
@@ -146,8 +151,11 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
   // The number of keys per warp.
   constexpr int K_PER_WARP = WARP_SIZE / THREADS_PER_KEY;
 
-  DT const *k_cache_batch =
-      key_cache + batch_config_request_id * max_seq_length * hidden_size + ki;
+  DT const *k_cache_batch = key_cache +
+                            batch_config_request_id *
+                                (per_head_size * num_kv_heads) *
+                                max_seq_length +
+                            ki;
 
   int ti_end =
       div_up(totalCacheSize - first_step, K_PER_WARP) * K_PER_WARP + first_step;
@@ -156,7 +164,7 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
 #pragma unroll
     for (int ii = 0; ii < K_VECS_PER_THREAD; ++ii) {
       q_vecs[ki_o][ii] = *reinterpret_cast<Q_vec const *>(
-          q_ptr + (hidden_size * QKV_WEIGHT_NUM * qi) + ki +
+          q_ptr + (per_head_size * total_num_heads * qi) + ki +
           ii * THREADS_PER_KEY * K_VEC_SIZE);
     }
 
@@ -173,8 +181,8 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
         if (ti < totalCacheSize) {
 
           k[ii] = *reinterpret_cast<K_vec const *>(
-              k_cache_batch + ti_circ * hidden_size + head_idx * per_head_size +
-              jj);
+              k_cache_batch + ti_circ * (per_head_size * num_kv_heads) +
+              kv_head_idx * per_head_size + jj);
         }
       }
       float qk = scale * Qk_dot<DT, THREADS_PER_KEY>::dot(q_vecs[ki_o], k);
@@ -270,16 +278,19 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
     zero(out);
 
     // The base pointer for the value in the cache buffer.
-    DT const *v_cache_batch =
-        value_cache + batch_config_request_id * max_seq_length * hidden_size +
-        vi;
+    DT const *v_cache_batch = value_cache +
+                              batch_config_request_id * max_seq_length *
+                                  (per_head_size * num_kv_heads) +
+                              vi;
 
     if (Dh == Dh_MAX || vi < Dh) {
       for (int ti = first_step + vo; ti < totalCacheSize; ti += V_PER_ITER) {
         // Load the values from the cache.
         int const ti_circ = ti % max_seq_length;
+
         V_vec v = *reinterpret_cast<V_vec const *>(
-            v_cache_batch + ti_circ * hidden_size + head_idx * per_head_size);
+            v_cache_batch + ti_circ * (per_head_size * num_kv_heads) +
+            kv_head_idx * per_head_size);
 
         bool const mask = (ti >= bitmask.non_tree_cache_size &&
                            (!(bitmask.mask[ti - bitmask.non_tree_cache_size] &
@@ -320,10 +331,12 @@ __global__ void compute_spec_inc_attention_kernel_generation_kernel(
 
     // Output the final values.
     if (vo == 0 && (Dh == Dh_MAX || vi < Dh)) {
-      convert_from_float(*reinterpret_cast<V_vec *>(
-                             output_ptr + (first_token_idx + qi) * hidden_size +
-                             head_idx * per_head_size + vi),
-                         out);
+      convert_from_float(
+          *reinterpret_cast<V_vec *>(output_ptr +
+                                     (first_token_idx + qi) *
+                                         (per_head_size * num_q_heads) +
+                                     head_idx * per_head_size + vi),
+          out);
     }
   }
 }
@@ -338,42 +351,40 @@ __global__ void spec_inc_store_kv_cache(
     BeamSearchBatchConfig::BeamSearchPerTokenInfo *beamTokenInfos,
     BeamSearchBatchConfig::BeamSearchPerRequestInfo *beamRequestInfos,
     BatchConfig::BitMask *causalMask,
-    int qProjSize,
-    int kProjSize,
-    int vProjSize,
+    bool is_root,
     int num_tokens,
     int max_seq_len,
-    bool is_root,
-    int hidden_size) {
-  CUDA_KERNEL_LOOP(i, num_tokens * hidden_size) {
-    int token_idx = i / (hidden_size);
-    int offset = i % hidden_size;
+    int head_dim,
+    int num_q_heads,
+    int num_kv_heads) {
+  CUDA_KERNEL_LOOP(i, num_tokens * head_dim * num_kv_heads) {
+    // devQKVProjArray: [head_dim, tot_num_heads, num_tokens]
+    // kCache_ptr: [head_dim, num_kv_heads, max_seq_len, max_batch_size]
+    // vCache_ptr: [head_dim, num_kv_heads, max_seq_len, max_batch_size]
+    int token_idx = i / (head_dim * num_kv_heads);
+    int head_idx = (i / head_dim) % num_kv_heads;
+    int offset = i % head_dim;
 
-    size_t val_idx =
-        token_idx * QKV_WEIGHT_NUM * hidden_size + hidden_size + offset;
-
-    DT kVal = devQKVProjArray[val_idx];
-    DT vVal = devQKVProjArray[val_idx + hidden_size];
+    int tot_num_heads = num_q_heads + 2 * num_kv_heads;
+    int key_src_idx = token_idx * head_dim * tot_num_heads +
+                      head_dim * num_q_heads + head_dim * head_idx + offset;
+    int val_src_idx = key_src_idx + head_dim * num_kv_heads;
 
     int const req_id = tokenInfos[token_idx].request_index;
     // int const tok_id = tokenInfos[token_idx].abs_depth_in_request;
 
     int const request_token_offset =
         requestInfo[req_id].first_token_offset_in_batch;
-
     BatchConfig::BitMask bitmask = causalMask[req_id];
-
-    // if prompt token -> token id
-    // if tree token:
-
     int const cache_idx = bitmask.prompt_size + bitmask.non_tree_cache_size +
                           bitmask.tree_size - 1 - bitmask.this_layer_size +
                           token_idx - request_token_offset;
+    int dst_idx = req_id * (head_dim * num_kv_heads * max_seq_len) +
+                  cache_idx * head_dim * num_kv_heads + head_idx * head_dim +
+                  offset;
 
-    kCache_ptr[req_id * (hidden_size * max_seq_len) + (cache_idx)*hidden_size +
-               offset] = kVal;
-    vCache_ptr[req_id * (hidden_size * max_seq_len) + (cache_idx)*hidden_size +
-               offset] = vVal;
+    kCache_ptr[dst_idx] = devQKVProjArray[key_src_idx];
+    vCache_ptr[dst_idx] = devQKVProjArray[val_src_idx];
   }
 }
 
@@ -382,9 +393,13 @@ void update_kv_cache_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
                             BeamSearchBatchConfig const *bc,
                             hipStream_t stream) {
   int num_tokens = bc->num_active_tokens();
+  int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
+  assert(m->hidden_size % m->num_q_heads == 0);
+  int head_dim = m->hidden_size / m->num_q_heads;
+  assert(head_dim == m->qProjSize);
   int curr_depth = bc->beamRequestsInfo[0].current_depth;
   if (num_tokens > 0) {
-    int parallelism = m->hidden_size * KV_WEIGHT_NUM * num_tokens;
+    int parallelism = head_dim * tot_num_heads * num_tokens;
     hipLaunchKernelGGL(HIP_KERNEL_NAME(spec_inc_store_kv_cache<DT>),
                        GET_BLOCKS(parallelism),
                        min(CUDA_NUM_THREADS, parallelism),
@@ -398,14 +413,13 @@ void update_kv_cache_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
                        m->beam_token_infos,
                        m->beam_request_infos,
                        m->causalMask,
-                       m->qProjSize,
-                       m->kProjSize,
-                       m->vProjSize,
+                       /*root*/ curr_depth == 0,
                        num_tokens,
                        BatchConfig::max_sequence_length() +
                            BatchConfig::max_spec_tree_token_num(),
-                       /*root*/ curr_depth == 0,
-                       m->hidden_size);
+                       head_dim,
+                       m->num_q_heads,
+                       m->num_kv_heads);
   }
 }
 
@@ -431,7 +445,8 @@ void update_kv_cache_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
           BatchConfig::max_sequence_length() +                                 \
               BatchConfig::max_spec_tree_token_num(),                          \
           m->qProjSize,                                                        \
-          m->hidden_size,                                                      \
+          m->num_q_heads,                                                      \
+          m->num_kv_heads,                                                     \
           m->request_infos,                                                    \
           m->beam_request_infos,                                               \
           m->causalMask,                                                       \
@@ -483,7 +498,7 @@ template <typename DT>
 void compute_attention_kernel_prompt(SpecIncMultiHeadSelfAttentionMeta const *m,
                                      BeamSearchBatchConfig const *bc,
                                      int shard_id,
-                                     DT *output_ptr,
+                                     DT *attn_heads,
                                      hipStream_t stream) {
   checkCUDA(hipblasSetStream(m->handle.blas, stream));
   checkCUDNN(miopenSetStream(m->handle.dnn, stream));
@@ -492,209 +507,259 @@ void compute_attention_kernel_prompt(SpecIncMultiHeadSelfAttentionMeta const *m,
   assert(data_type_size(m->output_type[0]) == sizeof(DT));
   hipblasDatatype_t compute_type = hipblas_data_type;
 
-  int num_tokens = bc->num_active_tokens();
-  int tokens_previous_requests = 0;
-  int tokens_prev_requests_squares = 0;
-  int q_block_size = m->qProjSize;
+  assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
+  int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
+  int max_seq_len = BatchConfig::max_sequence_length() +
+                    BatchConfig::max_spec_tree_token_num();
 
-  int kt_block_size = m->kProjSize;
-  int kt_req_block_size = kt_block_size * m->num_q_heads *
-                          (BatchConfig::max_sequence_length() +
-                           BatchConfig::max_spec_tree_token_num());
-  int vt_block_size = m->vProjSize;
-  int vt_req_block_size = vt_block_size * m->num_q_heads *
-                          (BatchConfig::max_sequence_length() +
-                           BatchConfig::max_spec_tree_token_num());
-  assert(m->qProjSize == m->kProjSize);
-
-  for (int i = 0; i < bc->max_requests_per_batch(); i++) {
-    if (bc->request_completed[i] || (!bc->requestsInfo[i].prompt_phase) ||
-        (bc->requestsInfo[i].num_tokens_in_batch == 0)) {
-      continue;
-    } else if (tokens_previous_requests < bc->num_generation_tokens) {
-      tokens_previous_requests += bc->requestsInfo[i].num_tokens_in_batch;
+  int num_processed_prompt_tokens = 0;
+  for (int req_idx = 0; req_idx < bc->max_requests_per_batch(); req_idx++) {
+    if (bc->request_completed[req_idx] ||
+        (!bc->requestsInfo[req_idx].prompt_phase) ||
+        (bc->requestsInfo[req_idx].num_tokens_in_batch == 0)) {
       continue;
     }
 
     // all requests in prompt phase should only have one sub requests;
-    assert(bc->sub_requests[i] == 1);
-    // int num_new_tokens = bc->num_processing_tokens[i];
-    // int total_tokens = bc->token_last_available_idx[i] + 1;
+    assert(bc->sub_requests[req_idx] == 1);
 
-    int num_new_tokens = bc->requestsInfo[i].num_tokens_in_batch;
-    int total_tokens = bc->requestsInfo[i].first_token_depth_in_request +
-                       bc->requestsInfo[i].num_tokens_in_batch;
+    int num_new_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
+    int total_tokens = bc->requestsInfo[req_idx].first_token_depth_in_request +
+                       bc->requestsInfo[req_idx].num_tokens_in_batch;
 
     if (num_new_tokens <= 0) {
       continue;
     }
 
-    // Compute (QK^T/sqrt(d_k))
-    int m_ = num_new_tokens;
-    int n = total_tokens;
-    int k = m->qProjSize;
-    int lda = k * m->num_q_heads * QKV_WEIGHT_NUM, ldb = k * m->num_q_heads,
-        ldc = m_;
-    int strideA = q_block_size;
-    int strideB = kt_block_size;
-    int strideC = num_new_tokens * total_tokens;
+    // Step 1: compute query-key product QK.T/sqrt(d_k)
+    {
+      // Scale by sqrt(d_k) as per the original attention paper
+      DT alpha = 1.0f, beta = 0.0f;
+      if (*m->qk_prod_scaling) {
+        alpha = static_cast<DT>(1.0f / sqrt(m->kProjSize));
+      }
+      // after transpositions
+      int m_ = num_new_tokens;
+      int n = total_tokens;
+      int k = m->qProjSize;
+      // before transpositions
+      int lda = m->qProjSize * tot_num_heads;
+      int ldb = m->kProjSize * m->num_kv_heads;
+      int ldc = num_new_tokens;
+      // N.B. strides are applied before transpose operations
+      int strideA = m->qProjSize;
+      int strideB = m->kProjSize;
+      int strideC = num_new_tokens * total_tokens;
 
-    // a flag of using this scaling alpha
-    DT alpha = 1.0f, beta = 0.0f;
-    if (*m->qk_prod_scaling) {
-      alpha = static_cast<DT>(1.0f / sqrt(m->kProjSize));
+      // matrix A: devQKVProjArray
+      // matrix A's layout: [qProjSize, tot_num_heads, num_new_tokens]
+      // To get query projection, skip over Q entries from previous requests
+      DT const *A = static_cast<DT *>(m->devQKVProjArray) +
+                    bc->requestsInfo[req_idx].first_token_offset_in_batch *
+                        m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads);
+      // matrix B: key cache
+      // matrix B's layout: [kProjSize, num_kv_heads, total_tokens]
+      // To get B, skip over K entries from previous requests (all heads +
+      // padding)
+      DT const *B = static_cast<DT *>(m->keyCache) +
+                    req_idx * (m->kProjSize * m->num_kv_heads * max_seq_len);
+      // matrix C: qk_prods (current req only)
+      // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
+      DT *C = static_cast<DT *>(m->qk_prods);
+      Kernels::IncMultiHeadAttention::run_batched_matmul<DT>(
+          m,
+          m->handle.blas,
+          HIPBLAS_OP_T,
+          HIPBLAS_OP_N,
+          m_,
+          n,
+          k,
+          &alpha,
+          A,
+          hipblas_data_type,
+          lda,
+          strideA,
+          B,
+          hipblas_data_type,
+          ldb,
+          strideB,
+          &beta,
+          C,
+          hipblas_data_type,
+          ldc,
+          strideC,
+          m->num_q_heads,
+          compute_type,
+          HIPBLAS_GEMM_DEFAULT,
+          stream,
+          1,
+          m->num_q_heads / m->num_kv_heads,
+          1);
     }
-    // To get A, skip over Q entries from previous requests (same head)
-    DT const *A = static_cast<DT *>(m->devQKVProjArray) +
-                  bc->requestsInfo[i].first_token_offset_in_batch *
-                      m->qProjSize * m->num_q_heads * QKV_WEIGHT_NUM;
-    DT const *B = static_cast<DT *>(m->keyCache) + i * kt_req_block_size;
-    DT *C = static_cast<DT *>(m->qk_prods);
 
-    checkCUDA(hipblasGemmStridedBatchedEx(m->handle.blas,
-                                          HIPBLAS_OP_T,
-                                          HIPBLAS_OP_N,
-                                          m_,
-                                          n,
-                                          k,
-                                          &alpha,
-                                          A,
-                                          hipblas_data_type,
-                                          lda,
-                                          strideA,
-                                          B,
-                                          hipblas_data_type,
-                                          ldb,
-                                          strideB,
-                                          &beta,
-                                          C,
-                                          hipblas_data_type,
-                                          ldc,
-                                          strideC,
-                                          m->num_q_heads,
-                                          compute_type,
-                                          HIPBLAS_GEMM_DEFAULT));
-
-    // add alibi position bias to qk production
-    if (*m->position_bias) {
-      size_t parallelism = m->num_q_heads * total_tokens * num_new_tokens;
-      hipLaunchKernelGGL(HIP_KERNEL_NAME(apply_position_bias_qkprd<DT>),
-                         GET_BLOCKS(parallelism),
-                         min((size_t)CUDA_NUM_THREADS, parallelism),
-                         0,
-                         stream,
-                         C,
-                         num_new_tokens,
-                         total_tokens,
-                         m->num_q_heads,
-                         m->global_num_q_heads,
-                         shard_id);
+    // Step 2: Add alibi position bias to qk production
+    {
+      // matrix C: qk_prods (current req only)
+      // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
+      DT *C = static_cast<DT *>(m->qk_prods);
+      if (*m->position_bias) {
+        size_t parallelism = m->num_q_heads * total_tokens * num_new_tokens;
+        hipLaunchKernelGGL(
+            HIP_KERNEL_NAME(
+                Kernels::IncMultiHeadAttention::apply_position_bias_qkprd<DT>),
+            GET_BLOCKS(parallelism),
+            min((size_t)CUDA_NUM_THREADS, parallelism),
+            0,
+            stream,
+            C,
+            num_new_tokens,
+            total_tokens,
+            m->num_q_heads,
+            m->global_num_q_heads,
+            shard_id);
+      }
     }
-    // Fill all elements above diagonal in qk prods with -inf to force
-    // causal attention.
-    assert(num_new_tokens <= total_tokens);
-    if (num_new_tokens > 1) {
-      size_t parallelism = m->num_q_heads * num_new_tokens * total_tokens;
-      hipLaunchKernelGGL(HIP_KERNEL_NAME(spec_fill_entries_above_diagonal<DT>),
-                         GET_BLOCKS(parallelism),
-                         min((size_t)CUDA_NUM_THREADS, parallelism),
-                         0,
-                         stream,
-                         C,
-                         num_new_tokens,
-                         total_tokens,
-                         m->num_q_heads,
-                         static_cast<DT>(-INFINITY));
+
+    // Step 3: Apply causal mask. Fill all elements above diagonal in qk prods
+    // with -inf to force causal attention.
+    {
+      assert(num_new_tokens <= total_tokens);
+      if (num_new_tokens > 1) {
+        // matrix C: qk_prods (current req only)
+        // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
+        DT *C = static_cast<DT *>(m->qk_prods);
+        size_t parallelism = m->num_q_heads * num_new_tokens * total_tokens;
+        hipLaunchKernelGGL(
+            HIP_KERNEL_NAME(spec_fill_entries_above_diagonal<DT>),
+            GET_BLOCKS(parallelism),
+            min((size_t)CUDA_NUM_THREADS, parallelism),
+            0,
+            stream,
+            C,
+            num_new_tokens,
+            total_tokens,
+            m->num_q_heads,
+            static_cast<DT>(-INFINITY));
+      }
     }
-    // Compute Softmax(QK^T/sqrt(d_k))
-    // Before modifying the parameters below, make sure to read the following
-    // description of the CUDNN_TENSOR_NCHW tensor layout, from
-    // https://docs.nvidia.com/deeplearning/cudnn/api/index.html#cudnnTensorFormat_t:
-    // This tensor format specifies that the data is laid out in the following
-    // order: batch size, feature maps, rows, columns. The strides are
-    // implicitly defined in such a way that the data are contiguous in memory
-    // with no padding between images, feature maps, rows, and columns; the
-    // columns are the inner dimension and the images are the outermost
-    // dimension.
-    int n_param = m->num_q_heads;
-    int c_param = total_tokens;
-    int h_param = 1;
-    int w_param = num_new_tokens;
-    checkCUDNN(miopenSet4dTensorDescriptor(
-        m->qk_tensor, miopen_data_type, n_param, c_param, h_param, w_param));
-    float softmax_alpha = 1.0f, softmax_beta = 0.0f;
-    DT *C_softmax = static_cast<DT *>(m->qk_prods_softmax) +
-                    m->num_q_heads * tokens_prev_requests_squares;
-    // The softmax operation below is executed according to the
-    // CUDNN_SOFTMAX_MODE_CHANNEL, which is also described in the docs: The
-    // softmax operation is computed per spatial location (H,W) per image (N)
-    // across dimension C.
-    checkCUDNN(miopenSoftmaxForward_V2(m->handle.dnn,
-                                       &softmax_alpha,
-                                       m->qk_tensor,
-                                       C,
-                                       &softmax_beta,
-                                       m->qk_tensor,
-                                       C_softmax,
-                                       MIOPEN_SOFTMAX_ACCURATE,
-                                       MIOPEN_SOFTMAX_MODE_CHANNEL));
-    // Matmul softmax(QK^T/sqrt(d_k)) by V
-    alpha = 1.0f, beta = 0.0f;
-    m_ = m->vProjSize;
-    n = num_new_tokens;
-    k = total_tokens;
-    lda = m_ * m->num_q_heads, ldb = n, ldc = m_ * m->num_q_heads;
-    strideA = vt_block_size;
-    strideB = num_new_tokens * total_tokens;
-    strideC = m->vProjSize;
-    // To get A, skip over V^T entries from previous requests (all heads +
-    // padding)
-    A = static_cast<DT *>(m->valueCache) + i * vt_req_block_size;
-    // To get B, skip over softmax(QK^T/sqrt(d_k)) entries from previous
-    // requests (all heads)
-    B = C_softmax;
-    // To get C, skip over softmax(QK^T/sqrt(d_k))V products from previous
-    // requests
+    // Step 4: Compute Softmax(QK.T/sqrt(d_k))
+    {
+      // Compute Softmax(QK^T/sqrt(d_k))
+      // Before modifying the parameters below, make sure to read the following
+      // description of the CUDNN_TENSOR_NCHW tensor layout, from
+      // https://docs.nvidia.com/deeplearning/cudnn/api/index.html#cudnnTensorFormat_t:
+      // This tensor format specifies that the data is laid out in the following
+      // order: batch size, feature maps, rows, columns. The strides are
+      // implicitly defined in such a way that the data are contiguous in memory
+      // with no padding between images, feature maps, rows, and columns; the
+      // columns are the inner dimension and the images are the outermost
+      // dimension.
+      int n_param = m->num_q_heads;
+      int c_param = total_tokens;
+      int h_param = 1;
+      int w_param = num_new_tokens;
+      checkCUDNN(miopenSet4dTensorDescriptor(
+          m->qk_tensor, miopen_data_type, n_param, c_param, h_param, w_param));
+      float softmax_alpha = 1.0f, softmax_beta = 0.0f;
+      // matrix C: qk_prods (current req only)
+      // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
+      DT *C = static_cast<DT *>(m->qk_prods);
+      // matrix C_softmax: qk_prods_softmax (current req only)
+      // matrix C_softmax's layout: [num_new_tokens, total_tokens, num_q_heads]
+      DT *C_softmax = static_cast<DT *>(m->qk_prods_softmax);
+      // The softmax operation below is executed according to the
+      // CUDNN_SOFTMAX_MODE_CHANNEL, which is also described in the docs: The
+      // softmax operation is computed per spatial location (H,W) per image (N)
+      // across dimension C.
+      checkCUDNN(miopenSoftmaxForward_V2(m->handle.dnn,
+                                         &softmax_alpha,
+                                         m->qk_tensor,
+                                         C,
+                                         &softmax_beta,
+                                         m->qk_tensor,
+                                         C_softmax,
+                                         MIOPEN_SOFTMAX_ACCURATE,
+                                         MIOPEN_SOFTMAX_MODE_CHANNEL));
+    }
 
-    int token_offset = bc->requestsInfo[i].first_token_offset_in_batch;
+    // Step 5: Matmul softmax(QK.T/sqrt(d_k)) by V. Implemented as V @
+    // softmax(QK.T/sqrt(d_k)).T
+    {
+      DT alpha = 1.0f, beta = 0.0f;
+      // after transpositions
+      int m_ = m->vProjSize;
+      int n = num_new_tokens;
+      int k = total_tokens;
+      // before transpositions
+      int lda = m_ * m->num_kv_heads;
+      int ldb = n;
+      int ldc = m_ * m->num_q_heads;
+      // N.B. strides are applied before transpose operations
+      int strideA = m->vProjSize;
+      int strideB = num_new_tokens * total_tokens;
+      int strideC = m->vProjSize;
+      // matrix A: value cache
+      // matrix A's layout: [vProjSize, num_kv_heads, total_tokens]
+      // To get A, skip over V.T entries from previous requests (all heads +
+      // padding)
+      DT *A = static_cast<DT *>(m->valueCache) +
+              req_idx * (m->vProjSize * m->num_kv_heads * max_seq_len);
+      // matrix B: qk_prods_softmax (current req only)
+      // matrix B's layout: [num_new_tokens, total_tokens, num_q_heads]
+      // To get B, skip over softmax(QK.T/sqrt(d_k)) entries from previous
+      // requests (all heads)
+      DT *B = static_cast<DT *>(m->qk_prods_softmax);
+      // matrix C: attn heads
+      // matrix C's layout: [vProjSize, num_q_heads, num_new_tokens]
+      // To get C, skip over softmax(QK.T/sqrt(d_k))V products from previous
+      // requests
+      // store the result attn heads, also skip the genration tokens
+      DT *C = static_cast<DT *>(attn_heads) +
+              (bc->requestsInfo[req_idx].first_token_offset_in_batch) *
+                  m->num_q_heads * m->vProjSize;
+      Kernels::IncMultiHeadAttention::run_batched_matmul<DT>(
+          m,
+          m->handle.blas,
+          HIPBLAS_OP_N,
+          HIPBLAS_OP_T,
+          m_,
+          n,
+          k,
+          &alpha,
+          A,
+          hipblas_data_type,
+          lda,
+          strideA,
+          B,
+          hipblas_data_type,
+          ldb,
+          strideB,
+          &beta,
+          C,
+          hipblas_data_type,
+          ldc,
+          strideC,
+          m->num_q_heads,
+          compute_type,
+          HIPBLAS_GEMM_DEFAULT,
+          stream,
+          m->num_q_heads / m->num_kv_heads,
+          1,
+          1);
+    }
 
-    C = static_cast<DT *>(m->attn_heads) +
-        (token_offset)*m->num_q_heads * m->vProjSize;
-    checkCUDA(hipblasGemmStridedBatchedEx(m->handle.blas,
-                                          HIPBLAS_OP_N,
-                                          HIPBLAS_OP_T,
-                                          m_,
-                                          n,
-                                          k,
-                                          &alpha,
-                                          A,
-                                          hipblas_data_type,
-                                          lda,
-                                          strideA,
-                                          B,
-                                          hipblas_data_type,
-                                          ldb,
-                                          strideB,
-                                          &beta,
-                                          C,
-                                          hipblas_data_type,
-                                          ldc,
-                                          strideC,
-                                          m->num_q_heads,
-                                          compute_type,
-                                          HIPBLAS_GEMM_DEFAULT));
-
-    tokens_previous_requests += num_new_tokens;
-    tokens_prev_requests_squares += num_new_tokens * total_tokens;
+    num_processed_prompt_tokens += num_new_tokens;
   }
 
-  if (tokens_previous_requests != (num_tokens - bc->num_generation_tokens)) {
+  if (num_processed_prompt_tokens !=
+      (bc->num_active_tokens() - bc->num_generation_tokens)) {
     bc->print();
-    printf("tokens_previous_requests: %i\n", tokens_previous_requests);
-    printf("num_tokens: %i\n", num_tokens);
+    printf("num_processed_prompt_tokens: %i\n", num_processed_prompt_tokens);
+    printf("bc->num_active_tokens(): %i\n", bc->num_active_tokens());
     printf("bc->num_generation_tokens: %i\n", bc->num_generation_tokens);
   }
-  assert(tokens_previous_requests == (num_tokens - bc->num_generation_tokens));
+  assert(num_processed_prompt_tokens ==
+         (bc->num_active_tokens() - bc->num_generation_tokens));
 }
 
 template <typename DT>
@@ -705,41 +770,30 @@ void inference_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
                       DT *output_ptr,
                       hipStream_t stream) {
 
-  // phase 0: copy calculated qkv into devQKVProjArray
-  // [qProjSize, num_heads, 3, num_new_tokens]
-  size_t qkv_proj_size =
-      m->qProjSize * m->num_q_heads * QKV_WEIGHT_NUM * bc->num_active_tokens();
+  // devQKVProjArray: [head_dim, tot_num_heads, num_tokens]
+  assert(m->qProjSize == m->kProjSize && m->qProjSize == m->vProjSize);
+  size_t tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
+  size_t qkv_proj_size = m->qProjSize * tot_num_heads * bc->num_active_tokens();
 
-  checkCUDA(hipMemcpyAsync(
-      m->devQKVProjArray,
-      qkv_ptr,
-      qkv_proj_size * sizeof(DT), // is this right, do we need layers etc here
-      hipMemcpyDeviceToDevice,
-      stream));
-  // phase 1: Implement kernel to compute KQV for input tokens
-  // TODO WARNING: this is commented out only because we are fixing the inc_attn
-  // first
-  apply_scaling_and_rotary(
+  checkCUDA(hipMemcpyAsync(m->devQKVProjArray,
+                           qkv_ptr,
+                           qkv_proj_size * sizeof(DT),
+                           hipMemcpyDeviceToDevice,
+                           stream));
+
+  // phase 1: Apply scaling and rotary embedding
+  Kernels::IncMultiHeadAttention::apply_scaling_and_rotary(
       m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), stream);
+
   // phase 2: Update key/val cache
   update_kv_cache_kernel<DT>(m, bc, stream);
+
   if (bc->num_generation_tokens > 0) {
-    compute_spec_inc_attention_kernel_generation<DT>(
-        m, bc, static_cast<DT *>(m->attn_heads), stream);
+    compute_spec_inc_attention_kernel_generation<DT>(m, bc, output_ptr, stream);
   }
-  // phase 3: Compute attention score
-  // 3 kernels for pahse 3: matmul1 - softmax - matmal2
   if (bc->num_tokens > bc->num_generation_tokens) {
     compute_attention_kernel_prompt(m, bc, shard_id, output_ptr, stream);
   }
-
-  int num_tokens = bc->num_active_tokens();
-
-  checkCUDA(hipMemcpyAsync(output_ptr,
-                           m->attn_heads,
-                           m->oProjSize * num_tokens * sizeof(DT),
-                           hipMemcpyDeviceToDevice,
-                           stream));
 }
 
 } // namespace SpecIncMultiHeadSelfAttention

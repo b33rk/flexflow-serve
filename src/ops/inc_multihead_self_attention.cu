@@ -1114,7 +1114,6 @@ void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
   int parallelism = m->kProjSize * num_tokens * m->num_q_heads;
 
   if (m->scaling_query) {
-    int parallelism = m->qProjSize * m->num_q_heads * num_tokens;
     scaling_query_kernel<<<GET_BLOCKS(parallelism),
                            min(CUDA_NUM_THREADS, parallelism),
                            0,
