@@ -40,6 +40,7 @@ __global__ void apply_position_bias_qkprd(DT *input_ptr,
                                           int global_num_q_heads,
                                           int shard_id);
 
+#if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
 template <typename DT>
 void run_batched_matmul(IncMultiHeadSelfAttentionMeta const *meta,
                         cublasHandle_t handle,
@@ -70,6 +71,38 @@ void run_batched_matmul(IncMultiHeadSelfAttentionMeta const *meta,
                         int batch_ratio_b = 1,
                         int batch_ratio_c = 1,
                         bool bwd = false);
+#else
+template <typename DT>
+void run_batched_matmul(IncMultiHeadSelfAttentionMeta const *meta,
+                        hipblasHandle_t handle,
+                        hipblasOperation_t transa,
+                        hipblasOperation_t transb,
+                        int m,
+                        int n,
+                        int k,
+                        void const *alpha,
+                        const DT *A,
+                        hipblasDatatype_t Atype,
+                        int lda,
+                        long long int strideA,
+                        const DT *B,
+                        hipblasDatatype_t Btype,
+                        int ldb,
+                        long long int strideB,
+                        void const *beta,
+                        DT *C,
+                        hipblasDatatype_t Ctype,
+                        int ldc,
+                        long long int strideC,
+                        int batchCount,
+                        hipblasDatatype_t computeType,
+                        hipblasGemmAlgo_t algo,
+                        hipStream_t stream,
+                        int batch_ratio_a = 1,
+                        int batch_ratio_b = 1,
+                        int batch_ratio_c = 1,
+                        bool bwd = false);
+#endif
 
 } // namespace IncMultiHeadAttention
 } // namespace Kernels
