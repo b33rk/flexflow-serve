@@ -19,12 +19,19 @@ rm -rf inference/prompt inference/output inference/inf_test_configs || true
 # Create test prompt file
 mkdir -p ./inference/prompt
 # echo '["Three tips for staying healthy are: "]' > ./inference/prompt/test.json
+# sample_prompts='[
+#   "The largest ocean on Earth is",
+#   "The inventor of the telephone was",
+#   "The speed of light is",
+#   "The tallest mountain in the world is",
+#   "The first man on the moon was"
+# ]'
 sample_prompts='[
-  "The largest ocean on Earth is",
-  "The inventor of the telephone was",
-  "The speed of light is",
-  "The tallest mountain in the world is",
-  "The first man on the moon was"
+    "In the year 2075, artificial intelligence has become deeply integrated into every aspect of human life. Autonomous robots manage infrastructure, AI-powered doctors perform complex surgeries with unmatched precision, and personalized AI assistants anticipate people's needs before they even express them. Despite these advancements, ethical concerns continue to grow. One of the most pressing debates surrounding AI development in this era is whether",
+    "The rapid development of space exploration has led humanity to establish permanent settlements beyond Earth. With bases on the Moon and Mars, scientists and engineers work tirelessly to create sustainable ecosystems that can support human life in the long term. However, numerous challenges remain, from radiation exposure to psychological effects of isolation in deep space. One of the most critical issues that must be addressed before humanity can expand further into the solar system is",
+    "Throughout history, scientific discoveries have continuously reshaped our understanding of the universe. The shift from a geocentric to a heliocentric model, the theory of relativity, and the advent of quantum mechanics have all challenged previous assumptions and opened new frontiers of knowledge. As we continue to explore the cosmos, scientists are now focused on solving one of the most perplexing mysteries of all: the nature of dark matter and dark energy. If researchers were to uncover definitive proof regarding their existence, it could mean that",
+    "The emergence of advanced genetic engineering techniques has revolutionized modern medicine, allowing scientists to edit DNA with unprecedented precision. With technologies like CRISPR, researchers have already corrected genetic mutations that cause severe diseases and are even exploring the potential of enhancing human traits such as intelligence and longevity. However, this progress raises profound ethical concerns, as the ability to manipulate the human genome could lead to unforeseen consequences. One of the major dilemmas in the future of genetic engineering revolves around",
+    "Climate change has become the defining challenge of the 21st century, with rising global temperatures, extreme weather events, and melting ice caps threatening ecosystems and human populations worldwide. Scientists and policymakers are racing against time to develop sustainable solutions, from carbon capture technologies to alternative energy sources like nuclear fusion. Despite these efforts, one of the biggest obstacles to achieving global climate stability is the fact that"
 ]'
 echo "$sample_prompts" > ./inference/prompt/test.json
 
