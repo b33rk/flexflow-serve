@@ -301,8 +301,9 @@ class LLM:
         If not, or if the refresh_cache parameter is set to True, download new weights and convert them.
         """
 
-        # TODO: edit this to download the weights using snapshot_download and convert them to FlexFlow format without loading them to GPU
         def download_and_convert_llm_weights(model_name):
+            num_cores = os.cpu_count() -1 if os.cpu_count() > 1 else 1
+            snapshot_download(repo_id=model_name, allow_patterns="*.safetensors", max_workers=min(30, num_cores))
             hf_model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 trust_remote_code=True,
