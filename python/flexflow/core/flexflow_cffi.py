@@ -4718,7 +4718,7 @@ class FFModel(object):
         ]  # entry will be None for finetuning requests
         c_output_texts = [
             (
-                ffi.new("char[]", max_sequence_length * 5)
+                ffi.new("char[]", max_sequence_length * 10)
                 if request.req_type == RequestType.REQ_INFERENCE
                 else ffi.NULL
             )
