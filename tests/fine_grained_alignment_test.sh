@@ -10,6 +10,12 @@ PP_DEGREE=${PP_DEGREE:-2}
 CACHE_PATH=${FF_CACHE_PATH:-"~/.cache/flexflow"}
 NUM_STEPS=${NUM_STEPS:-2}
 
+# Token to access private huggingface models (e.g. LLAMA-2)
+HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-none}
+if [[ "$HUGGINGFACE_TOKEN" != "none" ]]; then
+    huggingface-cli login --token "$HUGGINGFACE_TOKEN"
+fi
+
 cleanup() {
     eval rm -rf "${CACHE_PATH}/debug" ./fine_grained_alignment_config.json ./inference/output/fine_grained_alignment_test_ff.txt ./inference/output/fine_grained_alignment_test_hf.txt
 }
