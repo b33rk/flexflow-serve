@@ -45,7 +45,7 @@ def compare_output_tokens(file1, file2):
         # Determine the number of tokens to compare.
         num_to_compare = min(50, len(tokens1), len(tokens2))
         if tokens1[:num_to_compare] != tokens2[:num_to_compare]:
-            raise ValueError(f"Output tokens mismatch for req_idx {req_idx1}")
+            raise ValueError(f"Output tokens mismatch for req_idx {req_idx1} at idx {num_to_compare}/{len(tokens1)}:")
 
 
 def group_model_files(prefix):

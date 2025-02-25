@@ -91,21 +91,22 @@ def main():
             max_length=args.max_length,
             generation_config=generation_config,
         )
-        token_ids = list(generated[0].cpu().numpy())
+        prompt_token_ids = list(batch["input_ids"].cpu().numpy()[0])
+        response_token_ids = list(generated[0].cpu().numpy())[len(prompt_token_ids):]
         # Remove eos token if present at the end
-        if token_ids[-1] == tokenizer.eos_token_id:
-            token_ids = token_ids[:-1]
-        out = tokenizer.decode(generated[0][len(batch["input_ids"]):])
-        out_str = out if i == (len(prompt_list) - 1) else out + "\n"
+        if response_token_ids[-1] == tokenizer.eos_token_id:
+            response_token_ids = response_token_ids[:-1]
+        response = tokenizer.decode(response_token_ids)
         output_list.append({
             "req_idx": i,
             "req_type": "inference",
-            "prompt_length": len(batch["input_ids"]),
-            "response_length": len(generated[0])-len(batch["input_ids"]),
+            "prompt_length": len(prompt_token_ids),
+            "response_length": len(response_token_ids),
             "prompt": prompt,
-            "input_tokens": ",".join(str(x) for x in batch["input_ids"].cpu().numpy()),
-            "output_tokens": ",".join(str(x) for x in token_ids[len(batch["input_ids"]):]),
-            "num_decoding_steps": len(generated[0])-len(batch["input_ids"]),
+            "response": response,
+            "input_tokens": ",".join(str(x) for x in prompt_token_ids),
+            "output_token_ids": ",".join(str(x) for x in response_token_ids),
+            "num_decoding_steps": len(response_token_ids),
         })
     with open(args.output_file, "w") as f:
         json.dump(output_list, f, indent=2)

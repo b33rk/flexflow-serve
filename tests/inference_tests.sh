@@ -80,7 +80,7 @@ for model_name in "${model_names[@]}"; do
     python ./tests/inference/huggingface_inference.py \
         --model-name "$model_name" \
         --prompt-file "${PWD}/inference/prompt/test.json" \
-        --output-file "${PWD}/inference/output/huggingface_$model_name_.txt"
+        --output-file "${PWD}/inference/output/huggingface_$model_name_.json"
 done
 
 ##############  Check alignment between results ##############
