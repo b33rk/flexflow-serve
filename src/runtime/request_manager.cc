@@ -1838,8 +1838,9 @@ BeamSearchBatchConfig
           }
         }
         GenerationResult &gr = request_generation_results[request.guid];
-        std::vector<int> output_tokens = std::vector<int>(
-            request.tokens.begin() + gr.input_tokens.size(), request.tokens.end());
+        std::vector<int> output_tokens =
+            std::vector<int>(request.tokens.begin() + gr.input_tokens.size(),
+                             request.tokens.end());
         if (is_eos_token(output_tokens.back())) {
           // remove the EOS token
           output_tokens.pop_back();
@@ -1849,12 +1850,12 @@ BeamSearchBatchConfig
                           request.guid,
                           request.initial_len,
                           request.tokens.size());
-        
+
         // update generation result
         assert(gr.guid == request.guid);
         gr.output_tokens = output_tokens;
         gr.output_text = output_text;
-        
+
         request.status = Request::COMPLETED;
         trigger_request_completion_future(request.guid);
         log_req_mgr.print("Final output: %s", output_text.c_str());

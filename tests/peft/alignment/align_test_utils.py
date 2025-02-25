@@ -415,7 +415,7 @@ def load_hf_tensor(filename: str):
     return hf_tensor
 
 
-def compare_loaded_tensors(hf_tensor, ff_tensor, tolerance=1e-2):
+def compare_loaded_tensors(hf_tensor, ff_tensor, tolerance=1e-2, label=""):
     """Check whether a Huggingface and a FlexFlow tensors, both loaded to memory in the form of a numpy array, are equal
 
     Args:
@@ -425,13 +425,15 @@ def compare_loaded_tensors(hf_tensor, ff_tensor, tolerance=1e-2):
     """
     assert hf_tensor.shape == ff_tensor.shape
     mismatches = []
-    if not np.allclose(hf_tensor, ff_tensor, atol=tolerance):
-        print(f"mismatch between hf_tensor and ff_tensor")
-        print(f"HF: {hf_tensor}\nFF:{ff_tensor}")
-        print(np.isclose(hf_tensor, ff_tensor, atol=tolerance))
-        mismatches = np.where(~np.isclose(hf_tensor, ff_tensor, atol=tolerance))[0]
-        # print(mismatches)
     len_hf_tensor = hf_tensor.flatten().shape[0]
+    if not np.allclose(hf_tensor, ff_tensor, atol=tolerance):
+        mismatches = np.where(~np.isclose(hf_tensor.squeeze(), ff_tensor.squeeze(), atol=tolerance))[0]
+        label = label + ": " if label else ""
+        pct_mismatch = len(mismatches) / len_hf_tensor
+        print(f"{label} {pct_mismatch*100:.3}% mismatch between hf_tensor and ff_tensor")
+        print(f"HF: {hf_tensor.squeeze()}\nFF: {ff_tensor.squeeze()}")
+        print(np.isclose(hf_tensor.squeeze(), ff_tensor.squeeze(), atol=tolerance))
+        # print(mismatches)
     assert len(mismatches) <= 0.05 * len_hf_tensor
     print("Ok!")
 

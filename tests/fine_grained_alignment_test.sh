@@ -2,7 +2,7 @@
 set -x
 set -e
 
-MODEL_NAME=${MODEL_NAME:-"JackFram/llama-160m"}
+MODEL_NAME=${MODEL_NAME:-"meta-llama/Llama-3.2-1B-Instruct"}
 MEMORY_PER_GPU=${MEMORY_PER_GPU:-14000}
 ZCOPY_MEMORY=${ZCOPY_MEMORY:-40000}
 TP_DEGREE=${TP_DEGREE:-2}

@@ -968,67 +968,57 @@ __global__ void
                                int num_tokens,
                                int num_q_heads,
                                int num_kv_heads) {
-  CUDA_KERNEL_LOOP(i, num_tokens * num_q_heads * proj_size) {
-    size_t q_array_size = proj_size * num_q_heads * num_tokens;
-    int hidden_size = num_q_heads * proj_size;
-    int total_num_heads = num_q_heads + 2 * num_kv_heads;
-    // create complex number
-    bool q_tensor = i < (q_array_size / 2);
-    int real_i = q_tensor ? i : i - q_array_size / 2;
-    int token_idx = real_i / (hidden_size / 2);
-    int idx = real_i % (proj_size / 2);
-    int head_idx = (real_i - (token_idx * (hidden_size / 2))) / (proj_size / 2);
-    if (!q_tensor) {
-      head_idx /= (num_q_heads / num_kv_heads);
-    }
+  int half_proj = proj_size / 2;
+  int q_proj_work = num_tokens * num_q_heads * half_proj;
+  int kv_proj_work = num_tokens * num_kv_heads * half_proj;
+  int tot_num_heads = num_q_heads + 2 * num_kv_heads;
+  CUDA_KERNEL_LOOP(i, q_proj_work + kv_proj_work) {
+    bool q_tensor = i < q_proj_work;
+    int num_heads = q_tensor ? num_q_heads : num_kv_heads;
 
-    int real_part_index = idx + head_idx * proj_size +
-                          token_idx * proj_size * total_num_heads +
-                          hidden_size * (q_tensor ? 0 : 1);
-    int complex_part_index = real_part_index + (proj_size / 2);
+    int real_i = q_tensor ? i : i - q_proj_work;
+    int token_idx = real_i / (half_proj * num_heads);
+    int pair_idx = real_i % half_proj;
+    int head_idx = (real_i / half_proj) % num_heads;
 
-    complex_input[i] = {input_ptr[real_part_index],
-                        input_ptr[complex_part_index]};
+    // input_ptr: [proj_size, tot_num_heads, num_tokens]
+    int real_part_index = token_idx * proj_size * tot_num_heads +
+                          (q_tensor ? 0 : proj_size * num_q_heads) +
+                          head_idx * proj_size + pair_idx;
+    int complex_part_index = real_part_index + half_proj;
+    complex_input[i] = {(float)input_ptr[real_part_index],
+                        (float)input_ptr[complex_part_index]};
 
-    // get the freq_cis: shape 1 * (qProjSize/2) = 1 * 64
-    // apply a Cartesian coordinate transformation
-    // multiple with input & /copy back to q/k
-
-    // get position of token
-
-    // size_t pos = id_map[token_idx].token_position;
-    size_t pos = tokenInfos[token_idx].abs_depth_in_request;
-
-    // float before_real = complex_input[i].x, before_complex =
-    int pos_i = real_i % (proj_size / 2);
-
-    float freq =
-        pos * (1.0 / pow(rope_theta, (float)2 * pos_i / proj_size)); // θ_i
+    float inv_freq =
+        1.0 / pow(rope_theta, (float)2.0 * pair_idx / proj_size); // θ_i
 
     if (llama3_rope) {
       float pi = CUDART_PI_F;
-      float wavelen = 2 * pi / freq;
+      float wavelen = 2 * pi / inv_freq;
       float low_freq_wavelen =
           original_max_position_embeddings / low_freq_factor;
       float high_freq_wavelen =
           original_max_position_embeddings / high_freq_factor;
-      if (wavelen < high_freq_wavelen) {
-      } else if (wavelen > low_freq_wavelen) {
-        freq = freq / factor;
-      } else {
-        assert(low_freq_wavelen != high_freq_wavelen);
-        float smooth =
-            (original_max_position_embeddings / wavelen - low_freq_factor) /
-            (high_freq_factor - low_freq_factor);
-        freq = ((1 - smooth) * freq / factor + smooth * freq);
+      if (wavelen > low_freq_wavelen) {
+        inv_freq = inv_freq / factor;
+      }
+      double smooth_factor =
+          (original_max_position_embeddings / wavelen - low_freq_factor) /
+          (high_freq_factor - low_freq_factor);
+      if (!(wavelen < high_freq_wavelen) && !(wavelen > low_freq_wavelen)) {
+        inv_freq = ((1 - smooth_factor) * inv_freq / factor +
+                    smooth_factor * inv_freq);
       }
     }
 
-    cuFloatComplex complex_pos = {cos(freq), sin(freq)};
+    int pos = tokenInfos[token_idx].abs_depth_in_request;
+    inv_freq = inv_freq * pos;
+
+    cuFloatComplex complex_pos = {cos(inv_freq), sin(inv_freq)};
 
     complex_input[i] = cuCmulf(complex_input[i], complex_pos);
-    input_ptr[real_part_index] = complex_input[i].x;
-    input_ptr[complex_part_index] = complex_input[i].y;
+    input_ptr[real_part_index] = (DT)complex_input[i].x;
+    input_ptr[complex_part_index] = (DT)complex_input[i].y;
   }
 }
 
@@ -1045,57 +1035,62 @@ __global__ void
                                int original_max_position_embeddings,
                                int proj_size,
                                int num_tokens,
-                               int hidden_size) {
-  CUDA_KERNEL_LOOP(i, num_tokens * hidden_size) {
+                               int num_q_heads,
+                               int num_kv_heads) {
+  int half_proj = proj_size / 2;
+  int q_proj_work = num_tokens * num_q_heads * half_proj;
+  int kv_proj_work = num_tokens * num_kv_heads * half_proj;
+  // int tot_num_heads = num_q_heads + 2 * num_kv_heads;
+  CUDA_KERNEL_LOOP(i, q_proj_work + kv_proj_work) {
     // compute indexes to visit first half proj_size of each of q/k tensor.
-    // devQKVProj has shape [num_tokens, qProjSize, num_heads, 3] in peft_bwd
-    bool q_tensor = i < (num_tokens * hidden_size / 2);
-    int real_i = q_tensor ? i : i - num_tokens * hidden_size / 2;
-    assert(hidden_size % proj_size == 0);
-    int num_heads = hidden_size / proj_size;
+    // devQKVProj has shape [num_tokens, proj_size, tot_num_heads] in peft_bwd
+    bool q_tensor = i < q_proj_work;
+    int num_heads = q_tensor ? num_q_heads : num_kv_heads;
+    int real_i = q_tensor ? i : i - q_proj_work;
 
     int token_idx = real_i % num_tokens;
-    int idx = (real_i / num_tokens) % (proj_size / 2);
-    int head_idx = real_i / (num_tokens * proj_size / 2);
+    int pair_idx = (real_i / num_tokens) % half_proj;
+    int head_idx = real_i / (num_tokens * half_proj);
     assert(head_idx < num_heads);
 
-    int complex_part_index = (q_tensor ? 0 : 1) * num_tokens * hidden_size +
-                             head_idx * num_tokens * proj_size +
-                             idx * num_tokens + token_idx;
-    int real_part_index = complex_part_index + (proj_size / 2) * num_tokens;
+    int complex_part_index =
+        (q_tensor ? 0 : num_tokens * proj_size * num_q_heads) +
+        head_idx * proj_size * num_tokens + pair_idx * num_tokens + token_idx;
+    int real_part_index = complex_part_index + num_tokens * half_proj;
 
-    complex_input[i] = {input_ptr[real_part_index],
-                        input_ptr[complex_part_index]};
+    complex_input[i] = {(float)input_ptr[real_part_index],
+                        (float)input_ptr[complex_part_index]};
 
-    size_t pos = tokenInfos[token_idx].abs_depth_in_request;
-
-    float freq =
-        pos * (1.0 / pow(rope_theta, (float)2 * idx / proj_size)); // θ_i
+    float inv_freq =
+        1.0 / pow(rope_theta, (float)2.0 * pair_idx / proj_size); // θ_i
 
     if (llama3_rope) {
       float pi = CUDART_PI_F;
-      float wavelen = 2 * pi / freq;
+      float wavelen = 2 * pi / inv_freq;
       float low_freq_wavelen =
           original_max_position_embeddings / low_freq_factor;
       float high_freq_wavelen =
           original_max_position_embeddings / high_freq_factor;
-      if (wavelen < high_freq_wavelen) {
-      } else if (wavelen > low_freq_wavelen) {
-        freq = freq / factor;
-      } else {
-        assert(low_freq_wavelen != high_freq_wavelen);
-        float smooth =
-            (original_max_position_embeddings / wavelen - low_freq_factor) /
-            (high_freq_factor - low_freq_factor);
-        freq = ((1 - smooth) * freq / factor + smooth * freq);
+      if (wavelen > low_freq_wavelen) {
+        inv_freq = inv_freq / factor;
+      }
+      double smooth_factor =
+          (original_max_position_embeddings / wavelen - low_freq_factor) /
+          (high_freq_factor - low_freq_factor);
+      if (!(wavelen < high_freq_wavelen) && !(wavelen > low_freq_wavelen)) {
+        inv_freq = ((1 - smooth_factor) * inv_freq / factor +
+                    smooth_factor * inv_freq);
       }
     }
 
-    cuFloatComplex complex_pos = {cos(freq), sin(freq)};
+    int pos = tokenInfos[token_idx].abs_depth_in_request;
+    inv_freq = inv_freq * pos;
+
+    cuFloatComplex complex_pos = {cos(inv_freq), sin(inv_freq)};
 
     complex_input[i] = cuCmulf(complex_input[i], complex_pos);
-    input_ptr[real_part_index] = complex_input[i].x;
-    input_ptr[complex_part_index] = complex_input[i].y;
+    input_ptr[real_part_index] = (DT)complex_input[i].x;
+    input_ptr[complex_part_index] = (DT)complex_input[i].y;
   }
 }
 
@@ -1128,7 +1123,10 @@ void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
   // Step 3: apply rotary embedding if needed
   if (m->rotary_embedding_meta->apply_rotary_embedding) {
     /*q&k*/
-    parallelism = num_tokens * m->hidden_size;
+    int half_proj = m->qProjSize / 2;
+    int q_proj_work = num_tokens * m->num_q_heads * half_proj;
+    int kv_proj_work = num_tokens * m->num_kv_heads * half_proj;
+    parallelism = q_proj_work + kv_proj_work;
     apply_rotary_embedding_fwd<<<GET_BLOCKS(parallelism),
                                  min(CUDA_NUM_THREADS, parallelism),
                                  0,
@@ -1757,13 +1755,15 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
       assert(m->hidden_size == m->qProjSize * m->num_q_heads);
       assert(m->qProjSize == m->kProjSize);
       /*q&k*/
-      int parallelism = num_tokens * m->hidden_size;
-      DT *A = static_cast<DT *>(m->devQKVProjArray);
+      int half_proj = m->qProjSize / 2;
+      int q_proj_work = num_tokens * m->num_q_heads * half_proj;
+      int kv_proj_work = num_tokens * m->num_kv_heads * half_proj;
+      int parallelism = q_proj_work + kv_proj_work;
       apply_rotary_embedding_bwd<<<GET_BLOCKS(parallelism),
                                    min(CUDA_NUM_THREADS, parallelism),
                                    0,
                                    stream>>>(
-          A,
+          static_cast<DT *>(m->devQKVProjArray),
           m->complex_input,
           m->peft_token_infos_device,
           m->rotary_embedding_meta->rope_theta,
@@ -1774,7 +1774,8 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
           m->rotary_embedding_meta->original_max_position_embeddings,
           m->qProjSize,
           num_tokens,
-          m->hidden_size);
+          m->num_q_heads,
+          m->num_kv_heads);
       DT *C = static_cast<DT *>(m->devQKVProjArray);
       if (m->inference_debugging) {
         std::string filename =
@@ -2066,7 +2067,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
         max_tokens_per_batch * BatchConfig::max_sequence_length() * num_q_heads;
     size_t attn_heads_size = max_tokens_per_batch * num_q_heads * vProjSize;
     size_t complex_size = (max_tokens_per_batch * (qProjSize * num_q_heads +
-                                                   kProjSize * num_q_heads)) /
+                                                   kProjSize * num_kv_heads)) /
                           2;
     if (enable_peft_finetuning) {
       allocated_peft_buffer_size1 = BatchConfig::max_sequence_length() *
