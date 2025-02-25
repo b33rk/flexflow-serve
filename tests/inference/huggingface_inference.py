@@ -23,7 +23,7 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", type=str, required=True)
-    parser.add_argument("--max-length", type=int, default=128)
+    parser.add_argument("--max-length", type=int, default=255)
     parser.add_argument("--prompt-file", type=str, required=True)
     parser.add_argument("--output-file", type=str, required=True)
     parser.add_argument(
@@ -105,7 +105,7 @@ def main():
             "prompt": prompt,
             "response": response,
             "input_tokens": ",".join(str(x) for x in prompt_token_ids),
-            "output_token_ids": ",".join(str(x) for x in response_token_ids),
+            "output_tokens": ",".join(str(x) for x in response_token_ids),
             "num_decoding_steps": len(response_token_ids),
         })
     with open(args.output_file, "w") as f:

@@ -79,6 +79,7 @@ for model_name in "${model_names[@]}"; do
     model_name_=$(echo "$model_name" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
     python ./tests/inference/huggingface_inference.py \
         --model-name "$model_name" \
+        --max-length 255 \
         --prompt-file "${PWD}/inference/prompt/test.json" \
         --output-file "${PWD}/inference/output/huggingface_$model_name_.json"
 done

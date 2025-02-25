@@ -1837,27 +1837,27 @@ BeamSearchBatchConfig
             request.tokens.push_back(token_pair.first);
           }
         }
-        log_req_mgr.print("[Done] guid(%zu) with final length(%zu)",
+        GenerationResult &gr = request_generation_results[request.guid];
+        std::vector<int> output_tokens = std::vector<int>(
+            request.tokens.begin() + gr.input_tokens.size(), request.tokens.end());
+        if (is_eos_token(output_tokens.back())) {
+          // remove the EOS token
+          output_tokens.pop_back();
+        }
+        std::string output_text = this->tokenizer_->Decode(output_tokens);
+        log_req_mgr.print("[Done] guid(%zu) initial_len(%d) final_length(%zu)",
                           request.guid,
+                          request.initial_len,
                           request.tokens.size());
-        std::string output = this->tokenizer_->Decode(request.tokens);
-        // Unlike Huggingface, the sentencepiece C++ library automatically
-        // removes the BOS token
-        if (model_type == ModelType::LLAMA && old_llama_tokenizer &&
-            request.add_special_tokens &&
-            request.tokens.at(0) == bos_token_id) {
-          output = "<s> " + output;
-        }
-        {
-          // update generation result
-          GenerationResult &gr = request_generation_results[request.guid];
-          assert(gr.guid == request.guid);
-          gr.output_tokens = request.tokens;
-          gr.output_text = output;
-        }
+        
+        // update generation result
+        assert(gr.guid == request.guid);
+        gr.output_tokens = output_tokens;
+        gr.output_text = output_text;
+        
         request.status = Request::COMPLETED;
         trigger_request_completion_future(request.guid);
-        log_req_mgr.print("Final output: %s", output.c_str());
+        log_req_mgr.print("Final output: %s", output_text.c_str());
 
         new_bc.request_completed[i] = true;
         new_bc.request_running[i] = false;
