@@ -9,6 +9,8 @@ TP_DEGREE=${TP_DEGREE:-2}
 PP_DEGREE=${PP_DEGREE:-2}
 CACHE_PATH=${FF_CACHE_PATH:-"~/.cache/flexflow"}
 NUM_STEPS=${NUM_STEPS:-2}
+FULL_PRECISION=${FULL_PRECISION:-true}
+FUSION=${FUSION:-true}
 
 # Token to access private huggingface models (e.g. LLAMA-2)
 HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-none}
@@ -36,7 +38,7 @@ mkdir -p ./inference/output
 # Enable backtrace in case we run into a segfault or assertion failure
 export LEGION_BACKTRACE=1
 export FF_DEBG_NO_WEIGHTS=1
-FUSION=true
+
 
 
 # Check if the Python code executed successfully
@@ -54,13 +56,13 @@ fi
 
 MAX_LENGTH=$((PROMPT_LENGTH + NUM_STEPS + 1))
 
+full_precision_flag=$([ "$USE_FULL_PRECISION" = "true" ] && echo "--use-full-precision" || true)
 python ./tests/inference/huggingface_inference.py \
     --model-name "${MODEL_NAME}" \
     --max-length "${MAX_LENGTH}" \
     --prompt-file ../../inference/prompt/test.json \
-    --output-file ../../inference/output/fine_grained_alignment_test_hf.txt \
-    --use-full-precision \
-    --inference-debugging
+    --output-file ../../inference/output/fine_grained_alignment_test_hf.json \
+    ${full_precision_flag} --inference-debugging
 
 NUM_GPUS=$((TP_DEGREE * PP_DEGREE))
 json_config=$(cat <<-END
@@ -78,10 +80,10 @@ json_config=$(cat <<-END
         "refresh_cache": false,
         "llm_model": "${MODEL_NAME}",
         "cache_path": "${CACHE_PATH}",
-        "full_precision": true,
+        "full_precision": ${FULL_PRECISION},
         "prompt": "./inference/prompt/test.json",
         "max_length": $MAX_LENGTH,
-        "output_file": "./inference/output/fine_grained_alignment_test_ff.txt"
+        "output_file": "./inference/output/fine_grained_alignment_test_ff.json"
     }
 END
 )

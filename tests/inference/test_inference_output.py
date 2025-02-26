@@ -71,7 +71,7 @@ def collect_file_comparisons():
     """
     Yields tuples (file_a, file_b) for all pairwise comparisons among
     spec_infer or incr_dec files that share a model name,
-    plus the comparison with huggingface_<model_name>.txt if it exists.
+    plus the comparison with huggingface_<model_name>.json if it exists.
     """
     for prefix in ["spec_infer", "incr_dec"]:
         grouped = group_model_files(prefix)
@@ -80,8 +80,8 @@ def collect_file_comparisons():
             for i in range(len(file_group)):
                 for j in range(i+1, len(file_group)):
                     yield file_group[i], file_group[j]
-            # Compare with huggingface_<model_name>.txt
-            hf_file = os.path.join(OUTPUT_DIR, f"huggingface_{model_name}.txt")
+            # Compare with huggingface_<model_name>.json
+            hf_file = os.path.join(OUTPUT_DIR, f"huggingface_{model_name}.json")
             if os.path.exists(hf_file) and file_group:
                 yield file_group[0], hf_file
 
@@ -91,7 +91,7 @@ def collect_spec_infer_incr_dec_pairs():
     Yields (spec_file, incr_file) for files that have the same trailing name
     after the prefix spec_infer- / incr_dec-.
     """
-    all_files = glob.glob(os.path.join(OUTPUT_DIR, "*.*"))  # .txt/.json
+    all_files = glob.glob(os.path.join(OUTPUT_DIR, "*.*"))  # .json/.json
     spec_infer = {}
     for f in all_files:
         base = os.path.basename(f)
