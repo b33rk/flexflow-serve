@@ -29,6 +29,10 @@
 
 namespace FlexFlow {
 
+inline int alignTo(int x, int y) {
+  return ((x + y - 1) / y) * y;
+}
+
 class InferenceResult;
 class BeamInferenceResult;
 
@@ -71,6 +75,10 @@ public:
   static int max_verify_tokens_per_batch();
   static int max_spec_tree_token_num();
   static int max_sequence_length();
+  
+  // paged attention
+  static size_t max_kv_cache_size();
+  
   friend std::ostream &operator<<(std::ostream &os, BatchConfig const &bc);
   void print() const;
   void save_to_file(std::string const &filename) const;
@@ -110,6 +118,17 @@ public:
     int first_token_offset_in_batch;
     int num_tokens_in_batch;
     int max_length;
+
+    // paged attention
+    RequestGuid request_guid;
+
+    static constexpr size_t request_guid_size = sizeof(RequestGuid);
+    static constexpr size_t alignment = 16;
+    static constexpr size_t padding_size =
+        (alignment - (sizeof(int) * 3 + request_guid_size) % alignment) %
+        alignment;
+    static constexpr size_t padding_length = padding_size / sizeof(int);
+    int padding[padding_length] = {}; // Padding for memory pointer alignment
 
     // request id in batch config:
     int batch_config_request_id = -1;

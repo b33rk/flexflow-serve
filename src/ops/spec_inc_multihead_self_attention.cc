@@ -253,8 +253,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
       num_q_heads(_num_q_heads), num_kv_heads(_num_kv_heads), dropout(_dropout),
       add_zero_attn(_add_zero_attn),
       rotary_embedding_meta(_rotary_embedding_meta),
-      qSize(_input->dims[0].size), kSize(_input->dims[0].size),
-      vSize(_input->dims[0].size), qProjSize(_kdim), kProjSize(_kdim),
+      qProjSize(_kdim), kProjSize(_kdim),
       vProjSize(_vdim), oProjSize(_embed_dim),
       qoSeqLength(_input->dims[1].size), kvSeqLength(_input->dims[1].size),
       scaling_query(_scaling_query), scaling_factor(_scaling_factor),
@@ -303,8 +302,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
       num_q_heads(_num_q_heads), num_kv_heads(_num_kv_heads), dropout(_dropout),
       add_zero_attn(_add_zero_attn),
       rotary_embedding_meta(_rotary_embedding_meta),
-      qSize(_input->dims[0].size), kSize(_input->dims[0].size),
-      vSize(_input->dims[0].size), qProjSize(_kdim), kProjSize(_kdim),
+      qProjSize(_kdim), kProjSize(_kdim),
       vProjSize(_vdim), oProjSize(_embed_dim),
       qoSeqLength(_input->dims[1].size), kvSeqLength(_input->dims[1].size),
       scaling_query(_scaling_query), scaling_factor(_scaling_factor),
@@ -466,7 +464,6 @@ OpMeta *SpecIncMultiHeadSelfAttention::init_task(
                                        ctx,
                                        runtime);
 
-  int num_samples = input.domain.hi()[2] - input.domain.lo()[2] + 1;
   assert(attn->qoSeqLength == input.domain.hi()[1] - input.domain.lo()[1] + 1);
   assert(attn->kvSeqLength == input.domain.hi()[1] - input.domain.lo()[1] + 1);
   int num_q_heads = attn->num_q_heads;
@@ -477,7 +474,7 @@ OpMeta *SpecIncMultiHeadSelfAttention::init_task(
   MemoryAllocator gpu_mem_allocator(gpu_mem);
   // We don't do offloading for SSMs (small speculative models)
   SpecIncMultiHeadSelfAttentionMeta *m = new SpecIncMultiHeadSelfAttentionMeta(
-      handle, attn, gpu_mem_allocator, num_samples, num_q_heads, num_kv_heads);
+      handle, attn, gpu_mem_allocator, num_q_heads, num_kv_heads);
   // assert that we didn't over allocate memory
   assert(gpu_mem_allocator.instance_allocated_size ==
          gpu_mem_allocator.instance_total_size);

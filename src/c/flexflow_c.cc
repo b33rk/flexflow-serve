@@ -2786,6 +2786,14 @@ int flexflow_request_manager_get_max_sequence_length(
   return handle->get_max_sequence_length();
 }
 
+// paged attention
+void flexflow_request_manager_set_max_kv_cache_size(
+    flexflow_request_manager_t handle_, int max_kv_cache_size) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_max_kv_cache_size(max_kv_cache_size);
+  DEBUG_PRINT("[RequestManager] set max_kv_cache_size %d", max_kv_cache_size);
+}
+
 void flexflow_request_manager_set_max_concurrent_adapters(
     flexflow_request_manager_t handle_, int max_concurrent_adapters) {
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);

@@ -1033,6 +1033,10 @@ void flexflow_request_manager_set_max_sequence_length(
 int flexflow_request_manager_get_max_sequence_length(
     flexflow_request_manager_t handle_);
 
+// paged attention
+void flexflow_request_manager_set_max_kv_cache_size(
+    flexflow_request_manager_t handle_, int max_kv_cache_size);
+
 void flexflow_request_manager_set_max_concurrent_adapters(
     flexflow_request_manager_t handle_, int max_concurrent_adapters);
 

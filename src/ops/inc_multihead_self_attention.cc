@@ -274,8 +274,7 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
       num_q_heads(_num_q_heads), num_kv_heads(_num_kv_heads), dropout(_dropout),
       add_zero_attn(_add_zero_attn),
       rotary_embedding_meta(_rotary_embedding_meta),
-      qSize(_input->dims[0].size), kSize(_input->dims[0].size),
-      vSize(_input->dims[0].size), qProjSize(_kdim), kProjSize(_kdim),
+      qProjSize(_kdim), kProjSize(_kdim),
       vProjSize(_vdim), oProjSize(_embed_dim),
       qoSeqLength(_input->dims[1].size), kvSeqLength(_input->dims[1].size),
       scaling_query(_scaling_query), scaling_factor(_scaling_factor),
@@ -332,8 +331,7 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
       num_q_heads(_num_q_heads), num_kv_heads(_num_kv_heads), dropout(_dropout),
       add_zero_attn(_add_zero_attn),
       rotary_embedding_meta(_rotary_embedding_meta),
-      qSize(_input->dims[0].size), kSize(_input->dims[0].size),
-      vSize(_input->dims[0].size), qProjSize(_kdim), kProjSize(_kdim),
+      qProjSize(_kdim), kProjSize(_kdim),
       vProjSize(_vdim), oProjSize(_embed_dim),
       qoSeqLength(_input->dims[1].size), kvSeqLength(_input->dims[1].size),
       scaling_query(_scaling_query), scaling_factor(_scaling_factor),
@@ -505,7 +503,6 @@ OpMeta *IncMultiHeadSelfAttention::init_task(
                                        ctx,
                                        runtime);
 
-  int num_samples = input.domain.hi()[2] - input.domain.lo()[2] + 1;
   assert(attn->qoSeqLength == input.domain.hi()[1] - input.domain.lo()[1] + 1);
   assert(attn->kvSeqLength == input.domain.hi()[1] - input.domain.lo()[1] + 1);
   int num_q_heads = attn->num_q_heads / attn->tensor_parallelism_degree;
@@ -522,15 +519,15 @@ OpMeta *IncMultiHeadSelfAttention::init_task(
         handle.offload_reserve_space, handle.offload_reserve_space_size);
   }
   IncMultiHeadSelfAttentionMeta *m = new IncMultiHeadSelfAttentionMeta(
-      handle, attn, gpu_mem_allocator, num_samples, num_q_heads, num_kv_heads);
+      handle, attn, gpu_mem_allocator, num_q_heads, num_kv_heads);
   if (handle.offload_reserve_space == nullptr) {
     // assert that we didn't over allocate memory
     assert(gpu_mem_allocator.reserved_allocated_size ==
            gpu_mem_allocator.reserved_total_size);
   }
-  m->profiling = attn->profiling;
-  m->inference_debugging = attn->inference_debugging;
-  m->enable_peft_finetuning = attn->enable_peft_finetuning;
+  // m->profiling = attn->profiling;
+  // m->inference_debugging = attn->inference_debugging;
+  // m->enable_peft_finetuning = attn->enable_peft_finetuning;
   std::strcpy(m->op_name, attn->name);
   m->layer_guid = attn->layer_guid;
 

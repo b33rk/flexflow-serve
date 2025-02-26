@@ -47,7 +47,8 @@ void parse_input_args(char **argv,
                       float &topp,
                       int &max_requests_per_batch,
                       int &max_tokens_per_batch,
-                      int &max_sequence_length) {
+                      int &max_sequence_length,
+                      size_t &max_kv_cache_size) {
   for (int i = 1; i < argc; i++) {
     // llm model type
     if (!strcmp(argv[i], "-llm-model")) {
@@ -70,6 +71,10 @@ void parse_input_args(char **argv,
     // output file
     if (!strcmp(argv[i], "-output-file")) {
       paths.output_file_path = std::string(argv[++i]);
+      continue;
+    }
+    if (!strcmp(argv[i], "--max-kv-cache-size")) {
+      max_kv_cache_size = std::stoi(argv[++i]);
       continue;
     }
     if (!strcmp(argv[i], "--use-full-precision")) {
@@ -136,6 +141,7 @@ void FlexFlow::top_level_task(Task const *task,
   int max_requests_per_batch = 8;
   int max_tokens_per_batch = 128;
   int max_sequence_length = 256;
+  size_t max_kv_cache_size = -1; // if -1, then use the default value
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -151,7 +157,8 @@ void FlexFlow::top_level_task(Task const *task,
                    topp,
                    max_requests_per_batch,
                    max_tokens_per_batch,
-                   max_sequence_length);
+                   max_sequence_length,
+                   max_kv_cache_size);
 
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
@@ -225,6 +232,7 @@ void FlexFlow::top_level_task(Task const *task,
   rm->register_tokenizer(
       model_type, bos_token_id, eos_token_ids, tokenizer_filepath);
   rm->register_output_filepath(file_paths.output_file_path);
+  rm->set_max_kv_cache_size(max_kv_cache_size);
 
   FFModel model(ffconfig, ffconfig.cpu_offload);
   if (model_type == ModelType::LLAMA) {

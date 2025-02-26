@@ -18,6 +18,7 @@
 #include "flexflow/batch_config.h"
 #include "flexflow/inference.h"
 #include "flexflow/model.h"
+#include "flexflow/page_manager.h"
 #include "flexflow/utils/file_loader.h"
 #include <future>
 #include <mutex>
@@ -123,6 +124,12 @@ struct Request {
   std::string prompt;
   std::vector<BatchConfig::TokenId> tokens;
 
+  // paged attention
+  // page attention, page_last_committed should be -1 because there are no
+  // blocks at the beginning
+  int page_last_committed = -1;
+  std::vector<LogicalTokenBlock> blocks;
+
   // peft fields
   PEFTModelID peft_model_id = PEFTModelID::NO_ID;
   PeftFinetuningInfo peft_finetuning_info;
@@ -183,6 +190,19 @@ public:
   int get_max_verify_tokens_per_batch();
   int get_max_sequence_length();
   void set_max_sequence_length(int max_seq_length);
+  
+  // paged attention
+  void set_max_kv_cache_size(size_t max_kv_cache_size);
+  size_t get_max_kv_cache_size();
+  int get_num_blocks_allocated(Request &request) const;
+  int get_len_last_block(Request &request) const;
+  int get_idx_last_logical_token(Request &request) const;
+  int idx_logical_to_physical(Request &request, int idx_logical);
+  void _append_block_to_request(Request &request, bool is_commit);
+  int append_token_to_block(Request &request, TokenId token, bool is_commit);
+  void reset_block_table(Request &request);
+  void print_num_tokens(Request &request);
+  
   void push_spec_infer_tree_width(int tree_width);
   void set_enable_peft_finetuning(bool enable_peft_finetuning_);
   void set_inference_finished(bool finished = true);
@@ -387,6 +407,10 @@ private:
   int max_fwd_finetuning_tokens_per_batch;
   int max_spec_tree_token_num;
   int max_sequence_length;
+  
+  // paged attention
+  size_t max_kv_cache_size;
+
   Status request_manager_status;
 
   // peft

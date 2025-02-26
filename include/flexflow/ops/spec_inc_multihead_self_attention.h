@@ -111,7 +111,7 @@ public:
   float dropout, scaling_factor;
   bool add_zero_attn, scaling_query, qk_prod_scaling, position_bias;
   RotaryEmbeddingMeta rotary_embedding_meta;
-  int qSize, kSize, vSize, qProjSize, kProjSize, vProjSize, oProjSize;
+  int qProjSize, kProjSize, vProjSize, oProjSize;
   int qoSeqLength, kvSeqLength;
 };
 
@@ -120,7 +120,6 @@ public:
   SpecIncMultiHeadSelfAttentionMeta(FFHandler handler,
                                     SpecIncMultiHeadSelfAttention const *attn,
                                     MemoryAllocator &gpu_mem_allocator,
-                                    int num_samples,
                                     int _num_q_heads,
                                     int _num_kv_heads);
   ~SpecIncMultiHeadSelfAttentionMeta(void);

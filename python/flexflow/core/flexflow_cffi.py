@@ -1652,6 +1652,11 @@ class RequestManager(object):
         return ffc().flexflow_request_manager_set_num_layers_per_finetuning_step(
             self.handle, num_layers
         )
+
+    # flashinfer/paged attention
+    def set_max_kv_cache_size(self, max_size):
+        return ffc().flexflow_request_manager_set_max_kv_cache_size(
+            self.handle, max_size)
     
     def set_max_concurrent_adapters(self, max_adapters):
         return ffc().flexflow_request_manager_set_max_concurrent_adapters(

@@ -130,7 +130,7 @@ public:
   float dropout, scaling_factor;
   bool add_zero_attn, scaling_query, qk_prod_scaling, position_bias;
   RotaryEmbeddingMeta rotary_embedding_meta;
-  int qSize, kSize, vSize, qProjSize, kProjSize, vProjSize, oProjSize;
+  int qProjSize, kProjSize, vProjSize, oProjSize;
   int qoSeqLength, kvSeqLength;
   DataType quantization_type;
   bool offload;
@@ -141,15 +141,11 @@ public:
   IncMultiHeadSelfAttentionMeta(FFHandler handler,
                                 IncMultiHeadSelfAttention const *attn,
                                 MemoryAllocator &gpu_mem_allocator,
-                                int num_samples,
                                 int _num_q_heads,
                                 int _num_kv_heads);
   IncMultiHeadSelfAttentionMeta(FFHandler handler,
                                 InferenceMode infer_mode,
                                 Op const *attn,
-                                int _qSize,
-                                int _kSize,
-                                int _vSize,
                                 int _qProjSize,
                                 int _kProjSize,
                                 int _vProjSize,
@@ -160,7 +156,6 @@ public:
                                 bool _position_bias,
                                 float _scaling_factor,
                                 MemoryAllocator &gpu_mem_allocator,
-                                int num_samples,
                                 int _global_num_q_heads,
                                 int _global_num_kv_heads,
                                 int _num_q_heads,
@@ -172,40 +167,57 @@ public:
 public:
   Realm::RegionInstance reserveInst;
   size_t reserveSpaceSize;
-  int qSize, kSize, vSize, qProjSize, kProjSize, vProjSize, oProjSize;
-  int global_num_q_heads, global_num_kv_heads, num_q_heads, num_kv_heads,
-      hidden_size;
+  int qProjSize, kProjSize, vProjSize, oProjSize;
+  int global_num_q_heads, global_num_kv_heads, num_q_heads, num_kv_heads;
   RotaryEmbeddingMeta *rotary_embedding_meta;
   bool *scaling_query;
   bool *qk_prod_scaling;
   bool *position_bias;
   float scaling_factor;
-  void *devQKVProjArray, *keyCache, *valueCache;
-  void *qk_prods, *qk_prods_softmax;
-  void *attn_heads;
-  BatchConfig::PerTokenInfo *token_infos;
-  BatchConfig::PerTokenInfo *peft_token_infos;
-  BatchConfig::PerTokenInfo *peft_token_infos_device;
-  BatchConfig::PerRequestInfo *request_infos;
   DataType quantization_type;
   bool offload;
+
+  // GPU memory sizes (or num elements)
+  size_t gqa_ptr_array_size = 0;
+  size_t key_cache_size = 0, value_cache_size = 0; // numel
+  size_t peft_key_cache_size = 0, peft_value_cache_size = 0; // numel
+  size_t qkv_max_proj_size, qkv_max_proj_size_bwd=0; // numel
+  size_t query_tmp_size = 0, output_tmp_size = 0; // numel
+  size_t complex_size = 0, complex_size_bwd = 0; // numel
+  size_t qk_prod_size = 0; // numel
+  size_t allocated_peft_buffer_size1 = 0, 
+         allocated_peft_buffer_size2 = 0,
+         peft_token_infos_size = 0;
+  
+  void *devQKVProjArray;
+  void *keyCache, *valueCache;
+  void *keyCachePeft, *valueCachePeft;
+  void *qk_prods, *qk_prods_softmax;
+  // flashinfer
+  void *queryTmp, *outputTmp;
+
+  BatchConfig::PerTokenInfo *token_infos;
+  BatchConfig::PerRequestInfo *request_infos;
+  
+
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
   cudnnTensorDescriptor_t qk_tensor;
   cuFloatComplex *complex_input;
 #elif defined(FF_USE_HIP_ROCM)
   miopenTensorDescriptor_t qk_tensor;
-  //  typedef hipFloatComplex attFloatComplex;
   hipFloatComplex *complex_input;
 #endif
+
   // GQA
   void **d_A_array, **d_B_array, **d_C_array;
-  void **d_A_array2, **d_B_array2, **d_C_array2;
-  size_t gqa_ptr_array_size;
+  
   // PEFT specific fields
+  void **d_A_array2, **d_B_array2, **d_C_array2;
   void *softmax_activation_buffer;
   void *query_activation_buffer;
-  size_t allocated_peft_buffer_size1 = 0, allocated_peft_buffer_size2 = 0,
-         peft_token_infos_size = 0;
+  BatchConfig::PerTokenInfo *peft_token_infos = nullptr;
+  BatchConfig::PerTokenInfo *peft_token_infos_device;
+  
 };
 
 }; // namespace FlexFlow
