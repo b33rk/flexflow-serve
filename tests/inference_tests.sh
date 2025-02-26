@@ -18,16 +18,16 @@ CPP_INFERENCE_TESTS=${CPP_INFERENCE_TESTS:-OFF}
 rm -rf inference/prompt inference/output inference/inf_test_configs || true
 # Create test prompt file
 mkdir -p ./inference/prompt
-# echo '["Three tips for staying healthy are: "]' > ./inference/prompt/test.json
-cat << 'EOF' > ./inference/prompt/test.json
-[
-    "The largest ocean on Earth is",
-    "The inventor of the telephone was",
-    "The speed of light is",
-    "The tallest mountain in the world is",
-    "The first man on the moon was"
-]
-EOF
+echo '["Three tips for staying healthy are: "]' > ./inference/prompt/test.json
+# cat << 'EOF' > ./inference/prompt/test.json
+# [
+#     "The largest ocean on Earth is",
+#     "The inventor of the telephone was",
+#     "The speed of light is",
+#     "The tallest mountain in the world is",
+#     "The first man on the moon was"
+# ]
+# EOF
 # cat << 'EOF' > ./inference/prompt/test.json
 # [
 #   "In the year 2075, artificial intelligence has become deeply integrated into every aspect of human life. Autonomous robots manage infrastructure, AI-powered doctors perform complex surgeries with unmatched precision, and personalized AI assistants anticipate people's needs before they even express them. Despite these advancements, ethical concerns continue to grow. One of the most pressing debates surrounding AI development in this era is whether",
