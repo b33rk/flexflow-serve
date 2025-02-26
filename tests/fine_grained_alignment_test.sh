@@ -56,13 +56,13 @@ fi
 
 MAX_LENGTH=$((PROMPT_LENGTH + NUM_STEPS + 1))
 
-full_precision_flag=$([ "$USE_FULL_PRECISION" = "true" ] && echo "--use-full-precision" || true)
+if [ "$FULL_PRECISION" = "true" ]; then full_precision_flag="--use-full-precision"; else full_precision_flag=""; fi
 python ./tests/inference/huggingface_inference.py \
     --model-name "${MODEL_NAME}" \
     --max-length "${MAX_LENGTH}" \
     --prompt-file ../../inference/prompt/test.json \
     --output-file ../../inference/output/fine_grained_alignment_test_hf.json \
-    ${full_precision_flag} --inference-debugging
+    "${full_precision_flag}" --inference-debugging
 
 NUM_GPUS=$((TP_DEGREE * PP_DEGREE))
 json_config=$(cat <<-END
