@@ -1002,7 +1002,7 @@ __global__ void
       if (wavelen > low_freq_wavelen) {
         inv_freq = inv_freq / factor;
       }
-      double smooth_factor =
+      float smooth_factor =
           (original_max_position_embeddings / wavelen - low_freq_factor) /
           (high_freq_factor - low_freq_factor);
       if (!(wavelen < high_freq_wavelen) && !(wavelen > low_freq_wavelen)) {
@@ -1074,7 +1074,7 @@ __global__ void
       if (wavelen > low_freq_wavelen) {
         inv_freq = inv_freq / factor;
       }
-      double smooth_factor =
+      float smooth_factor =
           (original_max_position_embeddings / wavelen - low_freq_factor) /
           (high_freq_factor - low_freq_factor);
       if (!(wavelen < high_freq_wavelen) && !(wavelen > low_freq_wavelen)) {
