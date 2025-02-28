@@ -61,9 +61,16 @@ __device__ __forceinline__ size_t get_v_entry_offset(int const req_idx,
          num_heads *
          head_dim;
 }
-
+// [For the tokens in batch]
+// Update the kv cache, and compact the q array.
+// Source: qkv projeciton array of tokens in the batch.
+// Destination: q&kv ptr took by the attention kernel.
+// Note that the q&k here are the value after applying with position encoding.
+void update_qkv_in_batch(IncMultiHeadSelfAttentionMeta const *m,
+                         BatchConfig const *bc,
+                         cudaStream_t stream);
 template <typename DT>
-void update_qkv_in_batch_paged(IncMultiHeadSelfAttentionMeta const *m,
+void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
                                BatchConfig const *bc,
                                cudaStream_t stream,
                                bool is_spec);

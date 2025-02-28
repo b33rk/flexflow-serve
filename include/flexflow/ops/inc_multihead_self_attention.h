@@ -190,7 +190,7 @@ public:
          peft_token_infos_size = 0;
   
   void *devQKVProjArray;
-  void *keyCache, *valueCache;
+  void *kvCache, *keyCache, *valueCache;
   void *keyCachePeft, *valueCachePeft;
   void *qk_prods, *qk_prods_softmax;
   // flashinfer

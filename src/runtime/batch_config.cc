@@ -186,6 +186,10 @@ int BatchConfig::max_sequence_length() {
   return RequestManager::get_request_manager()->get_max_sequence_length();
 }
 
+size_t BatchConfig::max_kv_cache_size() {
+  return RequestManager::get_request_manager()->get_max_kv_cache_size();
+}
+
 int BatchConfig::max_spec_tree_token_num() {
   return RequestManager::get_request_manager()->get_max_spec_tree_token_num();
 }

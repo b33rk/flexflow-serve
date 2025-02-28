@@ -284,6 +284,7 @@ RequestManager::RequestManager()
   max_tokens_per_batch = -1;
   max_spec_tree_token_num = -1;
   max_sequence_length = -1;
+  max_kv_cache_size = 0;
   step_idx = 0;
   run_idx = 0;
 }
@@ -356,6 +357,14 @@ void RequestManager::set_max_sequence_length(int max_seq_length) {
 int RequestManager::get_max_sequence_length() {
   assert(max_sequence_length > 0);
   return max_sequence_length;
+}
+
+void RequestManager::set_max_kv_cache_size(size_t max_kv_cache_size) {
+  this->max_kv_cache_size = max_kv_cache_size;
+}
+
+size_t RequestManager::get_max_kv_cache_size() {
+  return max_kv_cache_size;
 }
 
 void RequestManager::push_spec_infer_tree_width(int tree_width) {
@@ -905,6 +914,10 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
   assert(request.req_type == RequestType::REQ_INFERENCE &&
          "Found misplaced finetuning request");
 
+  // page attention: free the pages
+  PageManager *page_manager = PageManager::get_page_manager();
+  page_manager->free_request(request.guid);
+  
   GenerationResult &gr = request_generation_results[request.guid];
   std::vector<int> output_tokens = std::vector<int>(
       request.tokens.begin() + gr.input_tokens.size(), request.tokens.end());
@@ -1014,6 +1027,9 @@ void RequestManager::add_continuing_inf_req_to_new_batch(
     new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request = depth;
     assert(depth < request.tokens.size());
     new_bc.tokensInfo[new_bc.num_tokens].token_id = request.tokens[depth];
+    if (new_bc.requestsInfo[i].prompt_phase) {
+      append_token_to_block(request, request.tokens[depth], true);
+    }
     new_bc.num_tokens++;
   }
   // Update profiling
@@ -1067,6 +1083,9 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
     new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request = depth;
     assert(depth < new_request.tokens.size());
     new_bc.tokensInfo[new_bc.num_tokens].token_id = new_request.tokens[depth];
+    
+    append_token_to_block(new_request, new_request.tokens[depth], true);
+    
     new_bc.num_tokens++;
   }
 
@@ -1713,6 +1732,105 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
     assert(false);
   }
 }
+
+/* --------- Page Attention Related Functions --------- */
+int RequestManager::get_num_blocks_allocated(Request &request) const {
+  // needs some assertion
+  return request.blocks.size();
+}
+
+int RequestManager::get_len_last_block(Request &request) const {
+  int num_tokens = request.blocks.back().get_num_tokens();
+  if (request.blocks.empty()) {
+    return 0;
+  }
+  return request.blocks.back().get_num_tokens();
+}
+
+// get the index of the last token in the request
+int RequestManager::get_idx_last_logical_token(Request &request) const {
+  if (request.blocks.empty()) {
+    printf("Error: request.blocks is empty\n");
+    return -1;
+  } else {
+    return (request.blocks.size() - 1) * kPagesize +
+           request.blocks.back().get_num_tokens() - 1;
+  }
+}
+
+int RequestManager::idx_logical_to_physical(Request &request, int idx_logical) {
+  // get physical indices
+  PageManager *page_manager = PageManager::get_page_manager();
+  std::vector<int> block_table_indices =
+      page_manager->get_block_table_indices(request.guid);
+  return block_table_indices[idx_logical / kPagesize] * kPagesize +
+         idx_logical % kPagesize;
+}
+
+// this will allocate one logical block and one physical block to the request
+void RequestManager::_append_block_to_request(Request &request,
+                                              bool is_commit) {
+  PageManager *page_manager = PageManager::get_page_manager();
+  // Append the logical block to the request
+  // page attention: in this function we need to remember the last logical block
+  // number that still contains committed tokens
+  LogicalTokenBlock block(request.blocks.size(), kPagesize);
+  request.blocks.push_back(block);
+  page_manager->allocate_one_block(request.guid);
+  std::vector<int> block_table_indices =
+      page_manager->get_block_table_indices(request.guid);
+  // update page_id_commit
+  if (is_commit) {
+    request.page_last_committed++;
+    int size_blocks = request.blocks.size();
+  }
+}
+
+// this function is used for appending a token to the last logical block and
+// also the last physical block it will return the physical position of this
+// token
+int RequestManager::append_token_to_block(Request &request,
+                                          TokenId token,
+                                          bool is_commit) {
+  PageManager *page_manager = PageManager::get_page_manager();
+  if (request.blocks.empty() || request.blocks.back().is_full()) {
+    // Append a new logical block
+    _append_block_to_request(request, is_commit);
+    // also allocate one physical page
+  }
+  // insert token to both logical block and physical block
+  request.blocks.back().append_tokens({token}, is_commit);
+  int idx_logical = get_idx_last_logical_token(request);
+  assert(idx_logical >= 0);
+  int idx_physical = idx_logical_to_physical(request, idx_logical);
+  assert(idx_physical >= 0);
+  return idx_physical;
+}
+
+void RequestManager::reset_block_table(Request &request) {
+  // get the indices of original physical block table for request
+  PageManager *page_manager = PageManager::get_page_manager();
+  assert(request.page_last_committed < static_cast<int>(request.blocks.size()));
+  std::vector<int> block_table_indices =
+      page_manager->get_block_table_indices(request.guid);
+  // reset the block table according to the request's page_last_commit
+  page_manager->free_multiple_blocks(request.guid,
+                                     block_table_indices.size() -
+                                         request.page_last_committed - 1);
+  // reset this request's logical block table
+  if (request.page_last_committed < static_cast<int>(request.blocks.size())) {
+    request.blocks.erase(request.blocks.begin() + request.page_last_committed +
+                             1,
+                         request.blocks.end());
+  }
+  request.blocks.back().reset_num_spec_tokens();
+  // the indices of block table should be the same as the number of blocks
+  std::vector<int> block_table =
+      page_manager->get_block_table_indices(request.guid);
+  return;
+}
+
+
 
 /* ----- Speculative Inference Specific functions ----- */
 
@@ -3634,6 +3752,10 @@ void RequestManager::background_serving_task(
       ssm->config.lg_ctx = ctx;
     }
   }
+
+  // page attention: initalize the page manager here
+  int kv_cache_size = rm->get_max_kv_cache_size();
+  PageManager::get_page_manager(llm, rm->get_max_kv_cache_size());
 
   // Checkpoint print
   print_timestamped_message(
