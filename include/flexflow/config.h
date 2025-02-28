@@ -16,8 +16,8 @@
 #ifndef _FLEXFLOW_CONFIG_H_
 #define _FLEXFLOW_CONFIG_H_
 #include "ffconst.h"
-#include "flexflow/batch_config.h"
 #include "flexflow/attention_config.h"
+#include "flexflow/batch_config.h"
 #include "legion.h"
 #include <cstring>
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
@@ -101,7 +101,7 @@ struct FFHandler {
   void *workSpace;
   size_t workSpaceSize;
   CombinedBatchConfigMetaStruct *batch_config_metadata;
-  
+
   // flashinfer
   AttentionMetaData *incr_attention_metadata;
 

@@ -75,10 +75,10 @@ public:
   static int max_verify_tokens_per_batch();
   static int max_spec_tree_token_num();
   static int max_sequence_length();
-  
+
   // paged attention
   static size_t max_kv_cache_size();
-  
+
   friend std::ostream &operator<<(std::ostream &os, BatchConfig const &bc);
   void print() const;
   void save_to_file(std::string const &filename) const;

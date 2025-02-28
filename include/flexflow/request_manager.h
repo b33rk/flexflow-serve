@@ -190,7 +190,7 @@ public:
   int get_max_verify_tokens_per_batch();
   int get_max_sequence_length();
   void set_max_sequence_length(int max_seq_length);
-  
+
   // paged attention
   void set_max_kv_cache_size(size_t max_kv_cache_size);
   size_t get_max_kv_cache_size();
@@ -202,7 +202,7 @@ public:
   int append_token_to_block(Request &request, TokenId token, bool is_commit);
   void reset_block_table(Request &request);
   void print_num_tokens(Request &request);
-  
+
   void push_spec_infer_tree_width(int tree_width);
   void set_enable_peft_finetuning(bool enable_peft_finetuning_);
   void set_inference_finished(bool finished = true);
@@ -407,7 +407,7 @@ private:
   int max_fwd_finetuning_tokens_per_batch;
   int max_spec_tree_token_num;
   int max_sequence_length;
-  
+
   // paged attention
   size_t max_kv_cache_size;
 

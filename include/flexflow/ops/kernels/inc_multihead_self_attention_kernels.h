@@ -71,8 +71,8 @@ void update_qkv_in_batch(IncMultiHeadSelfAttentionMeta const *m,
                          cudaStream_t stream);
 template <typename DT>
 void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
-                               BatchConfig const *bc,
-                               cudaStream_t stream);
+                                       BatchConfig const *bc,
+                                       cudaStream_t stream);
 template <typename DT>
 void produce_output(IncMultiHeadSelfAttentionMeta const *m,
                     BatchConfig const *bc,

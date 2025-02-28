@@ -917,7 +917,7 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
   // page attention: free the pages
   PageManager *page_manager = PageManager::get_page_manager();
   page_manager->free_request(request.guid);
-  
+
   GenerationResult &gr = request_generation_results[request.guid];
   std::vector<int> output_tokens = std::vector<int>(
       request.tokens.begin() + gr.input_tokens.size(), request.tokens.end());
@@ -1083,9 +1083,9 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
     new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request = depth;
     assert(depth < new_request.tokens.size());
     new_bc.tokensInfo[new_bc.num_tokens].token_id = new_request.tokens[depth];
-    
+
     append_token_to_block(new_request, new_request.tokens[depth], true);
-    
+
     new_bc.num_tokens++;
   }
 
@@ -1829,8 +1829,6 @@ void RequestManager::reset_block_table(Request &request) {
       page_manager->get_block_table_indices(request.guid);
   return;
 }
-
-
 
 /* ----- Speculative Inference Specific functions ----- */
 

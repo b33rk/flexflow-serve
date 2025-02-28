@@ -179,16 +179,15 @@ public:
 
   // GPU memory sizes (or num elements)
   size_t gqa_ptr_array_size = 0;
-  size_t key_cache_size = 0, value_cache_size = 0; // numel
+  size_t key_cache_size = 0, value_cache_size = 0;           // numel
   size_t peft_key_cache_size = 0, peft_value_cache_size = 0; // numel
-  size_t qkv_max_proj_size, qkv_max_proj_size_bwd=0; // numel
-  size_t query_tmp_size = 0, output_tmp_size = 0; // numel
-  size_t complex_size = 0, complex_size_bwd = 0; // numel
-  size_t qk_prod_size = 0; // numel
-  size_t allocated_peft_buffer_size1 = 0, 
-         allocated_peft_buffer_size2 = 0,
+  size_t qkv_max_proj_size, qkv_max_proj_size_bwd = 0;       // numel
+  size_t query_tmp_size = 0, output_tmp_size = 0;            // numel
+  size_t complex_size = 0, complex_size_bwd = 0;             // numel
+  size_t qk_prod_size = 0;                                   // numel
+  size_t allocated_peft_buffer_size1 = 0, allocated_peft_buffer_size2 = 0,
          peft_token_infos_size = 0;
-  
+
   void *devQKVProjArray, *devQKVProjArrayBWD;
   void *kvCache, *keyCache, *valueCache;
   void *keyCachePeft, *valueCachePeft;
@@ -199,7 +198,6 @@ public:
   BatchConfig::PerTokenInfo *token_infos;
   BatchConfig::PerRequestInfo *request_infos;
   bool *request_completed;
-  
 
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
   cudnnTensorDescriptor_t qk_tensor;
@@ -211,14 +209,13 @@ public:
 
   // GQA
   void **d_A_array, **d_B_array, **d_C_array;
-  
+
   // PEFT specific fields
   void **d_A_array2, **d_B_array2, **d_C_array2;
   void *softmax_activation_buffer;
   void *query_activation_buffer;
   BatchConfig::PerTokenInfo *peft_token_infos = nullptr;
   BatchConfig::PerTokenInfo *peft_token_infos_device;
-  
 };
 
 }; // namespace FlexFlow

@@ -192,9 +192,9 @@ FFHandler
     Memory gpu_mem = get_proc_mem(Machine::get_machine(), task->target_proc);
     Realm::Rect<1, coord_t> bounds(
         Realm::Point<1, coord_t>(0),
-        Realm::Point<1, coord_t>(
-            handle.batch_config_metadata_size +
-            handle.incr_attention_metadata->mem_size() - 1));
+        Realm::Point<1, coord_t>(handle.batch_config_metadata_size +
+                                 handle.incr_attention_metadata->mem_size() -
+                                 1));
     std::vector<size_t> field_sizes;
     field_sizes.push_back(sizeof(char));
     Realm::RegionInstance workspaceInst;

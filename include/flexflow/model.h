@@ -1095,7 +1095,7 @@ public:
                CompMode comp_mode = COMP_MODE_TRAINING);
   void compile_inference();
   void set_transformer_layer_id(int id);
-  
+
   // paged attention
   void set_num_transformer_layers(int num_layers);
   void set_num_kv_heads(int num_heads);
@@ -1165,7 +1165,7 @@ public:
   size_t op_global_guid, layer_global_guid, peft_model_global_guid;
   size_t tensor_global_guid, parallel_tensor_global_guid, node_global_guid;
   size_t current_transformer_layer_id;
-  
+
   // paged attention
   int num_transformer_layers;
   int num_kv_heads;

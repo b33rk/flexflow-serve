@@ -13,10 +13,10 @@
  * limitations under the License.
  */
 
-#include "flexflow/request_manager.h"
-#include "flexflow/utils/cuda_helper.h"
 #include "flashinfer/decode_attention_decl.cuh"
 #include "flashinfer/prefill_attention_decl.cuh"
+#include "flexflow/request_manager.h"
+#include "flexflow/utils/cuda_helper.h"
 
 namespace FlexFlow {
 
@@ -341,23 +341,21 @@ void RequestManager::load_batch_config_task(
 
         handler->SetCUDAStream(stream);
         handler->BeginForward<half, int32_t>(
-              static_cast<void *>(
-                  handle.incr_attention_metadata->float_workspace),
-              handle.incr_attention_metadata->float_workspace_size,
-              static_cast<void *>(
-                  handle.incr_attention_metadata->int_workspace),
-              handle.incr_attention_metadata->int_workspace_size,
-              static_cast<int32_t *>(q_indptr_h),
-              static_cast<int32_t *>(kv_indptr_h),
-              batch_size,
-              handle.incr_attention_metadata->num_q_heads(),
-              handle.incr_attention_metadata->num_kv_heads(),
-              handle.incr_attention_metadata->head_dim(),
-              kPagesize);
+            static_cast<void *>(
+                handle.incr_attention_metadata->float_workspace),
+            handle.incr_attention_metadata->float_workspace_size,
+            static_cast<void *>(handle.incr_attention_metadata->int_workspace),
+            handle.incr_attention_metadata->int_workspace_size,
+            static_cast<int32_t *>(q_indptr_h),
+            static_cast<int32_t *>(kv_indptr_h),
+            batch_size,
+            handle.incr_attention_metadata->num_q_heads(),
+            handle.incr_attention_metadata->num_kv_heads(),
+            handle.incr_attention_metadata->head_dim(),
+            kPagesize);
       }
     }
   }
-
 }
 
 void RequestManager::load_positions_task(
