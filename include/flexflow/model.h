@@ -1121,6 +1121,7 @@ public:
                      bool use_propagation) const;
 #ifdef FF_USE_NCCL
   ncclComm_t *find_nccl_comms(MachineView const &view) const;
+  ncclComm_t *find_nccl_comms_peft(MachineView const &view) const;
   void finish_nccl_comms();
 #endif
 #ifdef FF_USE_PROPAGATE
@@ -1319,6 +1320,7 @@ public:
                 // inference_debugging mode.
 #ifdef FF_USE_NCCL
   std::unordered_map<size_t, ncclComm_t *> view_hash_to_nccl_comms;
+  std::unordered_map<size_t, ncclComm_t *> view_hash_to_nccl_comms_peft;
 #endif
 private:
   bool debug;

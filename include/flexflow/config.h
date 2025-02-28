@@ -114,6 +114,7 @@ struct FFHandler {
   bool allowTensorOpMathConversion;
 #ifdef FF_USE_NCCL
   ncclComm_t ncclComm;
+  ncclComm_t ncclCommPeft;
 #endif
 };
 

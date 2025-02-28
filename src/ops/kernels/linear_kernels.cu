@@ -569,8 +569,8 @@ void peft_bwd_kernel(LinearMeta const *m,
                      int in_dim,
                      int out_dim,
                      ffStream_t stream) {
-  checkCUDA(cublasSetStream(m->handle.blas, stream));
-  checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
+  checkCUDA(cublasSetStream(m->handle.peft_blas, stream));
+  checkCUDNN(cudnnSetStream(m->handle.peft_dnn, stream));
 
   assert(
       bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id));
@@ -619,7 +619,7 @@ void peft_bwd_kernel(LinearMeta const *m,
   }
 
   if (input_grad_ptr != NULL) {
-    checkCUDA(cublasGemmEx(m->handle.blas,
+    checkCUDA(cublasGemmEx(m->handle.peft_blas,
                            CUBLAS_OP_N,
                            CUBLAS_OP_N,
                            in_dim,

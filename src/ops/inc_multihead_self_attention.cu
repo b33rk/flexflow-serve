@@ -828,10 +828,10 @@ void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
                               BatchConfig const *bc,
                               int shard_id,
                               DT *output_ptr,
-                              cudaStream_t stream) {
+                              cudaStream_t inf_stream) {
 
-  checkCUDA(cublasSetStream(m->handle.blas, stream));
-  checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
+  checkCUDA(cublasSetStream(m->handle.blas, inf_stream));
+  checkCUDNN(cudnnSetStream(m->handle.dnn, inf_stream));
   assert(m->qProjSize == m->kProjSize && m->qProjSize == m->vProjSize);
 
   int num_tokens = bc->num_active_tokens();
@@ -841,7 +841,7 @@ void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
     scaling_query_kernel<<<GET_BLOCKS(parallelism),
                            min(CUDA_NUM_THREADS, parallelism),
                            0,
-                           stream>>>(output_ptr,
+                           inf_stream>>>(output_ptr,
                                      m->qProjSize,
                                      num_tokens,
                                      m->num_q_heads,
@@ -859,7 +859,7 @@ void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
     apply_rotary_embedding_fwd<<<GET_BLOCKS(parallelism),
                                  min(CUDA_NUM_THREADS, parallelism),
                                  0,
-                                 stream>>>(
+                                 inf_stream>>>(
         output_ptr,
         m->complex_input,
         m->token_infos,

@@ -220,6 +220,7 @@ FFHandler
 // checkCUDA(cudaMalloc(&handle.workSpace, handle.workSpaceSize));
 #ifdef FF_USE_NCCL
   handle.ncclComm = NULL;
+  handle.ncclCommPeft = NULL;
 #endif
   return handle;
 }
