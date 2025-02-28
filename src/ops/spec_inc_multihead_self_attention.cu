@@ -370,9 +370,7 @@ void update_kv_cache_kernel(SpecIncMultiHeadSelfAttentionMeta const *m,
                             cudaStream_t stream) {
   int num_tokens = bc->num_active_tokens();
   int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
-  assert(m->hidden_size % m->num_q_heads == 0);
-  int head_dim = m->hidden_size / m->num_q_heads;
-  assert(head_dim == m->qProjSize);
+  int head_dim = m->qProjSize;
   int curr_depth = bc->beamRequestsInfo[0].current_depth;
   if (num_tokens > 0) {
     int parallelism = head_dim * tot_num_heads * num_tokens;

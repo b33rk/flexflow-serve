@@ -189,7 +189,7 @@ public:
          allocated_peft_buffer_size2 = 0,
          peft_token_infos_size = 0;
   
-  void *devQKVProjArray;
+  void *devQKVProjArray, *devQKVProjArrayBWD;
   void *kvCache, *keyCache, *valueCache;
   void *keyCachePeft, *valueCachePeft;
   void *qk_prods, *qk_prods_softmax;
@@ -198,14 +198,15 @@ public:
 
   BatchConfig::PerTokenInfo *token_infos;
   BatchConfig::PerRequestInfo *request_infos;
+  bool *request_completed;
   
 
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
   cudnnTensorDescriptor_t qk_tensor;
-  cuFloatComplex *complex_input;
+  cuFloatComplex *complex_input, *complex_input_bwd;
 #elif defined(FF_USE_HIP_ROCM)
   miopenTensorDescriptor_t qk_tensor;
-  hipFloatComplex *complex_input;
+  hipFloatComplex *complex_input, *complex_input_bwd;
 #endif
 
   // GQA

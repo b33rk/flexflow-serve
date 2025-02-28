@@ -383,8 +383,7 @@ template <typename DT>
 void commit_tokens(TreeIncMultiHeadSelfAttentionMeta const *m,
                    TreeVerifyBatchConfig const *bc,
                    cudaStream_t stream) {
-  int head_dim = m->hidden_size / m->num_q_heads;
-  assert(head_dim == m->qProjSize);
+  int head_dim = m->qProjSize;
   // int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
   int num_tokens_to_commit = bc->num_tokens_to_commit;
   if (num_tokens_to_commit > 0) {
@@ -510,8 +509,7 @@ void compute_attention_kernel_fused(TreeIncMultiHeadSelfAttentionMeta const *m,
 
   // update the kv cache
   //  update K-V cache
-  int head_dim = m->hidden_size / m->num_q_heads;
-  assert(head_dim == m->qProjSize);
+  int head_dim = m->qProjSize;
   int num_new_tokens = bc->num_active_tokens();
   int parallelism = head_dim * m->num_kv_heads * num_new_tokens;
   update_tree_branch_kv_cache_fused<<<GET_BLOCKS(parallelism),

@@ -501,7 +501,6 @@ OpMeta *TreeIncMultiHeadSelfAttention::init_task(
                                        ctx,
                                        runtime);
 
-  int num_samples = input.domain.hi()[2] - input.domain.lo()[2] + 1;
   assert(attn->qoSeqLength == input.domain.hi()[1] - input.domain.lo()[1] + 1);
   assert(attn->kvSeqLength == input.domain.hi()[1] - input.domain.lo()[1] + 1);
 
@@ -519,7 +518,7 @@ OpMeta *TreeIncMultiHeadSelfAttention::init_task(
         handle.offload_reserve_space, handle.offload_reserve_space_size);
   }
   TreeIncMultiHeadSelfAttentionMeta *m = new TreeIncMultiHeadSelfAttentionMeta(
-      handle, attn, gpu_mem_allocator, num_samples, num_q_heads, num_kv_heads);
+      handle, attn, gpu_mem_allocator, num_q_heads, num_kv_heads);
   if (!attn->offload) {
     // assert that we didn't over allocate memory
     assert(gpu_mem_allocator.reserved_allocated_size ==

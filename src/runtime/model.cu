@@ -182,10 +182,10 @@ FFHandler
     handle.batch_config_metadata = nullptr;
   }
 
-  // std::cout << "handle.batch_config_metadata_size: "
-  //           << handle.batch_config_metadata_size << std::endl;
-  // std::cout << "handle.incr_attention_metadata->mem_size(): "
-  //           << handle.incr_attention_metadata->mem_size() << std::endl;
+  std::cout << "handle.batch_config_metadata_size: "
+            << handle.batch_config_metadata_size << std::endl;
+  std::cout << "handle.incr_attention_metadata->mem_size(): "
+            << handle.incr_attention_metadata->mem_size() << std::endl;
   if (handle.batch_config_metadata_size +
       handle.incr_attention_metadata->mem_size()) {
     // allocate memory for offload reserve space
@@ -194,9 +194,7 @@ FFHandler
         Realm::Point<1, coord_t>(0),
         Realm::Point<1, coord_t>(
             handle.batch_config_metadata_size +
-            handle.incr_attention_metadata->mem_size() +
-            handle.tree_search_attention_metadata->mem_size() +
-            handle.tree_verify_attention_metadata->mem_size() - 1));
+            handle.incr_attention_metadata->mem_size() - 1));
     std::vector<size_t> field_sizes;
     field_sizes.push_back(sizeof(char));
     Realm::RegionInstance workspaceInst;

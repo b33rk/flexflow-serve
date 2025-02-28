@@ -120,8 +120,6 @@ public:
     int max_length;
 
     // paged attention
-    RequestGuid request_guid;
-
     static constexpr size_t request_guid_size = sizeof(RequestGuid);
     static constexpr size_t alignment = 16;
     static constexpr size_t padding_size =

@@ -348,9 +348,8 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   int num_new_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
   int total_tokens = bc->requestsInfo[req_idx].first_token_depth_in_request +
                       bc->requestsInfo[req_idx].num_tokens_in_batch;
-  if (num_new_tokens <= 0) {
-    continue;
-  }
+  assert(num_new_tokens > 0 && total_tokens > 0);
+
   // Copy query to m->query_activation_buffer for BWD
   // int max_peft_tokens = bc->requestsInfo[i].max_length;
   int max_peft_tokens = BatchConfig::max_sequence_length();
@@ -890,7 +889,8 @@ __global__ void update_kv_cache_kernel_flashinfer_kernel(
     half *kvCache_ptr,
     int32_t *kv_indptr,
     int32_t *kv_page_indices,
-    bool const *request_available,
+    bool const *request_completed,
+    int peft_req_idx,
     BatchConfig::PerTokenInfo const *tokenInfos,
     int num_q_heads,
     int num_kv_heads,
@@ -906,13 +906,13 @@ __global__ void update_kv_cache_kernel_flashinfer_kernel(
     return;
   }
   int const req_idx = tokenInfos[token_idx].request_index;
-  int token_abs_idx = tokenInfos[token_idx].abs_index_in_request;
+  int token_abs_idx = tokenInfos[token_idx].abs_depth_in_request;
   // calculate the compact request index in the easiest way
   // TODO: recheck
   int req_idx_compact = -1;
   int cnt = 0;
   while (cnt < req_idx + 1) {
-    if (request_available[cnt]) {
+    if (!request_completed[cnt] && cnt != peft_req_idx) {
       req_idx_compact++;
     }
     cnt++;
@@ -945,20 +945,16 @@ __global__ void update_kv_cache_kernel_flashinfer_kernel(
 template <typename DT>
 void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
                                BatchConfig const *bc,
-                               cudaStream_t stream,
-                               bool is_spec) {
+                               cudaStream_t stream) {
   // printf("entered update_qkv_in_batch_verify\n");
   int num_new_tokens = bc->num_active_tokens();
   if (num_new_tokens == 0) {
     return;
   }
-  int parallelism = m->local_hidden_size * num_new_tokens;
-  int32_t *kv_indptr = is_spec
-                           ? m->handle.tree_verify_attention_metadata->kv_indptr
-                           : m->handle.incr_attention_metadata->kv_indptr;
-  int32_t *kv_indices =
-      is_spec ? m->handle.tree_verify_attention_metadata->kv_indices
-              : m->handle.incr_attention_metadata->kv_indices;
+  int parallelism = m->qProjSize * m->num_q_heads * num_new_tokens;
+  int peft_req_idx = bc->finetuning_request_index();
+  int32_t *kv_indptr = m->handle.incr_attention_metadata->kv_indptr;
+  int32_t *kv_indices = m->handle.incr_attention_metadata->kv_indices;
   update_kv_cache_kernel_flashinfer_kernel<<<GET_BLOCKS(parallelism),
                                      min(CUDA_NUM_THREADS, parallelism),
                                      0,
@@ -968,11 +964,12 @@ void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
       static_cast<half *>(m->kvCache),
       kv_indptr,
       kv_indices,
-      m->request_available,
+      m->request_completed,
+      peft_req_idx,
       m->token_infos,
       m->num_q_heads,
       m->num_kv_heads,
-      m->qk_dim,
+      m->qProjSize,
       num_new_tokens);
 }
 
@@ -988,7 +985,7 @@ void update_kv_cache_kernel_peft(IncMultiHeadSelfAttentionMeta const *m,
   int i = bc->finetuning_request_index();
   int tokens_previous_requests =
       bc->requestsInfo[i].first_token_offset_in_batch;
-  DT *qkv_ptr = static_cast<DT *>(m->devQKVProjArray) + qProjSize * tot_num_heads * tokens_previous_requests;
+  DT *qkv_ptr = static_cast<DT *>(m->devQKVProjArray) + m->qProjSize * tot_num_heads * tokens_previous_requests;
   
   int parallelism = head_dim * tot_num_heads * num_tokens;
   // devQKVProj has shape [qProjSize, tot_num_heads, num_new_tokens]
@@ -1008,6 +1005,31 @@ void update_kv_cache_kernel_peft(IncMultiHeadSelfAttentionMeta const *m,
 }
 
 template <typename DT>
+__global__ void produce_output_kernel(DT const *input_ptr,
+                                      DT *output_ptr,
+                                      int parallelism) {
+  CUDA_KERNEL_LOOP(idx, parallelism) {
+    output_ptr[idx] = static_cast<DT>(input_ptr[idx]);
+  }
+}
+
+template <typename DT>
+void produce_output(IncMultiHeadSelfAttentionMeta const *m,
+                    BatchConfig const *bc,
+                    DT *output_ptr,
+                    cudaStream_t stream) {
+  int const num_tokens = bc->num_active_tokens();
+  if (num_tokens == 0) {
+    return;
+  }
+  int parallelism = m->vProjSize * m->num_q_heads * num_tokens;
+  produce_output_kernel<<<GET_BLOCKS(parallelism),
+                          min(CUDA_NUM_THREADS, parallelism),
+                          0,
+                          stream>>>(static_cast<DT*>(m->outputTmp), output_ptr, parallelism);
+}
+
+template <typename DT>
 void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
                     BatchConfig const *bc,
                     DT *output_ptr,
@@ -1016,9 +1038,9 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   // global constant parameters
   uint32_t const num_q_heads = m->num_q_heads;
   uint32_t const num_kv_heads = m->num_kv_heads;
-  uint32_t const head_dim = m->qk_dim;
+  uint32_t const head_dim = m->qProjSize;
   uint32_t const batch_size = bc->num_active_requests();
-  float const sm_scale = (*m->qk_prod_scaling) ? 1.0f / sqrt(m->qk_dim) : 1.0f;
+  float const sm_scale = (*m->qk_prod_scaling) ? 1.0f / sqrt(m->qProjSize) : 1.0f;
   assert(batch_size > 0);
   assert(num_q_heads > 0);
   assert(num_kv_heads > 0);
@@ -1078,7 +1100,7 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
                                std::string(cudaGetErrorString(result)));
     }
   });
-  
+
   produce_output(m, bc, output_ptr, stream);
 
 }
@@ -1149,8 +1171,9 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   }
 
   // flashinfer sdpa
-  {
-    update_kv_cache_kernel_flashinfer<DT>(m, bc, inf_stream, false);
+  assert(bc->num_finetuning_fwd_tokens() >=0 && bc->num_finetuning_bwd_tokens() >=0);
+  if (bc->num_active_tokens()-bc->num_finetuning_fwd_tokens()-bc->num_finetuning_bwd_tokens() > 0) {
+    update_kv_cache_kernel_flashinfer<DT>(m, bc, inf_stream);
     flashinfer_incr_attention<DT>(m, bc, output_ptr, inf_stream);
   }
 
@@ -1251,10 +1274,10 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                      int shard_id,
                      DT *input_grad_ptr,
                      DT const *output_grad_ptr,
-                     cudaStream_t stream) {
+                     cudaStream_t peft_stream) {
   assert(!m->offload);
-  checkCUDA(cublasSetStream(m->handle.blas, stream));
-  checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
+  checkCUDA(cublasSetStream(m->handle.peft_blas, peft_stream));
+  checkCUDNN(cudnnSetStream(m->handle.peft_dnn, peft_stream));
   cudaDataType_t cublas_data_type = ff_to_cuda_datatype(m->output_type[0]);
   cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
   assert(data_type_size(m->output_type[0]) == sizeof(DT));
@@ -1271,6 +1294,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   assert(num_tokens == num_total_tokens);
   assert(num_total_tokens == bc->requestsInfo[i].max_length);
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
+  assert(bc->requestsInfo[i].first_token_offset_in_batch == 0);
 
   // Step 1: copy gradient before final projection into workspace
   {
@@ -1283,7 +1307,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                             m->oProjSize,
                     m_ * n_ * sizeof(DT),
                     cudaMemcpyDeviceToDevice,
-                    stream);
+                    peft_stream);
     if (m->inference_debugging) {
       // save result to file for checking
       std::string filename =
@@ -1321,7 +1345,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideA = num_tokens * num_tokens; // num_new_tokens * total_tokens
     int strideB = m->vProjSize;
     int strideC = num_tokens * m->vProjSize;
-    checkCUDA(cublasGemmStridedBatchedEx(m->handle.blas,
+    checkCUDA(cublasGemmStridedBatchedEx(m->handle.peft_blas,
                                          CUBLAS_OP_T,
                                          CUBLAS_OP_T,
                                          m_,
@@ -1381,7 +1405,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideC = num_tokens * num_tokens; // num_new_tokens * total_tokens
 
     run_batched_matmul<DT>(m,
-                           m->handle.blas,
+                           m->handle.peft_blas,
                            CUBLAS_OP_T,
                            CUBLAS_OP_N,
                            m_,
@@ -1404,7 +1428,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                            m->num_q_heads,
                            compute_type,
                            CUBLAS_GEMM_DEFAULT_TENSOR_OP,
-                           stream,
+                           peft_stream,
                            1,
                            m->num_q_heads / m->num_kv_heads,
                            1,
@@ -1435,7 +1459,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                           c_param,
                                           h_param,
                                           w_param));
-    checkCUDNN(cudnnSoftmaxBackward(m->handle.dnn,
+    checkCUDNN(cudnnSoftmaxBackward(m->handle.peft_dnn,
                                     CUDNN_SOFTMAX_ACCURATE,
                                     CUDNN_SOFTMAX_MODE_CHANNEL,
                                     &alpha,
@@ -1467,7 +1491,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
       fill_entries_above_diagonal<<<GET_BLOCKS(parallelism),
                                     min((size_t)CUDA_NUM_THREADS, parallelism),
                                     0,
-                                    stream>>>(static_cast<DT *>(m->qk_prods),
+                                    peft_stream>>>(static_cast<DT *>(m->qk_prods),
                                               num_tokens,
                                               num_tokens,
                                               m->num_q_heads,
@@ -1514,7 +1538,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideA = num_tokens * num_tokens;
     int strideB = m->kProjSize;
     int strideC = num_tokens * m->kProjSize;
-    checkCUDA(cublasGemmStridedBatchedEx(m->handle.blas,
+    checkCUDA(cublasGemmStridedBatchedEx(m->handle.peft_blas,
                                          CUBLAS_OP_T,
                                          CUBLAS_OP_T,
                                          m_,
@@ -1577,7 +1601,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideB = m->qProjSize;
     int strideC = num_tokens * m->qProjSize;
     run_batched_matmul<DT>(m,
-                           m->handle.blas,
+                           m->handle.peft_blas,
                            CUBLAS_OP_N,
                            CUBLAS_OP_T,
                            m_,
@@ -1600,7 +1624,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                            m->num_q_heads,
                            compute_type,
                            CUBLAS_GEMM_DEFAULT_TENSOR_OP,
-                           stream,
+                           peft_stream,
                            1,
                            m->num_q_heads / m->num_kv_heads,
                            1,
@@ -1620,7 +1644,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                 m->peft_token_infos,
                                 m->peft_token_infos_size,
                                 cudaMemcpyHostToDevice,
-                                stream));
+                                peft_stream));
       assert(m->qProjSize == m->kProjSize);
       /*q&k*/
       int half_proj = m->qProjSize / 2;
@@ -1630,7 +1654,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
       apply_rotary_embedding_bwd<<<GET_BLOCKS(parallelism),
                                    min(CUDA_NUM_THREADS, parallelism),
                                    0,
-                                   stream>>>(
+                                   peft_stream>>>(
           static_cast<DT *>(m->devQKVProjArrayBWD),
           m->complex_input,
           m->peft_token_infos_device,
@@ -1687,7 +1711,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     // do further calculation in a way different than the usual dense layer,
     // they are off by a transpose. So an explicit transpose is needed here.
     // The add here is just for gradient accumulation.
-    transposeAdd(C, B, n_, k_, alpha, beta, stream);
+    transposeAdd(C, B, n_, k_, alpha, beta, peft_stream);
 
     if (m->inference_debugging) {
       std::string filename =
@@ -1714,12 +1738,12 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
   cudaStream_t peft_stream;
   checkCUDA(get_legion_stream(&peft_stream));
 
-  cudaEvent_t t_start, t_end;
-  if (m->profiling) {
-    cudaEventCreate(&t_start);
-    cudaEventCreate(&t_end);
-    cudaEventRecord(t_start, stream);
-  }
+  // cudaEvent_t t_start, t_end;
+  // if (m->profiling) {
+  //   cudaEventCreate(&t_start);
+  //   cudaEventCreate(&t_end);
+  //   cudaEventRecord(t_start, stream);
+  // }
 
   assert(input.data_type == output.data_type);
 
@@ -1733,15 +1757,15 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
     assert(false && "Unspported data type");
   }
 
-  if (m->profiling) {
-    cudaEventRecord(t_end, stream);
-    checkCUDA(cudaEventSynchronize(t_end));
-    float elapsed = 0;
-    checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
-    cudaEventDestroy(t_start);
-    cudaEventDestroy(t_end);
-    printf("IncMultiHeadSelfAttention forward time = %.9fms\n", elapsed);
-  }
+  // if (m->profiling) {
+  //   cudaEventRecord(t_end, stream);
+  //   checkCUDA(cudaEventSynchronize(t_end));
+  //   float elapsed = 0;
+  //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
+  //   cudaEventDestroy(t_start);
+  //   cudaEventDestroy(t_end);
+  //   printf("IncMultiHeadSelfAttention forward time = %.9fms\n", elapsed);
+  // }
 }
 
 /*static*/
@@ -2048,6 +2072,8 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
         handler.batch_config_metadata->tokens_info);
     request_infos = static_cast<BatchConfig::PerRequestInfo *>(
         handler.batch_config_metadata->requestsInfo);
+    request_completed =
+        static_cast<bool *>(handler.batch_config_metadata->request_completed);
 
     // allocate more size for quantization data
     if (quantization_type != DT_NONE) {
@@ -2136,20 +2162,6 @@ template void Kernels::IncMultiHeadAttention::run_batched_matmul<float>(
     int batch_ratio_c,
     bool bwd);
 
-template void
-    Kernels::IncMultiHeadAttention::compute_attention_kernel_generation<float>(
-        IncMultiHeadSelfAttentionMeta const *m,
-        BatchConfig const *bc,
-        float *output_ptr,
-        cudaStream_t stream);
-
-template void
-    Kernels::IncMultiHeadAttention::compute_attention_kernel_generation<half>(
-        IncMultiHeadSelfAttentionMeta const *m,
-        BatchConfig const *bc,
-        half *output_ptr,
-        cudaStream_t stream);
-
 template void Kernels::IncMultiHeadAttention::apply_scaling_and_rotary<float>(
     IncMultiHeadSelfAttentionMeta const *m,
     BatchConfig const *bc,
@@ -2167,13 +2179,23 @@ template void Kernels::IncMultiHeadAttention::apply_scaling_and_rotary<half>(
 template void Kernels::IncMultiHeadAttention::update_kv_cache_kernel_flashinfer<float>(
     IncMultiHeadSelfAttentionMeta const *m,
     BatchConfig const *bc,
-    cudaStream_t stream,
-    bool is_spec);
+    cudaStream_t stream);
 
 template void Kernels::IncMultiHeadAttention::update_kv_cache_kernel_flashinfer<half>(
     IncMultiHeadSelfAttentionMeta const *m,
     BatchConfig const *bc,
-    cudaStream_t stream,
-    bool is_spec);
+    cudaStream_t stream);
+
+template void Kernels::IncMultiHeadAttention::produce_output<float>(
+    IncMultiHeadSelfAttentionMeta const *m,
+    BatchConfig const *bc,
+    float *output_ptr,
+    cudaStream_t stream);
+
+template void Kernels::IncMultiHeadAttention::produce_output<half>(
+    IncMultiHeadSelfAttentionMeta const *m,
+    BatchConfig const *bc,
+    half *output_ptr,
+    cudaStream_t stream);
 
 }; // namespace FlexFlow

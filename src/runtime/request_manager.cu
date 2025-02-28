@@ -107,11 +107,11 @@ void prepare_inference_params_kernel_h(BatchConfig const *batch_config,
   for (int req_idx = 0, indptr_idx = 0;
        req_idx < batch_config->max_requests_per_batch();
        req_idx++) {
-    if (batch_config->request_available[req_idx]) {
+    if (!batch_config->request_completed[req_idx]) {
       int q_len = batch_config->requestsInfo[req_idx].num_tokens_in_batch;
       int kv_len =
           batch_config->requestsInfo[req_idx].num_tokens_in_batch +
-          batch_config->requestsInfo[req_idx].first_token_index_in_request;
+          batch_config->requestsInfo[req_idx].first_token_depth_in_request;
 
       q_lens += q_len;
       qk_lens += (q_len * kv_len + 7) / 8;
@@ -327,6 +327,7 @@ void RequestManager::load_batch_config_task(
       }
       // prepare attention forward handler
       {
+        int batch_size = batch_config->num_active_requests();
         BatchPrefillHandler *handler = nullptr;
         if (handle.incr_attention_metadata->prompt_handler_collections.count(
                 batch_size) == 0) {

@@ -72,8 +72,7 @@ void update_qkv_in_batch(IncMultiHeadSelfAttentionMeta const *m,
 template <typename DT>
 void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
                                BatchConfig const *bc,
-                               cudaStream_t stream,
-                               bool is_spec);
+                               cudaStream_t stream);
 template <typename DT>
 void produce_output(IncMultiHeadSelfAttentionMeta const *m,
                     BatchConfig const *bc,
@@ -85,11 +84,6 @@ void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                                      BatchConfig const *bc,
                                      int shard_id,
                                      ffStream_t stream);
-template <typename DT>
-void compute_attention_kernel_generation(IncMultiHeadSelfAttentionMeta const *m,
-                                         BatchConfig const *bc,
-                                         DT *output_ptr,
-                                         ffStream_t stream);
 
 template <typename DT>
 void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
