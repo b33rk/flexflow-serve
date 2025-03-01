@@ -141,7 +141,7 @@ void FlexFlow::top_level_task(Task const *task,
   int max_requests_per_batch = 8;
   int max_tokens_per_batch = 128;
   int max_sequence_length = 256;
-  size_t max_kv_cache_size = -1; // if -1, then use the default value
+  size_t max_kv_cache_size = 0; // if 0, then use the default value
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;

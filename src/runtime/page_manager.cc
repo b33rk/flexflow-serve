@@ -17,230 +17,141 @@
 
 namespace FlexFlow {
 
+int ceilDiv(int a, int b) {
+  assert(b!=0 && "Attempting to divide by 0");
+  assert(a>=0 && b > 0 && "Expected non-negative numbers");
+  return (a + b - 1) / b;
+}
+
 // For all runtime functions, they share a single page manager for pages
 // information
 PageManager *page_manager_singleton = nullptr;
 
-// the interface of logicaltokenblock
-LogicalTokenBlock::LogicalTokenBlock(int block_number, uint32_t block_size)
-    : block_number(block_number), block_size(block_size), num_tokens(0),
-      num_commit_tokens(0), num_spec_tokens(0) {}
+PageManager::PageManager(int tokens_per_page_, int tot_num_pages_) : 
+              tokens_per_page(tokens_per_page_), tot_num_pages(tot_num_pages_) {}
 
-bool LogicalTokenBlock::is_empty() const {
-  assert(num_spec_tokens == 0 && num_commit_tokens == 0);
-  assert(num_tokens <= block_size);
-  return num_tokens == 0;
+PageManager *PageManager::get_page_manager() {
+  assert(page_manager_singleton != nullptr && "PageManager not initialized");
+  return page_manager_singleton;
 }
 
-bool LogicalTokenBlock::is_full() const {
-  assert(num_spec_tokens + num_commit_tokens == num_tokens);
-  assert(num_tokens <= block_size);
-  return num_tokens == block_size;
-}
-
-int LogicalTokenBlock::get_num_empty_slots() const {
-  assert(num_spec_tokens + num_commit_tokens == num_tokens);
-  assert(num_tokens <= block_size);
-  return block_size - num_tokens;
-}
-
-int LogicalTokenBlock::get_num_alloc_slots() const {
-  assert(num_spec_tokens + num_commit_tokens == num_tokens);
-  assert(num_tokens <= block_size);
-  return num_tokens;
-}
-
-void LogicalTokenBlock::reset_num_spec_tokens() {
-  assert(num_spec_tokens + num_commit_tokens == num_tokens);
-  assert(num_tokens <= block_size);
-
-  num_tokens -= num_spec_tokens;
-  num_spec_tokens = 0;
-
-  assert(num_spec_tokens + num_commit_tokens == num_tokens);
-  assert(num_tokens <= block_size);
-}
-
-void LogicalTokenBlock::append_tokens(
-    std::vector<TokenId> const &token_ids_to_append, bool committed) {
-  assert(num_spec_tokens + num_commit_tokens == num_tokens);
-  assert(num_tokens <= block_size);
-  if (num_tokens + token_ids_to_append.size() > block_size) {
-    printf("block is full! Cannot append more tokens\n");
-    throw std::runtime_error("Block is full! Cannot append more tokens.");
-  }
-  token_ids.insert(
-      token_ids.end(), token_ids_to_append.begin(), token_ids_to_append.end());
-  num_tokens += token_ids_to_append.size();
-  if (committed) {
-    num_commit_tokens += token_ids_to_append.size();
-  } else {
-    num_spec_tokens += token_ids_to_append.size();
-  }
-  assert(num_spec_tokens + num_commit_tokens == num_tokens);
-  assert(num_tokens <= block_size);
-}
-
-std::vector<TokenId> LogicalTokenBlock::get_token_ids() const {
-  return token_ids;
-}
-
-PhysicalTokenBlock::PhysicalTokenBlock(int block_number, int block_size)
-    : block_number(block_number), block_size(block_size), ref_count(0) {}
-
-BlockAllocator::BlockAllocator(int block_size, int num_total_blocks) {
-  for (int block_number = 0; block_number < num_total_blocks; ++block_number) {
-    free_blocks.push_back(PhysicalTokenBlock(block_number, block_size));
-  }
-  num_total_blocks = num_total_blocks;
-}
-
-// Allocate a block
-PhysicalTokenBlock BlockAllocator::allocate() {
-  if (free_blocks.empty()) {
-    printf("no free blocks are available\n");
-    throw std::runtime_error("Out of memory! No free blocks are available.");
-  }
-  PhysicalTokenBlock block = free_blocks.front();
-  free_blocks.pop_front();
-  block.incr_ref_count();
-  return block;
-}
-
-// Free a block
-void BlockAllocator::free(PhysicalTokenBlock &block) {
-  if (block.ref_count == 0) {
-    printf("block is already freed\n");
-    throw std::runtime_error("Double free! Block is already freed.");
-  }
-  block.decr_ref_count();
-  if (block.ref_count == 0) {
-    free_blocks.push_back(block);
-  } else {
-    // in current implementation this should not be the case
-    printf("block is not freed. Ref count: %d\n", block.ref_count);
-    throw std::runtime_error("Block is not freed. Ref count: " +
-                             std::to_string(block.ref_count));
-  }
-}
-
-int BlockAllocator::get_num_free_blocks() const {
-  return free_blocks.size();
-}
-
-PageManager::PageManager(int block_size, size_t num_total_blocks)
-    : block_size(block_size), num_total_blocks(num_total_blocks),
-      block_allocator(block_size, num_total_blocks) {}
-
-// return the physical number of this block
-int PageManager::allocate_one_block(RequestGuid const &request_guid) {
-  BlockTable &block_table = block_tables[request_guid];
-
-  PhysicalTokenBlock block = block_allocator.allocate();
-  block_table.push_back(block);
-  block_tables[request_guid] = block_table;
-  return block.get_block_number();
-}
-
-void PageManager::free_block_table(BlockTable &block_table) {
-  // make it reverse order to free the last allocated block first
-  BlockTable::reverse_iterator rit = block_table.rbegin();
-  for (; rit != block_table.rend(); ++rit) {
-    block_allocator.free(*rit);
-  }
-  return;
-}
-
-void PageManager::free_request(RequestGuid const &request_guid) {
-  // we only free the blocks that are already used
-  BlockTable block_table = block_tables[request_guid];
-  free_block_table(block_table);
-  block_tables.erase(request_guid);
-  return;
-}
-
-// delete the last num_blocks in the request_guid
-void PageManager::free_multiple_blocks(RequestGuid const &request_guid,
-                                       int num_blocks) {
-  // assert(block_tables.find(request_guid) != block_tables.end());
-  auto &block_table = block_tables[request_guid];
-  // assert(num_blocks <= block_table.size());
-  int num_blocks_allocated = block_table.size();
-  for (int i = 0; i < num_blocks; i++) {
-    block_allocator.free(block_table[num_blocks_allocated - i - 1]);
-  }
-  // only keep the first num_blocks_allocated - num_blocks blocks
-  block_table.erase(block_table.begin() + num_blocks_allocated - num_blocks,
-                    block_table.end());
-  block_tables[request_guid] = block_table;
-  return;
-}
-
-std::vector<int> PageManager::get_block_table_indices(
-    RequestGuid const &request_guid) const {
-  std::vector<int> indices;
-  auto const &it = block_tables.find(request_guid);
-  if (it == block_tables.end()) {
-    return indices;
-  }
-  auto const &block_table = it->second;
-  for (auto const &block : block_table) {
-    indices.push_back(block.get_block_number());
-  }
-  return indices;
-}
-
-int PageManager::get_num_total_free_blocks() const {
-  return block_allocator.get_num_free_blocks();
-}
-
-int PageManager::get_num_allocated_blocks(
-    RequestGuid const &request_guid) const {
-  auto it = block_tables.find(request_guid);
-  if (it == block_tables.end()) {
-    return 0;
-  } else {
-    return it->second.size();
-  }
-}
-
-PageManager *PageManager::get_page_manager(FFModel *ff,
-                                           size_t total_kv_cache_size) {
+PageManager *PageManager::get_page_manager(FFModel *ff, size_t total_kv_cache_size) {
   int num_kv_heads = ff->num_kv_heads;
   int size_dt = ff->size_dt;
   int qkv_dim = ff->qkv_dim;
   int num_transformer_layers = ff->num_transformer_layers;
-  int pipeline_parallelism_degree = ff->config.pipeline_parallelism_degree;
+  printf("num_kv_heads: %i\n", num_kv_heads);
+  printf("size_dt: %i\n", size_dt);
+  printf("qkv_dim: %i\n", qkv_dim);
+  printf("num_transformer_layers: %i\n", num_transformer_layers);
+  printf("total_kv_cache_size: %lu\n", total_kv_cache_size);
   assert(num_kv_heads > 0 && size_dt > 0 && qkv_dim > 0 &&
-         num_transformer_layers > 0 &&
-         pipeline_parallelism_degree >
-             0); // needs to make sure that the model is initialized
-  if (page_manager_singleton == nullptr) {
-    size_t num_total_blocks = 0;
-    if (total_kv_cache_size == 0) {
-      num_total_blocks = (BatchConfig::max_spec_tree_token_num() +
-                          BatchConfig::max_sequence_length() + kPagesize - 1) /
-                         kPagesize * BatchConfig::max_requests_per_batch();
-    } else {
-      num_total_blocks = total_kv_cache_size * 1024 * 1024 / size_dt / qkv_dim /
-                         num_kv_heads / num_transformer_layers / kPagesize;
-    }
-    printf("page manager singleton is initialized with %d blocks\n",
-           num_total_blocks);
-    page_manager_singleton = new PageManager(kPagesize, num_total_blocks);
-    page_manager_singleton->kv_cache_size_per_layer =
-        total_kv_cache_size * 1024 * 1024 / num_transformer_layers;
+         num_transformer_layers > 0); // needs to make sure that the model is initialized
+  assert(page_manager_singleton == nullptr && "Attempting to initialize PageManager twice");
+  size_t num_total_pages = 0;
+  if (total_kv_cache_size == 0) {
+    // enough pages to fit max seq length in each request
+    num_total_pages = ceilDiv(BatchConfig::max_sequence_length() * BatchConfig::max_requests_per_batch(), kPagesize);
+  } else {
+    assert(total_kv_cache_size > size_dt * qkv_dim * num_kv_heads * num_transformer_layers);
+    size_t per_token_size = 2 * size_dt * qkv_dim * num_kv_heads; // 2 factor for K and V
+    size_t page_size_bytes = kPagesize * per_token_size; // Each page contains kPagesize tokens 
+    num_total_pages = ceilDiv(total_kv_cache_size, page_size_bytes * num_transformer_layers);
   }
+  printf("page manager singleton is initialized with %ld pages\n",
+          num_total_pages);
+  page_manager_singleton = new PageManager(kPagesize, num_total_pages);
+  
   return page_manager_singleton;
 }
 
-size_t PageManager::get_kv_cache_size_per_layer() {
-  return kv_cache_size_per_layer;
+bool PageManager::enough_space_to_add_request(int num_tokens) {
+  // there is enough space to add a request if there are enough pages for this request's prompt + the decoding steps
+  // assume all existing requests are in decoding mode, as we don't allow multiple partial prompts
+  
+  // ensure that no other request is an unfinished prompt
+  for (int i=0; i<active_requests.size(); i++) {
+    RequestGuid const &guid = active_requests[i];
+    if (request_num_used_pages[guid] < req2page_indices[guid].size()) {
+      // this request is an unfinished prompt
+      // we cannot add a new request
+      return false;
+    }
+  }
+  // check that there is enough space to add one token to each request (since they are all in decoding mode)
+  std::vector<std::pair<RequestGuid, int>> tokens_per_request;
+  for (int i=0; i<active_requests.size(); i++) {
+    RequestGuid const &guid = active_requests[i];
+    tokens_per_request.push_back(std::make_pair(guid, 1));
+  }
+  if (!enough_space_to_append_tokens(tokens_per_request)) {
+    return false;
+  }
+
+  int new_pages_needed = ceilDiv(num_tokens, tokens_per_page);
+  return free_pages.size() >= new_pages_needed;
 }
 
-PageManager *PageManager::get_page_manager() {
-  assert(page_manager_singleton != nullptr);
-  return page_manager_singleton;
+bool PageManager::enough_space_to_append_tokens(std::vector<std::pair<RequestGuid, int>> tokens_per_request) {
+  int new_pages_needed = 0;
+  for (auto const &pair : tokens_per_request) {
+    RequestGuid const &guid = pair.first;
+    int num_tokens = pair.second;
+    assert(num_tokens > 0 && "Number of tokens to append must be positive");
+    assert(req2page_indices[guid].size() - request_num_used_pages[guid] >= 0 && "Number of used pages must be less than or equal to the number of pages assigned to the request");
+    assert(tokens_per_page - num_tokens_in_last_used_page[guid] >= 0 && "Number of tokens in last page must be less than or equal to the number of tokens per page");
+    int available_slots = tokens_per_page - num_tokens_in_last_used_page[guid] + 
+                          (req2page_indices[guid].size() - request_num_used_pages[guid]) * tokens_per_page;
+    if (num_tokens > available_slots) {
+      int num_pages_needed = ceilDiv(num_tokens-available_slots, tokens_per_page);
+      new_pages_needed += num_pages_needed;
+    }
+  }
+  return free_pages.size() >= new_pages_needed;
 }
+
+void PageManager::add_request(RequestGuid const &guid, int num_tokens){
+  assert(num_tokens > 0 && "Number of tokens to add must be positive");
+  assert(req2page_indices.find(guid) == req2page_indices.end() && "Request already exists");
+  assert(enough_space_to_add_request(num_tokens) && "Not enough space to add request");
+  // add the request to the active requests
+  active_requests.push_back(guid);
+  // assign pages to the request
+  int num_pages_needed = ceilDiv(num_tokens, tokens_per_page);
+  assert(num_pages_needed > 0);
+  assert(free_pages.size() >= num_pages_needed && "Not enough free pages");
+  std::vector<PageId> pages;
+  for (int i=0; i<num_pages_needed; i++) {
+    PageId page_id = free_pages.front();
+    free_pages.pop_front();
+    pages.push_back(page_id);
+  }
+  req2page_indices[guid] = pages;
+  request_num_used_pages[guid] = 0;
+  num_tokens_in_last_used_page[guid] = 0;
+}
+
+// remove completed request
+void PageManager::remove_request(RequestGuid const &request_guid){
+  assert(req2page_indices.find(request_guid) != req2page_indices.end() && "Request does not exist");
+  // remove the request from the active requests
+  auto it = std::find(active_requests.begin(), active_requests.end(), request_guid);
+  if (it != active_requests.end()) {
+    active_requests.erase(it);
+  }
+  // free the pages assigned to the request
+  std::vector<PageId> pages = req2page_indices[request_guid];
+  for (int i=0; i<pages.size(); i++) {
+    free_pages.push_back(pages[i]);
+  }
+  req2page_indices.erase(request_guid);
+  request_num_used_pages.erase(request_guid);
+  num_tokens_in_last_used_page.erase(request_guid);
+  
+}
+
+RequestGuid PageManager::evict_request_fifo();
+void PageManager::append_tokens(RequestGuid const &guid, int num_tokens);
+
 
 }; // namespace FlexFlow

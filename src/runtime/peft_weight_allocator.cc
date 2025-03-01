@@ -39,7 +39,7 @@ void PEFTMemoryManager::allocate_inference_memory() {
   base_ptr = peftLegionInst.pointer_untyped(0, sizeof(char));
   if (log_instance_creation) {
     log_peft_mem_allocator.print(
-        "Created instance in memory_kind: %s memory_id: %llx size: %zu "
+        "Created instance in memory_kind: %s memory_id: %llx size: %u "
         "(capacity %lu) task_name: %s",
         Legion::Mapping::Utilities::to_string(gpu_mem.kind()),
         gpu_mem.id,

@@ -194,3 +194,21 @@ def str_to_enum(enum, value):
             return item
 
     assert 0, "unknown enum value " + value + " " + str(enum)
+
+def data_type_size(value: DataType):
+    if value == DataType.DT_BOOLEAN:
+        return 1
+    elif value == DataType.DT_INT32:
+        return 4
+    elif value == DataType.DT_INT64:
+        return 8
+    elif value == DataType.DT_HALF:
+        return 2
+    elif value == DataType.DT_FLOAT:
+        return 4
+    elif value == DataType.DT_DOUBLE:
+        return 8
+    else:
+        raise ValueError(f"{value} is not a valid DataType")
+
+    

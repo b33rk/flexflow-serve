@@ -842,11 +842,11 @@ void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
                            min(CUDA_NUM_THREADS, parallelism),
                            0,
                            inf_stream>>>(output_ptr,
-                                     m->qProjSize,
-                                     num_tokens,
-                                     m->num_q_heads,
-                                     m->num_kv_heads,
-                                     m->scaling_factor);
+                                         m->qProjSize,
+                                         num_tokens,
+                                         m->num_q_heads,
+                                         m->num_kv_heads,
+                                         m->scaling_factor);
   }
 
   // Step 3: apply rotary embedding if needed

@@ -102,6 +102,10 @@ class FlexFlowFalcon(FlexFlowModel):
 
     def build_model(self, max_tokens_per_batch):
         ffmodel = FFModel(self.ffconfig)
+        ffmodel.set_num_transformer_layers(self.falcon_config.n_layer)
+        ffmodel.set_num_kv_heads(self.falcon_config.n_head_kv)
+        ffmodel.set_qkv_dim((self.falcon_config.hidden_size // self.falcon_config.n_head) * 2)
+        ffmodel.set_size_dt(data_type_size(self.data_type))
 
         tokens_dims = [max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)

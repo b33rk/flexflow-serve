@@ -38,7 +38,7 @@ python ./tests/peft/hf_finetune.py --peft-model-id goliaro/llama-160m-lora --sav
 
 # Python test
 echo "Python test"
-python ./inference/python/ff_peft.py
+gdb -ex run --args python ./inference/python/ff_peft.py
 # Check alignment
 python ./tests/peft/peft_alignment_test.py -tp 4 -lr 0.001
 

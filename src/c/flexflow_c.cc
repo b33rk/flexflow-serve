@@ -1700,6 +1700,26 @@ void flexflow_model_set_transformer_layer_id(flexflow_model_t handle_, int id) {
   handle->set_transformer_layer_id(id);
 }
 
+void flexflow_model_set_num_transformer_layers(flexflow_model_t handle_, int num_layers) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_num_transformer_layers(num_layers);
+}
+
+void flexflow_model_set_num_kv_heads(flexflow_model_t handle_, int num_kv_heads) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_num_kv_heads(num_kv_heads);
+}
+
+void flexflow_model_set_qkv_dim(flexflow_model_t handle_, int qkv_dim) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_qkv_dim(qkv_dim);
+}
+
+void flexflow_model_set_size_dt(flexflow_model_t handle_, long unsigned int size_dt) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_size_dt(size_dt);
+}
+
 void flexflow_model_generate(flexflow_model_t handle_,
                              int num_requests,
                              enum RequestType *request_types,

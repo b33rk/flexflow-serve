@@ -97,17 +97,10 @@ public:
       return mem_size_;
     }
     size_t batch_size = BatchConfig::max_requests_per_batch();
-    size_t max_num_pages =
-        round_up_pages(BatchConfig::max_spec_tree_token_num() +
-                       BatchConfig::max_sequence_length());
+    size_t max_num_pages = round_up_pages(BatchConfig::max_sequence_length());
     size_t indices_size = std::max(
         (batch_size + 1) * 4 + max_num_pages * batch_size, 1ul * 1024 * 1024);
-    size_t custom_mask_size = BatchConfig::max_requests_per_batch() *
-                              ((BatchConfig::max_spec_tree_token_num() *
-                                    (BatchConfig::max_spec_tree_token_num() +
-                                     BatchConfig::max_sequence_length()) +
-                                7) /
-                               8);
+    size_t custom_mask_size = 0;
 
     float_workspace_size = 128 * 1024 * 1024; // 128 MB
     int_workspace_size = 8 * 1024 * 1024;     // 8 MB
@@ -136,17 +129,10 @@ public:
     assert(size >= mem_size() &&
            "Insufficient memory size for attention metadata");
     size_t batch_size = BatchConfig::max_requests_per_batch();
-    size_t max_num_pages =
-        round_up_pages(BatchConfig::max_spec_tree_token_num() +
-                       BatchConfig::max_sequence_length());
+    size_t max_num_pages = round_up_pages(BatchConfig::max_sequence_length());
     size_t indices_size = std::max(
         (batch_size + 1) * 4 + max_num_pages * batch_size, 1ul * 1024 * 1024);
-    size_t custom_mask_size = BatchConfig::max_requests_per_batch() *
-                              ((BatchConfig::max_spec_tree_token_num() *
-                                    (BatchConfig::max_spec_tree_token_num() +
-                                     BatchConfig::max_sequence_length()) +
-                                7) /
-                               8);
+    size_t custom_mask_size = 0;
 
     q_indptr = static_cast<int32_t *>(ptr);
     kv_indptr = q_indptr + batch_size + 1;

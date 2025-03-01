@@ -99,6 +99,10 @@ class FlexFlowLLAMA(FlexFlowModel):
 
     def build_model(self, max_tokens_per_batch):
         ffmodel = FFModel(self.ffconfig)
+        ffmodel.set_num_transformer_layers(self.llama_config.num_hidden_layers)
+        ffmodel.set_num_kv_heads(self.llama_config.num_key_value_heads)
+        ffmodel.set_qkv_dim((self.llama_config.hidden_size // self.llama_config.num_attention_heads) * 2)
+        ffmodel.set_size_dt(data_type_size(self.data_type))
 
         tokens_dims = [max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)

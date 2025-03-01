@@ -656,6 +656,11 @@ flexflow_perf_metrics_t
 
 void flexflow_model_set_transformer_layer_id(flexflow_model_t handle, int id);
 
+void flexflow_model_set_num_transformer_layers(flexflow_model_t handle_, int num_layers);
+void flexflow_model_set_num_kv_heads(flexflow_model_t handle_, int num_kv_heads);
+void flexflow_model_set_qkv_dim(flexflow_model_t handle_, int qkv_dim);
+void flexflow_model_set_size_dt(flexflow_model_t handle_, long unsigned int size_dt);
+
 void flexflow_model_generate(flexflow_model_t handle_,
                              int num_requests,
                              enum RequestType *request_types,

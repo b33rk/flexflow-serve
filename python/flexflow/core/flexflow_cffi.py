@@ -35,6 +35,7 @@ from flexflow.type import (
     ParameterSyncType,
     enum_to_int,
     int_to_enum,
+    data_type_size,
 )
 from flexflow.config import *
 from .flexflowlib import ffi, flexflow_library
@@ -4556,6 +4557,18 @@ class FFModel(object):
 
     def set_transformer_layer_id(self, id):
         ffc().flexflow_model_set_transformer_layer_id(self.handle, id)
+    
+    def set_num_transformer_layers(self, num_layers):
+        ffc().flexflow_model_set_num_transformer_layers(self.handle, num_layers)
+    
+    def set_num_kv_heads(self, num_kv_heads):
+        ffc().flexflow_model_set_num_kv_heads(self.handle, num_kv_heads)
+    
+    def set_qkv_dim(self, qkv_dim):
+        ffc().flexflow_model_set_qkv_dim(self.handle, qkv_dim)
+    
+    def set_size_dt(self, size_dt):
+        ffc().flexflow_model_set_size_dt(self.handle, size_dt)
 
     def create_data_loader(self, batch_tensor, full_array):
         """Create a SingleDataloader instance.
