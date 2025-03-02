@@ -52,6 +52,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
         self.generation_config = generation_config
         self.ffconfig = ffconfig
         self.data_type = data_type
+        self.max_kv_cache_size = self.ffconfig.max_kv_cache_size
         self.starcoder_config = STARCODERConfig(hf_config)
         self.weights_filepath = weights_filepath
         self.tokenizer_filepath = tokenizer_filepath
@@ -90,10 +91,14 @@ class FlexFlowSTARCODER(FlexFlowModel):
 
     def build_model(self, max_tokens_per_batch):
         ffmodel = FFModel(self.ffconfig)
-        ffmodel.set_num_transformer_layers(self.starcoder_config.num_hidden_layers)
-        ffmodel.set_num_kv_heads(self.starcoder_config.n_head_kv)
-        ffmodel.set_qkv_dim((self.starcoder_config.hidden_size // self.starcoder_config.num_attention_heads) * 2)
-        ffmodel.set_size_dt(data_type_size(self.data_type))
+        pm = PageManager(
+            max_kv_cache_size = self.max_kv_cache_size,
+            num_transformer_layers = self.starcoder_config.num_hidden_layers,
+            num_kv_heads = self.starcoder_config.n_head_kv,
+            qkv_dim = (self.starcoder_config.hidden_size // self.starcoder_config.num_attention_heads),
+            size_dt = data_type_size(self.data_type)
+        )
+        ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 
         tokens_dims = [max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)

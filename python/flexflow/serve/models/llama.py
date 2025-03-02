@@ -55,8 +55,6 @@ class FlexFlowLLAMA(FlexFlowModel):
         ffconfig,
         hf_config,
         data_type,
-        # max_batch_size=1,
-        # max_seq_length=256,
         max_tokens_per_batch,
         weights_filepath="",
         tokenizer_filepath="",
@@ -65,6 +63,7 @@ class FlexFlowLLAMA(FlexFlowModel):
         self.generation_config = generation_config
         self.ffconfig = ffconfig
         self.data_type = data_type
+        self.max_kv_cache_size = self.ffconfig.max_kv_cache_size
         self.llama_config = LLAMAConfig(hf_config)
         self.weights_filepath = weights_filepath
         self.tokenizer_filepath = tokenizer_filepath
@@ -99,10 +98,13 @@ class FlexFlowLLAMA(FlexFlowModel):
 
     def build_model(self, max_tokens_per_batch):
         ffmodel = FFModel(self.ffconfig)
-        ffmodel.set_num_transformer_layers(self.llama_config.num_hidden_layers)
-        ffmodel.set_num_kv_heads(self.llama_config.num_key_value_heads)
-        ffmodel.set_qkv_dim((self.llama_config.hidden_size // self.llama_config.num_attention_heads) * 2)
-        ffmodel.set_size_dt(data_type_size(self.data_type))
+        pm = PageManager(max_kv_cache_size = self.max_kv_cache_size, 
+                        num_transformer_layers = self.llama_config.num_hidden_layers, 
+                        num_kv_heads = self.llama_config.num_key_value_heads, 
+                        qkv_dim = (self.llama_config.hidden_size // self.llama_config.num_attention_heads), 
+                        size_dt = data_type_size(self.data_type)
+        )
+        ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 
         tokens_dims = [max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)

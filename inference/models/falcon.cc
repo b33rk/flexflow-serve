@@ -33,8 +33,16 @@ void FALCON::create_falcon_model(FFModel &ff,
     assert(false && "The number of attention heads is smaller, or it is not "
                     "divisible by the tensor parallelism degree");
   }
-
-  std::unordered_map<std::string, Layer *> weights_layers;
+  // set the page manager
+  bool spec_mode = (mode == BEAM_SEARCH_MODE || mode == TREE_VERIFY_MODE);
+  PageManager *pm = PageManager::get_page_manager(
+      ff.config.max_kv_cache_size,
+      falcon_config.n_layer,
+      falcon_config.n_head_kv,
+      (falcon_config.hidden_size / falcon_config.n_head),
+      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF),
+      spec_mode);
+  ff.set_num_kv_cache_pages(pm->get_tot_num_pages());
 
   Tensor input;
   {
@@ -62,11 +70,6 @@ void FALCON::create_falcon_model(FFModel &ff,
   Tensor mha = nullptr, mlp_output = nullptr;
   Tensor qkv_proj = nullptr, o_proj = nullptr;
   Tensor res_ln_outputs[2] = {nullptr, nullptr};
-
-  ff.set_num_transformer_layers(falcon_config.n_layer);
-  ff.set_num_kv_heads(falcon_config.n_head_kv);
-  ff.set_qkv_dim(falcon_config.hidden_size / falcon_config.n_head * 2);
-  ff.set_size_dt(data_type_size(input->data_type));
 
   for (int i = 0; i < falcon_config.n_layer; i++) {
     // set transformer layer id

@@ -54,7 +54,8 @@ void parse_input_args(char **argv,
                       int &max_sequence_length,
                       int &max_training_steps,
                       int &num_layers_per_finetuning_step,
-                      bool &run_warmup) {
+                      bool &run_warmup,
+                      size_t &max_kv_cache_size) {
   for (int i = 1; i < argc; i++) {
     // llm model type
     if (!strcmp(argv[i], "-llm-model")) {
@@ -144,6 +145,10 @@ void parse_input_args(char **argv,
       num_layers_per_finetuning_step = std::stoi(argv[++i]);
       continue;
     }
+    if (!strcmp(argv[i], "--max-kv-cache-size")) {
+      max_kv_cache_size = std::stoi(argv[++i]);
+      continue;
+    }
   }
   if (paths.cache_folder_path.empty()) {
     char const *ff_cache_path = std::getenv("FF_CACHE_PATH");
@@ -204,6 +209,7 @@ void FlexFlow::top_level_task(Task const *task,
   bool enable_peft_finetuning = true;
   int num_layers_per_finetuning_step = -1;
   bool run_warmup = false;
+  size_t max_kv_cache_size = 0; // if 0, then use the default value
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -224,12 +230,14 @@ void FlexFlow::top_level_task(Task const *task,
                    max_sequence_length,
                    max_training_steps,
                    num_layers_per_finetuning_step,
-                   run_warmup);
+                   run_warmup,
+                   max_kv_cache_size);
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
          ffconfig.numNodes * ffconfig.workersPerNode);
   enable_peft_finetuning = file_paths.dataset_file_path.empty() ? false : true;
   ffconfig.enable_peft_finetuning = enable_peft_finetuning;
+  ffconfig.max_kv_cache_size = max_kv_cache_size;
 
   std::string config_filepath = join_path(
       {file_paths.cache_folder_path, "configs", llm_model_name, "config.json"});

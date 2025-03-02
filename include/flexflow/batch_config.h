@@ -62,22 +62,25 @@ public:
   static const RequestGuid INVALID_GUID = 0;
   using TokenId = int;
   BatchConfig();
+  // includes both FWD and BWD finetuning requests
   int num_active_requests() const;
+  // returns number of inference and finetuning FWD tokens
   int num_active_tokens() const;
+
+  int num_inference_tokens() const;
+
   int finetuning_request_index() const;
   int num_finetuning_fwd_requests() const;
   int num_finetuning_fwd_tokens() const;
   int num_finetuning_bwd_requests() const;
   int num_finetuning_bwd_tokens() const;
+
   bool peft_bwd_applies_to_this_layer(int layer) const;
   static int max_requests_per_batch();
   static int max_tokens_per_batch();
   static int max_verify_tokens_per_batch();
   static int max_spec_tree_token_num();
   static int max_sequence_length();
-
-  // paged attention
-  static size_t max_kv_cache_size();
 
   friend std::ostream &operator<<(std::ostream &os, BatchConfig const &bc);
   void print() const;

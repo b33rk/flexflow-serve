@@ -47,6 +47,11 @@ def get_configs():
         "cache_path": os.environ.get("FF_CACHE_PATH", ""),
         "refresh_cache": False,
         "full_precision": False,
+        "max_requests_per_batch": 4,
+        "max_seq_length": 2048,
+        "max_tokens_per_batch": 256,
+        "max_kv_cache_size": 0, # use default value
+        "max_new_tokens": 1024
     }
     # Merge dictionaries
     ff_init_configs.update(llm_configs)
@@ -77,9 +82,10 @@ def main():
     )
     llm.compile(
         generation_config,
-        max_requests_per_batch=1,
-        max_seq_length=2048,
-        max_tokens_per_batch=256,
+        max_requests_per_batch = configs_dict.get("max_requests_per_batch", 4),
+        max_seq_length = configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 64),
+        max_kv_cache_size = configs_dict.get("max_kv_cache_size", 0),
     )
 
     llm.start_server()
@@ -92,7 +98,7 @@ def main():
         {"role": "system", "content": nemotron_system},
         {"role": "user", "content": "Is Rust better than Python?"},
     ]
-    llm.generate(messages, max_new_tokens=1024)
+    llm.generate(messages, max_new_tokens=configs_dict.get("max_new_tokens", 10244))
     
     llm.stop_server()
 

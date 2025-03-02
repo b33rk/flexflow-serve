@@ -34,8 +34,16 @@ void MPT::create_mpt_model(FFModel &ff,
     assert(false && "The number of attention heads is smaller, or it is not "
                     "divisible by the tensor parallelism degree");
   }
-
-  std::unordered_map<std::string, Layer *> weights_layers;
+  // set the page manager
+  bool spec_mode = (mode == BEAM_SEARCH_MODE || mode == TREE_VERIFY_MODE);
+  PageManager *pm = PageManager::get_page_manager(
+      ff.config.max_kv_cache_size,
+      mpt_config.n_layers,
+      mpt_config.n_heads,
+      (mpt_config.hidden_size / mpt_config.n_heads),
+      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF),
+      spec_mode);
+  ff.set_num_kv_cache_pages(pm->get_tot_num_pages());
 
   //------------------------------ build the model --------------------------
   Tensor input;
@@ -62,11 +70,6 @@ void MPT::create_mpt_model(FFModel &ff,
 
   Tensor intermediate_output = nullptr, layernorm_output = nullptr;
   Tensor res_ln_outputs[2] = {nullptr, nullptr};
-
-  ff.set_num_transformer_layers(mpt_config.n_layers);
-  ff.set_num_kv_heads(mpt_config.n_heads);
-  ff.set_qkv_dim(mpt_config.hidden_size / mpt_config.n_heads * 2);
-  ff.set_size_dt(data_type_size(input->data_type));
 
   for (int i = 0; i < mpt_config.n_layers; i++) {
     ff.set_transformer_layer_id(i);

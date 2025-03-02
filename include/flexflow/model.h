@@ -1097,10 +1097,7 @@ public:
   void set_transformer_layer_id(int id);
 
   // paged attention
-  void set_num_transformer_layers(int num_layers);
-  void set_num_kv_heads(int num_heads);
-  void set_qkv_dim(int qkv_dim);
-  void set_size_dt(int size_dt);
+  void set_num_kv_cache_pages(int num_pages);
 
   void set_position_offset(int offset);
   void graph_optimize(size_t budget,
@@ -1168,10 +1165,7 @@ public:
   size_t current_transformer_layer_id;
 
   // paged attention
-  int num_transformer_layers;
-  int num_kv_heads;
-  int qkv_dim;
-  int size_dt;
+  int num_kv_cache_pages;
 
   // positional embedding start offset
   int position_offset;

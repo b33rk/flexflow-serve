@@ -1586,6 +1586,24 @@ class BatchConfig(object):
 
 
 # -----------------------------------------------------------------------
+# PageManager
+# -----------------------------------------------------------------------
+
+
+class PageManager(object):
+    __slots__ = ["handle"]
+
+    def __init__(self, max_kv_cache_size: int, num_transformer_layers: int, num_kv_heads: int, qkv_dim: int, size_dt: int):
+        self.handle = ffc().flexflow_page_manager_get_page_manager(max_kv_cache_size, num_transformer_layers, num_kv_heads, qkv_dim, size_dt)
+
+    def get_tot_num_pages(self):
+        return ffc().flexflow_page_manager_get_tot_num_pages(self.handle)
+
+    def get_tokens_per_page(self):
+        return ffc().flexflow_page_manager_get_tokens_per_page(self.handle)
+
+
+# -----------------------------------------------------------------------
 # RequestManager
 # -----------------------------------------------------------------------
 
@@ -4558,17 +4576,8 @@ class FFModel(object):
     def set_transformer_layer_id(self, id):
         ffc().flexflow_model_set_transformer_layer_id(self.handle, id)
     
-    def set_num_transformer_layers(self, num_layers):
-        ffc().flexflow_model_set_num_transformer_layers(self.handle, num_layers)
-    
-    def set_num_kv_heads(self, num_kv_heads):
-        ffc().flexflow_model_set_num_kv_heads(self.handle, num_kv_heads)
-    
-    def set_qkv_dim(self, qkv_dim):
-        ffc().flexflow_model_set_qkv_dim(self.handle, qkv_dim)
-    
-    def set_size_dt(self, size_dt):
-        ffc().flexflow_model_set_size_dt(self.handle, size_dt)
+    def set_num_kv_cache_pages(self, num_kv_cache_pages):
+        ffc().flexflow_model_set_num_kv_cache_pages(self.handle, num_kv_cache_pages)
 
     def create_data_loader(self, batch_tensor, full_array):
         """Create a SingleDataloader instance.

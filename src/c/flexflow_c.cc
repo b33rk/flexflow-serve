@@ -74,6 +74,7 @@ public:
   //                       LoraAdamOptimizerConfig *);
   FF_NEW_OPAQUE_WRAPPER(flexflow_lora_linear_config_t, LoraLinearConfig *);
   FF_NEW_OPAQUE_WRAPPER(flexflow_peft_model_id_t, PEFTModelID *);
+  FF_NEW_OPAQUE_WRAPPER(flexflow_page_manager_t, PageManager *);
 };
 
 Logger ffc_log("flexflow_c");
@@ -185,6 +186,18 @@ void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_,
                                                 bool value) {
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
   handle->enable_peft_finetuning = value;
+}
+
+long unsigned int
+    flexflow_config_get_max_kv_cache_size(flexflow_config_t handle_) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->max_kv_cache_size;
+}
+
+void flexflow_config_set_max_kv_cache_size(
+    flexflow_config_t handle_, long unsigned int max_kv_cache_size) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->max_kv_cache_size = max_kv_cache_size;
 }
 
 int flexflow_config_get_python_data_loader_type(flexflow_config_t handle_) {
@@ -1700,24 +1713,10 @@ void flexflow_model_set_transformer_layer_id(flexflow_model_t handle_, int id) {
   handle->set_transformer_layer_id(id);
 }
 
-void flexflow_model_set_num_transformer_layers(flexflow_model_t handle_, int num_layers) {
+void flexflow_model_set_num_kv_cache_pages(flexflow_model_t handle_,
+                                           int num_kv_cache_pages) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  handle->set_num_transformer_layers(num_layers);
-}
-
-void flexflow_model_set_num_kv_heads(flexflow_model_t handle_, int num_kv_heads) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  handle->set_num_kv_heads(num_kv_heads);
-}
-
-void flexflow_model_set_qkv_dim(flexflow_model_t handle_, int qkv_dim) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  handle->set_qkv_dim(qkv_dim);
-}
-
-void flexflow_model_set_size_dt(flexflow_model_t handle_, long unsigned int size_dt) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  handle->set_size_dt(size_dt);
+  handle->set_num_kv_cache_pages(num_kv_cache_pages);
 }
 
 void flexflow_model_generate(flexflow_model_t handle_,
@@ -2806,14 +2805,6 @@ int flexflow_request_manager_get_max_sequence_length(
   return handle->get_max_sequence_length();
 }
 
-// paged attention
-void flexflow_request_manager_set_max_kv_cache_size(
-    flexflow_request_manager_t handle_, int max_kv_cache_size) {
-  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
-  handle->set_max_kv_cache_size(max_kv_cache_size);
-  DEBUG_PRINT("[RequestManager] set max_kv_cache_size %d", max_kv_cache_size);
-}
-
 void flexflow_request_manager_set_max_concurrent_adapters(
     flexflow_request_manager_t handle_, int max_concurrent_adapters) {
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
@@ -2901,6 +2892,45 @@ void flexflow_request_manager_terminate_background_server(
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
   DEBUG_PRINT("[RequestManager] terminate background server %p", handle);
   handle->terminate_background_server();
+}
+
+// -----------------------------------------------------------------------
+// PageManager
+// -----------------------------------------------------------------------
+
+flexflow_page_manager_t
+    flexflow_page_manager_get_page_manager(int max_kv_cache_size,
+                                           int num_transformer_layers,
+                                           int num_kv_heads,
+                                           int qkv_dim,
+                                           int size_dt) {
+  assert(max_kv_cache_size > 0);
+  assert(num_kv_heads > 0);
+  assert(size_dt > 0);
+  assert(qkv_dim > 0);
+  assert(num_transformer_layers > 0);
+  PageManager *pm = PageManager::get_page_manager(max_kv_cache_size,
+                                                  num_kv_heads,
+                                                  size_dt,
+                                                  qkv_dim,
+                                                  num_transformer_layers);
+  DEBUG_PRINT("[PageManager] get %p", pm);
+  return FFCObjectWrapper::wrap(pm);
+}
+
+int flexflow_page_manager_get_tot_num_pages(flexflow_page_manager_t handle_) {
+  PageManager *handle = FFCObjectWrapper::unwrap(handle_);
+  int num_pages = handle->get_tot_num_pages();
+  DEBUG_PRINT("[PageManager] %p get_tot_num_pages %d", handle, num_pages);
+  return num_pages;
+}
+
+int flexflow_page_manager_get_tokens_per_page(flexflow_page_manager_t handle_) {
+  PageManager *handle = FFCObjectWrapper::unwrap(handle_);
+  int tokens_per_page = handle->get_tokens_per_page();
+  DEBUG_PRINT(
+      "[PageManager] %p get_tokens_per_page %d", handle, tokens_per_page);
+  return tokens_per_page;
 }
 
 // -----------------------------------------------------------------------

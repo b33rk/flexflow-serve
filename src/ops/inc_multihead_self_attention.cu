@@ -1936,17 +1936,10 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     // 2. KV cache
     if (infer_mode == INC_DECODING_MODE) {
       // incr decoding: paged attention
-      size_t max_num_pages = round_up_pages(BatchConfig::max_sequence_length());
       PageManager *pm = PageManager::get_page_manager();
-      size_t total_kv_cache_size_per_layer = pm->get_kv_cache_size_per_layer();
-      if (total_kv_cache_size_per_layer == 0) {
-        key_cache_size = value_cache_size =
-            num_kv_heads * kProjSize * BatchConfig::max_requests_per_batch() *
-            max_num_pages * kPagesize;
-      } else {
-        key_cache_size = value_cache_size =
-            total_kv_cache_size_per_layer / 2 / size_of_dt;
-      }
+      int max_num_pages = pm->get_tot_num_pages();
+      key_cache_size = value_cache_size =
+          num_kv_heads * kProjSize * size_of_dt * kPagesize * max_num_pages;
     } else if (infer_mode == BEAM_SEARCH_MODE ||
                infer_mode == TREE_VERIFY_MODE) {
       // a K-ary tree max node is (k^n - 1) / 2

@@ -37,7 +37,16 @@ void LLAMA::create_llama_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  std::unordered_map<std::string, Layer *> weights_layers;
+  // set the page manager
+  bool spec_mode = (mode == BEAM_SEARCH_MODE || mode == TREE_VERIFY_MODE);
+  PageManager *pm = PageManager::get_page_manager(
+      ff.config.max_kv_cache_size,
+      llama_config.num_hidden_layers,
+      llama_config.num_key_value_heads,
+      (llama_config.hidden_size / llama_config.num_attention_heads),
+      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF),
+      spec_mode);
+  ff.set_num_kv_cache_pages(pm->get_tot_num_pages());
 
   Tensor input;
   {
@@ -61,14 +70,6 @@ void LLAMA::create_llama_model(FFModel &ff,
                               "embed_tokens");
 
   Tensor w2 = nullptr;
-
-  // metadata that needs to be sent to page manager in order to calculate the kv
-  // cache per layer
-  ff.set_num_transformer_layers(llama_config.num_hidden_layers);
-  ff.set_num_kv_heads(llama_config.num_key_value_heads);
-  int qkv_dim = llama_config.hidden_size / llama_config.num_attention_heads * 2;
-  ff.set_qkv_dim(qkv_dim);
-  ff.set_size_dt(data_type_size(input->data_type));
 
   for (int i = 0; i < llama_config.num_hidden_layers; i++) {
     // set transformer layer id

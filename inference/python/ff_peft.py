@@ -64,9 +64,6 @@ def get_configs():
             "base_model": "JackFram/llama-160m",
             "inference_peft_model_id": "goliaro/llama-160m-lora",
             "finetuning_peft_model_id": "goliaro/llama-160m-lora",
-            # "base_model": "meta-llama/Meta-Llama-3-8B",
-            # "inference_peft_model_id": "goliaro/llama-3-8b-lora",
-            # "finetuning_peft_model_id": "goliaro/llama-3-8b-lora-dolly",
             # optional parameters
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,
@@ -77,6 +74,11 @@ def get_configs():
                 "../prompt/peft_dataset.json",
             ),
             "output_file": "",
+            "max_requests_per_batch": 1,
+            "max_seq_length": 256,
+            "max_tokens_per_batch": 128,
+            "max_concurrent_adapters": 1,
+            "max_kv_cache_size": 0, # use default value
         }
         # Merge dictionaries
         ff_init_configs.update(model_configs)
@@ -109,11 +111,12 @@ def main():
     enable_peft_finetuning = len(configs.finetuning_dataset) > 0
     llm.compile(
         generation_config,
-        max_requests_per_batch=1 if not enable_peft_finetuning else 2,
-        max_seq_length=256,
-        max_tokens_per_batch=128,
-        max_concurrent_adapters=1 if not enable_peft_finetuning else 2,
-        enable_peft_finetuning=enable_peft_finetuning,
+        max_requests_per_batch = configs_dict.get("max_requests_per_batch", 1) + enable_peft_finetuning,
+        max_seq_length = configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 128),
+        max_concurrent_adapters = configs_dict.get("max_concurrent_adapters", 1) + enable_peft_finetuning,
+        max_kv_cache_size = configs_dict.get("max_kv_cache_size", 0),
+        enable_peft_finetuning = enable_peft_finetuning,
     )
 
     llm.start_server()

@@ -14,7 +14,6 @@ namespace FlexFlow {
 
 using RequestGuid = BatchConfig::RequestGuid;
 using TokenId = BatchConfig::TokenId;
-using PageId = size_t;
 
 /*
  * @class PageManager
@@ -27,38 +26,62 @@ public:
   // Get the singleton instance of the PageManager as it will be shared in
   // multiple places
   static PageManager *get_page_manager();
-  static PageManager *get_page_manager(FFModel *ff, size_t total_kv_cache_size);
-  
+  static PageManager *get_page_manager(size_t max_kv_cache_size,
+                                       int num_transformer_layers,
+                                       int num_kv_heads,
+                                       int qkv_dim,
+                                       int size_dt,
+                                       bool spec_mode = false);
   PageManager(int block_size, int tot_num_pages);
-  
-  // check if there is enough space for request with given total number of prompt/evicted tokens
-  // even if the tokens will be run in multiple steps (chunked prefills)
-  bool enough_space_to_add_request(int num_tokens);
-  // check if there is enough space to append new tokens to the existing requests
-  bool enough_space_to_append_tokens(std::vector<std::pair<RequestGuid, int>> tokens_per_request);
+
+  int get_tot_num_pages() const;
+  int get_tokens_per_page() const;
+
+  // returns the number of pages used by the request (excluding those allocated
+  // but not used yet)
+  int get_num_pages_used_by_req(RequestGuid const &request_guid) const;
+  // returns the indices of the pages in use by the request (excluding those
+  // allocated but not used yet)
+  std::vector<int> get_req_page_indices(RequestGuid const &request_guid) const;
+  int get_num_tokens_in_last_used_page(RequestGuid const &request_guid) const;
+
+  // check if there is enough space for request with given total number of
+  // prompt/evicted tokens even if the tokens will be run in multiple steps
+  // (chunked prefills)
+  bool enough_space_to_add_request(int num_tokens) const;
+  // check if there is enough space to append new tokens to the existing
+  // requests
+  bool enough_space_to_append_tokens(
+      std::vector<std::pair<RequestGuid, int>> tokens_per_request = {}) const;
   void add_request(RequestGuid const &guid, int num_tokens);
   void remove_request(RequestGuid const &request_guid);
   RequestGuid evict_request_fifo();
   // add tokens to an existing request
   void append_tokens(RequestGuid const &guid, int num_tokens);
-  
+
+  struct PerRequestPageInfo {
+    RequestGuid guid;
+    // pages (ordered logically by token depth) assigned to each request
+    std::vector<int> page_indices;
+    // number of pages (from those assigned to the request) that are already
+    // filled with tokens. Of these, only the last one is allowed to be
+    // partially filled. The others should be full.
+    int num_used_pages;
+    // slots in use in each last page of each request (all previous pages must
+    // be full)
+    int num_tokens_in_last_used_page;
+  };
+
 private:
-  // pages (ordered logically by token depth) assigned to each request
-  std::unordered_map<RequestGuid, std::vector<PageId>> req2page_indices;
-  // number of pages (from those assigned to the request) that are already filled with tokens. 
-  // Of these, only the last one is allowed to be partially filled. The others should be full.
-  std::unordered_map<RequestGuid, int> request_num_used_pages;
   // requests ordered by arrival. We use this order for FIFO eviction
   std::deque<RequestGuid> active_requests;
+  // request info keyed by guid
+  std::unordered_map<RequestGuid, PerRequestPageInfo> requests_info;
+  // pool of available pages
+  std::unordered_set<int> free_pages;
 
-  // slots in use in each last page of each request (all previous pages must be full)
-  std::unordered_map<RequestGuid, int> num_tokens_in_last_used_page;
-  // queue of available pages
-  std::set<PageId> free_pages;
-  
   int tot_num_pages;
-  int tokens_per_page; // max tokens per page
-  
+  int tokens_per_page;
 };
 
 }; // namespace FlexFlow

@@ -115,6 +115,13 @@ int BatchConfig::num_active_tokens() const {
   return num_tokens;
 }
 
+int BatchConfig::num_inference_tokens() const {
+  int num_ft_fwd_tokens = num_finetuning_fwd_tokens();
+  assert(num_tokens >= 0 && num_ft_fwd_tokens >= 0 &&
+         num_tokens >= num_ft_fwd_tokens);
+  return num_tokens - num_ft_fwd_tokens;
+}
+
 int BatchConfig::finetuning_request_index() const {
   assert(max_requests_per_batch() > 0);
   return max_requests_per_batch() - 1;
@@ -184,10 +191,6 @@ int BatchConfig::max_verify_tokens_per_batch() {
 /*static*/
 int BatchConfig::max_sequence_length() {
   return RequestManager::get_request_manager()->get_max_sequence_length();
-}
-
-size_t BatchConfig::max_kv_cache_size() {
-  return RequestManager::get_request_manager()->get_max_kv_cache_size();
 }
 
 int BatchConfig::max_spec_tree_token_num() {

@@ -19,8 +19,6 @@ import random, torch
 
 class FalconConfig:
     def __init__(self, hf_config):
-        # self.max_seq_len = 256
-        # self.max_num_tokens = 64
         self.max_beam_width = 1
         self.max_beam_depth = 8
         self.max_spec_tree_token_num = 20
@@ -72,6 +70,7 @@ class FlexFlowFalcon(FlexFlowModel):
         self.mode = mode
         self.generation_config = generation_config
         self.ffconfig = ffconfig
+        self.max_kv_cache_size = self.ffconfig.max_kv_cache_size
         self.data_type = data_type
         self.falcon_config = FalconConfig(hf_config)
         self.weights_filepath = weights_filepath
@@ -102,10 +101,13 @@ class FlexFlowFalcon(FlexFlowModel):
 
     def build_model(self, max_tokens_per_batch):
         ffmodel = FFModel(self.ffconfig)
-        ffmodel.set_num_transformer_layers(self.falcon_config.n_layer)
-        ffmodel.set_num_kv_heads(self.falcon_config.n_head_kv)
-        ffmodel.set_qkv_dim((self.falcon_config.hidden_size // self.falcon_config.n_head) * 2)
-        ffmodel.set_size_dt(data_type_size(self.data_type))
+        pm = PageManager(max_kv_cache_size = self.max_kv_cache_size, 
+                        num_transformer_layers = self.falcon_config.n_layer, 
+                        num_kv_heads = self.falcon_config.n_head_kv, 
+                        qkv_dim = (self.falcon_config.hidden_size // self.falcon_config.n_head), 
+                        size_dt = data_type_size(self.data_type)
+        )
+        ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 
         tokens_dims = [max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)

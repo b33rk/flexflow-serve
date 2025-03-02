@@ -35,7 +35,16 @@ void OPT::create_opt_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  std::unordered_map<std::string, Layer *> weights_layers;
+  // set the page manager
+  bool spec_mode = (mode == BEAM_SEARCH_MODE || mode == TREE_VERIFY_MODE);
+  PageManager *pm = PageManager::get_page_manager(
+      ff.config.max_kv_cache_size,
+      opt_config.num_hidden_layers,
+      opt_config.num_attention_heads,
+      (opt_config.hidden_size / opt_config.num_attention_heads),
+      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF),
+      spec_mode);
+  ff.set_num_kv_cache_pages(pm->get_tot_num_pages());
 
   //------------------------------ build the model --------------------------
   Tensor input;
@@ -75,11 +84,6 @@ void OPT::create_opt_model(FFModel &ff,
 
   Tensor fc2 = nullptr, added = nullptr;
   Tensor res_ln_outputs[2] = {nullptr, nullptr};
-
-  ff.set_num_transformer_layers(opt_config.num_hidden_layers);
-  ff.set_num_kv_heads(opt_config.num_attention_heads);
-  ff.set_qkv_dim(opt_config.hidden_size / opt_config.num_attention_heads * 2);
-  ff.set_size_dt(data_type_size(input->data_type));
 
   for (int i = 0; i < opt_config.num_hidden_layers; i++) {
     // set transformer layer id

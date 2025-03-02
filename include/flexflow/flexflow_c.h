@@ -60,6 +60,7 @@ FF_NEW_OPAQUE_TYPE(flexflow_generation_result_t);
 // FF_NEW_OPAQUE_TYPE(flexflow_lora_adam_optimizer_config_t);
 FF_NEW_OPAQUE_TYPE(flexflow_lora_linear_config_t);
 FF_NEW_OPAQUE_TYPE(flexflow_peft_model_id_t);
+FF_NEW_OPAQUE_TYPE(flexflow_page_manager_t);
 
 // -----------------------------------------------------------------------
 // FFConfig
@@ -96,6 +97,11 @@ bool flexflow_config_get_enable_peft(flexflow_config_t handle_);
 bool flexflow_config_get_enable_peft_finetuning(flexflow_config_t handle_);
 void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_,
                                                 bool value);
+
+long unsigned int
+    flexflow_config_get_max_kv_cache_size(flexflow_config_t handle_);
+void flexflow_config_set_max_kv_cache_size(flexflow_config_t handle_,
+                                           long unsigned int value);
 
 void flexflow_config_set_data_parallelism_degree(flexflow_config_t handle_,
                                                  int value);
@@ -656,10 +662,8 @@ flexflow_perf_metrics_t
 
 void flexflow_model_set_transformer_layer_id(flexflow_model_t handle, int id);
 
-void flexflow_model_set_num_transformer_layers(flexflow_model_t handle_, int num_layers);
-void flexflow_model_set_num_kv_heads(flexflow_model_t handle_, int num_kv_heads);
-void flexflow_model_set_qkv_dim(flexflow_model_t handle_, int qkv_dim);
-void flexflow_model_set_size_dt(flexflow_model_t handle_, long unsigned int size_dt);
+void flexflow_model_set_num_kv_cache_pages(flexflow_model_t handle_,
+                                           int num_kv_cache_pages);
 
 void flexflow_model_generate(flexflow_model_t handle_,
                              int num_requests,
@@ -1038,10 +1042,6 @@ void flexflow_request_manager_set_max_sequence_length(
 int flexflow_request_manager_get_max_sequence_length(
     flexflow_request_manager_t handle_);
 
-// paged attention
-void flexflow_request_manager_set_max_kv_cache_size(
-    flexflow_request_manager_t handle_, int max_kv_cache_size);
-
 void flexflow_request_manager_set_max_concurrent_adapters(
     flexflow_request_manager_t handle_, int max_concurrent_adapters);
 
@@ -1073,6 +1073,22 @@ void flexflow_request_manager_start_background_server(
 
 void flexflow_request_manager_terminate_background_server(
     flexflow_request_manager_t handle_);
+
+// -----------------------------------------------------------------------
+// PageManager
+// -----------------------------------------------------------------------
+
+flexflow_page_manager_t
+    flexflow_page_manager_get_page_manager(int max_kv_cache_size,
+                                           int num_transformer_layers,
+                                           int num_kv_heads,
+                                           int qkv_dim,
+                                           int size_dt,
+                                           bool spec_mode);
+
+int flexflow_page_manager_get_tot_num_pages(flexflow_page_manager_t handle_);
+
+int flexflow_page_manager_get_tokens_per_page(flexflow_page_manager_t handle_);
 
 // -----------------------------------------------------------------------
 // InferenceManager
