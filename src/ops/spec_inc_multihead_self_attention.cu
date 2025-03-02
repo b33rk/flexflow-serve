@@ -835,6 +835,7 @@ SpecIncMultiHeadSelfAttentionMeta::SpecIncMultiHeadSelfAttentionMeta(
                                     attn->num_kv_heads,
                                     _num_q_heads,
                                     _num_kv_heads,
+                                    attn->num_kv_cache_pages,
                                     DT_NONE,
                                     false) {
   cudaStream_t stream;

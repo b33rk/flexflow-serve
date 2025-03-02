@@ -89,6 +89,7 @@ struct Request {
     RUNNING = 102,   // running inference
     COMPLETED = 103, // finished and verified
     FINISHING = 104, // finishing request, but not yet verified
+    EVICTED = 105,   // request evicted from kv cache, put back in queue
   };
   enum FinetuningStatus {
     FORWARD_PHASE = 201,
@@ -237,6 +238,7 @@ public:
   // Methods for preparing next batches
   bool is_eos_token(int token_id);
   bool inf_req_completed(BatchConfig const &old_bc, int i);
+  bool inf_req_evicted(BatchConfig const &old_bc, int i);
   void check_batch(BatchConfig const &old_bc, BatchConfig const &new_bc);
   void add_peft_config_to_request_info(BatchConfig &bc,
                                        int req_idx,
@@ -245,6 +247,8 @@ public:
   void process_inf_req_progress(BatchConfig const &old_fwd_bc,
                                 InferenceResult const &result);
   void handle_completed_inf_req(BatchConfig const &old_bc, int i);
+  void evict_requests_if_needed(BatchConfig const &old_bc,
+                                int inference_batch_size);
   void add_continuing_inf_req_to_new_batch(BatchConfig &new_bc,
                                            BatchConfig const &old_bc,
                                            int &num_active_req,
@@ -413,7 +417,7 @@ private:
   std::vector<int> eos_token_ids;
   bool old_llama_tokenizer = false;
   std::string output_filepath;
-  std::queue<Request> pending_infr_request_queue;
+  std::deque<Request> pending_infr_request_queue;
   std::queue<Request> pending_peft_request_queue;
   std::unordered_map<RequestGuid, Request> all_requests;
   std::unordered_map<RequestGuid, GenerationResult> request_generation_results;

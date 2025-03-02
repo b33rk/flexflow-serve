@@ -45,6 +45,7 @@ public:
                             DataType _quantization_type,
                             bool _offload,
                             int _tensor_parallelism_degree,
+                            int _num_kv_cache_pages,
                             char const *name);
   IncMultiHeadSelfAttention(FFModel &model,
                             ParallelTensor const _input,
@@ -63,6 +64,7 @@ public:
                             DataType _quantization_type,
                             bool _offload,
                             int _tensor_parallelism_degree,
+                            int _num_kv_cache_pages,
                             char const *name);
   IncMultiHeadSelfAttention(FFModel &model,
                             IncMultiHeadSelfAttention const &other,
@@ -126,7 +128,7 @@ public:
   Params get_params() const;
 
 public:
-  int num_q_heads, num_kv_heads, tensor_parallelism_degree;
+  int num_q_heads, num_kv_heads, tensor_parallelism_degree, num_kv_cache_pages;
   float dropout, scaling_factor;
   bool add_zero_attn, scaling_query, qk_prod_scaling, position_bias;
   RotaryEmbeddingMeta rotary_embedding_meta;
@@ -160,6 +162,7 @@ public:
                                 int _global_num_kv_heads,
                                 int _num_q_heads,
                                 int _num_kv_heads,
+                                int _num_kv_cache_pages,
                                 DataType _quantization_type,
                                 bool _offload);
   ~IncMultiHeadSelfAttentionMeta(void);
@@ -176,6 +179,7 @@ public:
   float scaling_factor;
   DataType quantization_type;
   bool offload;
+  int num_kv_cache_pages;
 
   // GPU memory sizes (or num elements)
   size_t gqa_ptr_array_size = 0;

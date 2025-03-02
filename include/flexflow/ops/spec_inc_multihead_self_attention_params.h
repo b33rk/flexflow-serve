@@ -12,6 +12,7 @@ struct SpecIncMultiHeadSelfAttentionParams {
   int embed_dim, num_q_heads, num_kv_heads, kdim, vdim;
   float dropout, scaling_factor;
   bool add_zero_attn, scaling_query, qk_prod_scaling, position_bias;
+  int num_kv_cache_pages;
   RotaryEmbeddingMeta rotary_embedding_meta;
   char name[MAX_OPNAME];
   bool is_valid(ParallelTensorShape const &) const;

@@ -135,6 +135,7 @@ Tensor FFModel::inc_multihead_self_attention(
   li->add_int_property("offload", offload);
   li->add_int_property("tensor_parallelism_degree",
                        config.tensor_parallelism_degree);
+  li->add_int_property("num_kv_cache_pages", get_num_kv_cache_pages());
   layers.push_back(li);
 
   return li->outputs[0];
@@ -186,6 +187,8 @@ Op *IncMultiHeadSelfAttention::create_operator_from_layer(
   bool offload = (bool)value;
   layer->get_int_property("tensor_parallelism_degree", value);
   int tensor_parallelism_degree = (int)value;
+  layer->get_int_property("num_kv_cache_pages", value);
+  int num_kv_cache_pages = (int)value;
 
   return new IncMultiHeadSelfAttention(model,
                                        layer->layer_guid,
@@ -205,6 +208,7 @@ Op *IncMultiHeadSelfAttention::create_operator_from_layer(
                                        quantization_type,
                                        offload,
                                        tensor_parallelism_degree,
+                                       num_kv_cache_pages,
                                        layer->name);
 }
 
@@ -227,6 +231,7 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
     DataType _quantization_type,
     bool _offload,
     int _tensor_parallelism_degree,
+    int _num_kv_cache_pages,
     char const *name)
     // Initializer* _bias_initializer)
     : Op(model,
@@ -263,6 +268,8 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       _input->num_dims, dims, this->data_type, this);
   /* assert(check_output_input_weight_parallel_dims()); */
+
+  num_kv_cache_pages = _num_kv_cache_pages;
 }
 
 IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
@@ -283,6 +290,7 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
     DataType _quantization_type,
     bool _offload,
     int _tensor_parallelism_degree,
+    int _num_kv_cache_pages,
     char const *name)
     // Initializer* _bias_initializer)
     : Op(model,
@@ -315,6 +323,8 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       _input->num_dims, dims, this->data_type, this);
 
+  num_kv_cache_pages = _num_kv_cache_pages;
+
   // Check correctness
   /* assert(check_output_input_weight_parallel_dims()); */
 }
@@ -341,6 +351,7 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
                                 other.quantization_type,
                                 other.offload,
                                 other.tensor_parallelism_degree,
+                                other.num_kv_cache_pages,
                                 other.name) {}
 
 IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
@@ -366,6 +377,7 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
                                 params.quantization_type,
                                 params.offload,
                                 params.tensor_parallelism_degree,
+                                params.num_kv_cache_pages,
                                 params.name) {}
 
 void IncMultiHeadSelfAttention::init_inference(
@@ -712,7 +724,8 @@ bool IncMultiHeadSelfAttention::measure_operator_cost(
 bool operator==(IncMultiHeadSelfAttentionParams const &lhs,
                 IncMultiHeadSelfAttentionParams const &rhs) {
   return lhs.layer_guid == rhs.layer_guid && lhs.embed_dim == rhs.embed_dim &&
-         lhs.num_q_heads == rhs.num_q_heads && lhs.kdim == rhs.kdim &&
+         lhs.num_q_heads == rhs.num_q_heads &&
+         lhs.num_kv_heads == rhs.num_kv_heads && lhs.kdim == rhs.kdim &&
          lhs.vdim == rhs.vdim && lhs.dropout == rhs.dropout &&
          lhs.add_zero_attn == rhs.add_zero_attn &&
          lhs.rotary_embedding_meta.apply_rotary_embedding ==
@@ -731,7 +744,9 @@ bool operator==(IncMultiHeadSelfAttentionParams const &lhs,
          lhs.scaling_query == rhs.scaling_query &&
          lhs.scaling_factor == rhs.scaling_factor &&
          lhs.qk_prod_scaling == rhs.qk_prod_scaling &&
-         lhs.position_bias == rhs.position_bias;
+         lhs.position_bias == rhs.position_bias &&
+         lhs.tensor_parallelism_degree == rhs.tensor_parallelism_degree &&
+         lhs.num_kv_cache_pages == rhs.num_kv_cache_pages;
 }
 
 IncMultiHeadSelfAttentionParams IncMultiHeadSelfAttention::get_params() const {
@@ -747,8 +762,9 @@ IncMultiHeadSelfAttentionParams IncMultiHeadSelfAttention::get_params() const {
   params.scaling_query = this->scaling_query;
   params.scaling_factor = this->scaling_factor;
   params.qk_prod_scaling = this->qk_prod_scaling;
-  params.position_bias = this->position_bias,
-  params.tensor_parallelism_degree = this->tensor_parallelism_degree,
+  params.position_bias = this->position_bias;
+  params.tensor_parallelism_degree = this->tensor_parallelism_degree;
+  params.num_kv_cache_pages = this->num_kv_cache_pages;
   params.quantization_type = this->quantization_type;
   params.offload = this->offload;
   params.num_kv_heads = this->num_kv_heads;
@@ -788,6 +804,7 @@ size_t hash<FlexFlow::IncMultiHeadSelfAttentionParams>::operator()(
   hash_combine(key, params.quantization_type);
   hash_combine(key, params.offload);
   hash_combine(key, params.tensor_parallelism_degree);
+  hash_combine(key, params.num_kv_cache_pages);
   return key;
 }
 }; // namespace std

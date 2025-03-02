@@ -48,11 +48,13 @@ public:
   // check if there is enough space for request with given total number of
   // prompt/evicted tokens even if the tokens will be run in multiple steps
   // (chunked prefills)
-  bool enough_space_to_add_request(int num_tokens) const;
+  bool enough_space_to_add_request(int num_prompt_tokens,
+                                   int num_prompt_tokens_in_first_batch,
+                                   int max_tokens_per_batch) const;
   // check if there is enough space to append new tokens to the existing
   // requests
   bool enough_space_to_append_tokens(
-      std::vector<std::pair<RequestGuid, int>> tokens_per_request = {}) const;
+      std::vector<std::pair<RequestGuid, int>> tokens_per_request) const;
   void add_request(RequestGuid const &guid, int num_tokens);
   void remove_request(RequestGuid const &request_guid);
   RequestGuid evict_request_fifo();

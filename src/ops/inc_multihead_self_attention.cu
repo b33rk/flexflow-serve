@@ -1854,6 +1854,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                     attn->num_kv_heads,
                                     _num_q_heads,
                                     _num_kv_heads,
+                                    attn->num_kv_cache_pages,
                                     attn->quantization_type,
                                     attn->offload) {}
 
@@ -1875,6 +1876,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     int _global_num_kv_heads,
     int _num_q_heads,
     int _num_kv_heads,
+    int _num_kv_cache_pages,
     DataType _quantization_type,
     bool _offload)
     : OpMeta(handler, attn) {
@@ -1909,6 +1911,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   position_bias = (bool *)calloc(1, sizeof(bool));
   *position_bias = _position_bias;
 
+  num_kv_cache_pages = _num_kv_cache_pages;
+  assert(num_kv_cache_pages > 0);
+
   // spec decoding and peft finetuning are mutually exclusive
   if (enable_peft_finetuning) {
     assert(infer_mode == INC_DECODING_MODE);
@@ -1934,22 +1939,16 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     }
 
     // 2. KV cache
-    if (infer_mode == INC_DECODING_MODE) {
-      // incr decoding: paged attention
-      PageManager *pm = PageManager::get_page_manager();
-      int max_num_pages = pm->get_tot_num_pages();
-      key_cache_size = value_cache_size =
-          num_kv_heads * kProjSize * size_of_dt * kPagesize * max_num_pages;
-    } else if (infer_mode == BEAM_SEARCH_MODE ||
-               infer_mode == TREE_VERIFY_MODE) {
+    key_cache_size = value_cache_size =
+        num_kv_heads * kProjSize * kPagesize * num_kv_cache_pages;
+    if (infer_mode == BEAM_SEARCH_MODE || infer_mode == TREE_VERIFY_MODE) {
       // a K-ary tree max node is (k^n - 1) / 2
-      key_cache_size = value_cache_size =
-          num_kv_heads * kProjSize *
-          BeamSearchBatchConfig::max_requests_per_batch() *
-          (BatchConfig::max_sequence_length() +
-           BatchConfig::max_spec_tree_token_num());
-    } else {
-      assert(false);
+      assert(key_cache_size == value_cache_size);
+      assert(key_cache_size >=
+             num_kv_heads * kProjSize *
+                 BeamSearchBatchConfig::max_requests_per_batch() *
+                 (BatchConfig::max_sequence_length() +
+                  BatchConfig::max_spec_tree_token_num()));
     }
     totalSize += (key_cache_size + value_cache_size) * size_of_dt;
     if (enable_peft_finetuning) {

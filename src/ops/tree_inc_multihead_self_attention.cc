@@ -135,6 +135,7 @@ Tensor FFModel::inc_multihead_self_attention_verify(
   li->add_int_property("offload", offload);
   li->add_int_property("tensor_parallelism_degree",
                        config.tensor_parallelism_degree);
+  li->add_int_property("num_kv_cache_pages", get_num_kv_cache_pages());
   layers.push_back(li);
   return li->outputs[0];
 }
@@ -184,6 +185,8 @@ Op *TreeIncMultiHeadSelfAttention::create_operator_from_layer(
   bool offload = (bool)value;
   layer->get_int_property("tensor_parallelism_degree", value);
   int tensor_parallelism_degree = (int)value;
+  layer->get_int_property("num_kv_cache_pages", value);
+  int num_kv_cache_pages = (int)value;
   return new TreeIncMultiHeadSelfAttention(model,
                                            layer->layer_guid,
                                            inputs[0],
@@ -202,6 +205,7 @@ Op *TreeIncMultiHeadSelfAttention::create_operator_from_layer(
                                            quantization_type,
                                            offload,
                                            tensor_parallelism_degree,
+                                           num_kv_cache_pages,
                                            layer->name);
 }
 
@@ -224,6 +228,7 @@ TreeIncMultiHeadSelfAttention::TreeIncMultiHeadSelfAttention(
     DataType _quantization_type,
     bool _offload,
     int _tensor_parallelism_degree,
+    int _num_kv_cache_pages,
     char const *name)
     : Op(model,
          OP_TREE_INC_MULTIHEAD_SELF_ATTENTION,
@@ -258,6 +263,8 @@ TreeIncMultiHeadSelfAttention::TreeIncMultiHeadSelfAttention(
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       _input->num_dims, dims, this->data_type, this);
 
+  num_kv_cache_pages = _num_kv_cache_pages;
+
   /* // Check correctness */
   /* assert(check_output_input_weight_parallel_dims()); */
 }
@@ -280,6 +287,7 @@ TreeIncMultiHeadSelfAttention::TreeIncMultiHeadSelfAttention(
     DataType _quantization_type,
     bool _offload,
     int _tensor_parallelism_degree,
+    int _num_kv_cache_pages,
     char const *name)
     : Op(model,
          OP_TREE_INC_MULTIHEAD_SELF_ATTENTION,
@@ -312,6 +320,8 @@ TreeIncMultiHeadSelfAttention::TreeIncMultiHeadSelfAttention(
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       _input->num_dims, dims, this->data_type, this);
 
+  num_kv_cache_pages = _num_kv_cache_pages;
+
   // Check correctness
   /* assert(check_output_input_weight_parallel_dims()); */
 }
@@ -338,6 +348,7 @@ TreeIncMultiHeadSelfAttention::TreeIncMultiHeadSelfAttention(
                                     other.quantization_type,
                                     other.offload,
                                     other.tensor_parallelism_degree,
+                                    other.num_kv_cache_pages,
                                     other.name) {}
 
 TreeIncMultiHeadSelfAttention::TreeIncMultiHeadSelfAttention(
@@ -363,6 +374,7 @@ TreeIncMultiHeadSelfAttention::TreeIncMultiHeadSelfAttention(
                                     params.quantization_type,
                                     params.offload,
                                     params.tensor_parallelism_degree,
+                                    params.num_kv_cache_pages,
                                     params.name) {}
 
 void TreeIncMultiHeadSelfAttention::init_inference(
@@ -638,7 +650,8 @@ bool operator==(TreeIncMultiHeadSelfAttentionParams const &lhs,
          lhs.scaling_query == rhs.scaling_query &&
          lhs.scaling_factor == rhs.scaling_factor &&
          lhs.qk_prod_scaling == rhs.qk_prod_scaling &&
-         lhs.position_bias == rhs.position_bias;
+         lhs.position_bias == rhs.position_bias &&
+         lhs.num_kv_cache_pages == rhs.num_kv_cache_pages;
 }
 
 TreeIncMultiHeadSelfAttentionParams
@@ -658,6 +671,7 @@ TreeIncMultiHeadSelfAttentionParams
   params.qk_prod_scaling = this->qk_prod_scaling;
   params.position_bias = this->position_bias;
   params.tensor_parallelism_degree = this->tensor_parallelism_degree;
+  params.num_kv_cache_pages = this->num_kv_cache_pages;
   if (strlen(this->name) < MAX_OPNAME) {
     strcpy(params.name, this->name);
   }
@@ -693,6 +707,7 @@ size_t hash<FlexFlow::TreeIncMultiHeadSelfAttentionParams>::operator()(
   hash_combine(key, params.quantization_type);
   hash_combine(key, params.offload);
   hash_combine(key, params.tensor_parallelism_degree);
+  hash_combine(key, params.num_kv_cache_pages);
   return key;
 }
 }; // namespace std

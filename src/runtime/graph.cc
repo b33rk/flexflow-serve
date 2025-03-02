@@ -2350,6 +2350,7 @@ GraphOptimalViewSerialized
         sez.serialize(attn->offload);
         sez.serialize(attn->num_kv_heads);
         sez.serialize(attn->tensor_parallelism_degree);
+        sez.serialize(attn->num_kv_cache_pages);
         sez.serialize(strlen(attn->name));
         sez.serialize(attn->name, strlen(attn->name));
         break;
@@ -2381,6 +2382,7 @@ GraphOptimalViewSerialized
         sez.serialize(attn->qk_prod_scaling);
         sez.serialize(attn->position_bias);
         sez.serialize(attn->num_kv_heads);
+        sez.serialize(attn->num_kv_cache_pages);
         sez.serialize(strlen(attn->name));
         sez.serialize(attn->name, strlen(attn->name));
         break;
@@ -2415,6 +2417,7 @@ GraphOptimalViewSerialized
         sez.serialize(attn->offload);
         sez.serialize(attn->num_kv_heads);
         sez.serialize(attn->tensor_parallelism_degree);
+        sez.serialize(attn->num_kv_cache_pages);
         sez.serialize(strlen(attn->name));
         sez.serialize(attn->name, strlen(attn->name));
         break;
@@ -2842,7 +2845,7 @@ void FFModel::deserialize_graph_optimal_view(
       case OP_INC_MULTIHEAD_SELF_ATTENTION: {
         assert(num_inputs == 1);
         int embed_dim, num_q_heads, k_dim, v_dim, num_kv_heads,
-            tensor_parallelism_degree;
+            tensor_parallelism_degree, num_kv_cache_pages;
         float dropout, scaling_factor;
         bool add_zero_attn, scaling_query, qk_prod_scaling, offload,
             position_bias;
@@ -2878,6 +2881,7 @@ void FFModel::deserialize_graph_optimal_view(
         dez.deserialize(offload);
         dez.deserialize(num_kv_heads);
         dez.deserialize(tensor_parallelism_degree);
+        dez.deserialize(num_kv_cache_pages);
         size_t name_len;
         char name[MAX_OPNAME] = {0};
         dez.deserialize(name_len);
@@ -2900,13 +2904,15 @@ void FFModel::deserialize_graph_optimal_view(
         params.offload = offload;
         params.num_kv_heads = num_kv_heads;
         params.tensor_parallelism_degree = tensor_parallelism_degree;
+        params.num_kv_cache_pages = num_kv_cache_pages;
         strcpy(params.name, name);
         node = get_or_create_node<IncMultiHeadSelfAttention>(inputs[0], params);
         break;
       }
       case OP_SPEC_INC_MULTIHEAD_SELF_ATTENTION: {
         assert(num_inputs == 1);
-        int embed_dim, num_q_heads, k_dim, v_dim, num_kv_heads;
+        int embed_dim, num_q_heads, k_dim, v_dim, num_kv_heads,
+            num_kv_cache_pages;
         float dropout, scaling_factor;
         bool add_zero_attn, scaling_query, qk_prod_scaling, position_bias;
         RotaryEmbeddingMeta rotary_embedding_meta;
@@ -2937,6 +2943,7 @@ void FFModel::deserialize_graph_optimal_view(
         dez.deserialize(qk_prod_scaling);
         dez.deserialize(position_bias);
         dez.deserialize(num_kv_heads);
+        dez.deserialize(num_kv_cache_pages);
         size_t name_len;
         char name[MAX_OPNAME] = {0};
         dez.deserialize(name_len);
@@ -2956,6 +2963,7 @@ void FFModel::deserialize_graph_optimal_view(
         params.qk_prod_scaling = qk_prod_scaling;
         params.position_bias = position_bias;
         params.num_kv_heads = num_kv_heads;
+        params.num_kv_cache_pages = num_kv_cache_pages;
         strcpy(params.name, name);
         node = get_or_create_node<SpecIncMultiHeadSelfAttention>(inputs[0],
                                                                  params);
@@ -2964,7 +2972,7 @@ void FFModel::deserialize_graph_optimal_view(
       case OP_TREE_INC_MULTIHEAD_SELF_ATTENTION: {
         assert(num_inputs == 1);
         int embed_dim, num_q_heads, k_dim, v_dim, num_kv_heads,
-            tensor_parallelism_degree;
+            tensor_parallelism_degree, num_kv_cache_pages;
         float dropout, scaling_factor;
         bool add_zero_attn, scaling_query, qk_prod_scaling, offload,
             position_bias;
@@ -3000,6 +3008,7 @@ void FFModel::deserialize_graph_optimal_view(
         dez.deserialize(offload);
         dez.deserialize(num_kv_heads);
         dez.deserialize(tensor_parallelism_degree);
+        dez.deserialize(num_kv_cache_pages);
         size_t name_len;
         char name[MAX_OPNAME] = {0};
         dez.deserialize(name_len);
@@ -3022,6 +3031,7 @@ void FFModel::deserialize_graph_optimal_view(
         params.offload = offload;
         params.num_kv_heads = num_kv_heads;
         params.tensor_parallelism_degree = tensor_parallelism_degree;
+        params.num_kv_cache_pages = num_kv_cache_pages;
         strcpy(params.name, name);
         node = get_or_create_node<TreeIncMultiHeadSelfAttention>(inputs[0],
                                                                  params);

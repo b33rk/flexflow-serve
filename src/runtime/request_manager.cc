@@ -573,7 +573,7 @@ RequestGuid RequestManager::register_new_request(Request const &request_) {
     return BatchConfig::INVALID_GUID;
   }
 
-  pending_infr_request_queue.push(request);
+  pending_infr_request_queue.push_back(request);
   all_requests[request.guid] = request;
   {
     const std::lock_guard<std::mutex> lock(request_to_promise_mutex);
@@ -753,6 +753,11 @@ bool RequestManager::is_eos_token(int token_id) {
     }
   }
   return false;
+}
+
+bool RequestManager::inf_req_evicted(BatchConfig const &old_bc, int i) {
+  Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
+  return request.status == Request::EVICTED;
 }
 
 bool RequestManager::inf_req_completed(BatchConfig const &old_bc, int i) {
@@ -936,6 +941,68 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
   profiling_requests[request.guid] = profile_info;
 }
 
+void RequestManager::evict_requests_if_needed(BatchConfig const &old_bc,
+                                              int inference_batch_size) {
+  // compute number of tokens that each request would like to run in the next
+  // step
+  std::vector<std::pair<RequestGuid, int>> planned_tokens_per_request;
+  int tot_num_planned_tokens = 0;
+  for (int i = 0; i < inference_batch_size; i++) {
+    if (!old_bc.request_completed[i] && !inf_req_completed(old_bc, i)) {
+      Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
+      assert(request.req_type == RequestType::REQ_INFERENCE &&
+             "Found misplaced finetuning request");
+      int processed_tokens =
+          old_bc.requestsInfo[i].first_token_depth_in_request +
+          old_bc.requestsInfo[i].num_tokens_in_batch;
+
+      int num_planned_tokens = 0;
+      if (processed_tokens + 1 == request.tokens.size()) {
+        // incr decoding phase, planning to process 1 token in the next batch
+        num_planned_tokens = 1;
+      } else {
+        // Prompt phase
+        assert(old_bc.requestsInfo[i].prompt_phase == true);
+        int space_for_incr_dec_requests = 0;
+        // If the prompt can't fit in the batch, compute how much space we
+        // need to leave out for incomplete requests in decoding phase at
+        // higher indices.
+        for (int ii = i + 1; ii < inference_batch_size; ii++) {
+          if (old_bc.request_completed[ii]) {
+            continue;
+          }
+          Request &old_request =
+              all_requests[old_bc.requestsInfo[ii].request_guid];
+          bool req_completed = inf_req_completed(old_bc, ii);
+          if (!req_completed) {
+            space_for_incr_dec_requests++;
+          }
+        }
+        num_planned_tokens =
+            std::min(get_max_tokens_per_batch() - tot_num_planned_tokens -
+                         space_for_incr_dec_requests,
+                     (int)request.tokens.size() - processed_tokens);
+      }
+      assert(num_planned_tokens > 0);
+
+      planned_tokens_per_request.push_back(
+          std::make_pair(request.guid, num_planned_tokens));
+
+      tot_num_planned_tokens += num_planned_tokens;
+    }
+  }
+  assert(tot_num_planned_tokens > 0 &&
+         tot_num_planned_tokens <= get_max_tokens_per_batch());
+
+  PageManager *pm = PageManager::get_page_manager();
+  while (!pm->enough_space_to_append_tokens(planned_tokens_per_request)) {
+    RequestGuid request_to_evict = pm->evict_request_fifo();
+    Request &request = all_requests[request_to_evict];
+    request.status = Request::EVICTED;
+    pending_infr_request_queue.push_front(request);
+  }
+}
+
 void RequestManager::add_continuing_inf_req_to_new_batch(
     BatchConfig &new_bc,
     BatchConfig const &old_bc,
@@ -1021,6 +1088,12 @@ void RequestManager::add_continuing_inf_req_to_new_batch(
     new_bc.tokensInfo[new_bc.num_tokens].token_id = request.tokens[depth];
     new_bc.num_tokens++;
   }
+
+  // record num tokens used in kv cache
+  PageManager *pm = PageManager::get_page_manager();
+  pm->append_tokens(new_bc.requestsInfo[i].request_guid,
+                    new_bc.requestsInfo[i].num_tokens_in_batch);
+
   // Update profiling
   profiling_requests[new_bc.requestsInfo[i].request_guid].llm_decoding_steps++;
 }
@@ -1037,20 +1110,30 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
   Request new_request = pending_infr_request_queue.front();
   assert(new_request.req_type == RequestType::REQ_INFERENCE);
 
+  int prefill_tokens_first_batch =
+      std::min(get_max_tokens_per_batch() - new_bc.num_tokens,
+               (int)new_request.tokens.size());
+
+  // if there is not enough space in the page table, don't add it yet
+  PageManager *pm = PageManager::get_page_manager();
+  if (!pm->enough_space_to_add_request(new_request.tokens.size(),
+                                       prefill_tokens_first_batch,
+                                       get_max_tokens_per_batch())) {
+    return;
+  }
+
   // if the request has peft adapters and we are at capacity, don't add it yet
   if (new_request.peft_model_id != PEFTModelID::NO_ID &&
       num_concurrent_inf_adapters == get_max_concurrent_adapters()) {
     return;
   }
 
-  pending_infr_request_queue.pop();
+  pending_infr_request_queue.pop_front();
 
   new_bc.requestsInfo[i].first_token_depth_in_request = 0;
   new_bc.requestsInfo[i].first_token_offset_in_batch = new_bc.num_tokens;
   new_bc.requestsInfo[i].request_guid = new_request.guid;
-  new_bc.requestsInfo[i].num_tokens_in_batch =
-      std::min(get_max_tokens_per_batch() - new_bc.num_tokens,
-               (int)new_request.tokens.size());
+  new_bc.requestsInfo[i].num_tokens_in_batch = prefill_tokens_first_batch;
   new_bc.requestsInfo[i].max_length = new_request.max_length;
   new_bc.requestsInfo[i].peft_model_id = new_request.peft_model_id;
   if (new_request.peft_model_id != PEFTModelID::NO_ID) {
@@ -1063,9 +1146,15 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
   num_active_req++;
   new_bc.requestsInfo[num_active_req].batch_config_request_id = i;
   // add start time to profile_info for the new request
-  profiling_requests[new_request.guid].llm_decoding_steps = 1;
-  profiling_requests[new_request.guid].start_time =
-      Realm::Clock::current_time_in_microseconds();
+  if (new_request.status == Request::EVICTED) {
+    assert(profiling_requests.find(new_request.guid) !=
+           profiling_requests.end());
+  } else {
+    profiling_requests[new_request.guid].llm_decoding_steps = 1;
+    profiling_requests[new_request.guid].start_time =
+        Realm::Clock::current_time_in_microseconds();
+  }
+
   for (int j = 0; j < new_bc.requestsInfo[i].num_tokens_in_batch; j++) {
     int depth = new_bc.requestsInfo[i].first_token_depth_in_request + j;
     new_bc.tokensInfo[new_bc.num_tokens].request_index = i;
@@ -1076,12 +1165,20 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
     new_bc.num_tokens++;
   }
 
-  // Record request start time
-  InferenceReqProfileInfo inf_profile_info;
-  inf_profile_info.request_guid = new_request.guid;
-  inf_profile_info.decoding_step_idx = REQ_START_TIME_STEP_IDX;
-  inf_profile_info.timestamp = Realm::Clock::current_time_in_microseconds();
-  inf_req_profile_infos.push_back(inf_profile_info);
+  if (new_request.status != Request::EVICTED) {
+    // Record request start time
+    InferenceReqProfileInfo inf_profile_info;
+    inf_profile_info.request_guid = new_request.guid;
+    inf_profile_info.decoding_step_idx = REQ_START_TIME_STEP_IDX;
+    inf_profile_info.timestamp = Realm::Clock::current_time_in_microseconds();
+    inf_req_profile_infos.push_back(inf_profile_info);
+  } else {
+    new_request.status = Request::RUNNING;
+  }
+
+  pm->add_request(new_request.guid, (int)new_request.tokens.size());
+  pm->append_tokens(new_request.guid,
+                    new_bc.requestsInfo[i].num_tokens_in_batch);
 }
 
 void RequestManager::handle_completed_finetuning_req(
@@ -1512,10 +1609,14 @@ BatchConfig
       BatchConfig::max_requests_per_batch() - (int)enable_peft_finetuning;
   int num_concurrent_inf_adapters = 0;
 
+  // Step 2: evict any requests that will not fit in the kv cache
+  evict_requests_if_needed(old_bc, inference_batch_size);
+
   // Step 2: prepare the next batch for existing inference requests
   for (int req_idx = 0; req_idx < inference_batch_size; req_idx++) {
     if (!old_bc.request_completed[req_idx] &&
-        !inf_req_completed(old_bc, req_idx)) {
+        !inf_req_completed(old_bc, req_idx) &&
+        !inf_req_evicted(old_bc, req_idx)) {
       add_continuing_inf_req_to_new_batch(
           new_bc, old_bc, num_active_req, num_concurrent_inf_adapters, req_idx);
     }
@@ -2027,7 +2128,7 @@ BeamSearchBatchConfig
       if (!pending_infr_request_queue.empty() &&
           new_bc.num_tokens < get_max_tokens_per_batch()) {
         Request new_request = pending_infr_request_queue.front();
-        pending_infr_request_queue.pop();
+        pending_infr_request_queue.pop_front();
         // all_requests[new_request.guid] = new_request;
         num_active_req++;
         new_bc.requestsInfo[i].first_token_depth_in_request = 0;
