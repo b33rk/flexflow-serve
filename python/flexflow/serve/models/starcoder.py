@@ -154,7 +154,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
             )
 
             assert self.mode == InferenceMode.INC_DECODING_MODE
-            o_proj = ffmodel.inc_multiquery_self_attention(
+            o_proj = ffmodel.inc_multihead_self_attention(
                 qkv_proj,
                 self.starcoder_config.hidden_size,
                 self.starcoder_config.num_attention_heads,

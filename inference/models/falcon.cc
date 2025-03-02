@@ -125,7 +125,7 @@ void FALCON::create_falcon_model(FFModel &ff,
 
     switch (mode) {
       case BEAM_SEARCH_MODE: {
-        o_proj = ff.spec_inc_multiquery_self_attention(
+        o_proj = ff.spec_inc_multihead_self_attention(
             qkv_proj,
             falcon_config.hidden_size,
             falcon_config.n_head,
@@ -148,7 +148,7 @@ void FALCON::create_falcon_model(FFModel &ff,
       }
 
       case TREE_VERIFY_MODE: {
-        o_proj = ff.inc_multiquery_self_attention_verify(
+        o_proj = ff.inc_multihead_self_attention_verify(
             qkv_proj,
             falcon_config.hidden_size,
             falcon_config.n_head,
@@ -171,7 +171,7 @@ void FALCON::create_falcon_model(FFModel &ff,
       }
 
       case INC_DECODING_MODE: {
-        o_proj = ff.inc_multiquery_self_attention(
+        o_proj = ff.inc_multihead_self_attention(
             qkv_proj,
             falcon_config.hidden_size,
             falcon_config.n_head,

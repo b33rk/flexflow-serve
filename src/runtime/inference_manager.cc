@@ -639,6 +639,10 @@ void FFModel::set_num_kv_cache_pages(int num_kv_cache_pages_) {
   num_kv_cache_pages = num_kv_cache_pages_;
 }
 
+int FFModel::get_num_kv_cache_pages() const {
+  return num_kv_cache_pages;
+}
+
 void FFModel::set_position_offset(int offset) {
   assert(offset == 0 || offset == 2);
   position_offset = offset;

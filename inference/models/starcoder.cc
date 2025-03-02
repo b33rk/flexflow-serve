@@ -132,7 +132,7 @@ void STARCODER::create_starcoder_model(
     Tensor o_proj;
     switch (mode) {
       case INC_DECODING_MODE: {
-        o_proj = ff.inc_multiquery_self_attention(
+        o_proj = ff.inc_multihead_self_attention(
             qkv_proj,
             startcoder_config.hidden_size,
             startcoder_config.num_attention_heads,

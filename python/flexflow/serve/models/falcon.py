@@ -162,7 +162,7 @@ class FlexFlowFalcon(FlexFlowModel):
             )
 
             if self.mode == InferenceMode.BEAM_SEARCH_MODE:
-                o_proj = ffmodel.spec_inc_multiquery_self_attention(
+                o_proj = ffmodel.spec_inc_multihead_self_attention(
                     qkv_proj,
                     self.falcon_config.hidden_size,
                     self.falcon_config.n_head,
@@ -177,7 +177,7 @@ class FlexFlowFalcon(FlexFlowModel):
                     name=f"layers.{i}.self_attention",
                 )
             elif self.mode == InferenceMode.TREE_VERIFY_MODE:
-                o_proj = ffmodel.inc_multiquery_self_attention_verify(
+                o_proj = ffmodel.inc_multihead_self_attention_verify(
                     qkv_proj,
                     self.falcon_config.hidden_size,
                     self.falcon_config.n_head,
@@ -192,7 +192,7 @@ class FlexFlowFalcon(FlexFlowModel):
                     name=f"layers.{i}.self_attention",
                 )
             elif self.mode == InferenceMode.INC_DECODING_MODE:
-                o_proj = ffmodel.inc_multiquery_self_attention(
+                o_proj = ffmodel.inc_multihead_self_attention(
                     qkv_proj,
                     self.falcon_config.hidden_size,
                     self.falcon_config.n_head,

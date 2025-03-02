@@ -3573,11 +3573,13 @@ class FFModel(object):
         self.add_layer(OpType.MULTIHEAD_ATTENTION, name)
         return Tensor(handle, owner_op_type=OpType.MULTIHEAD_ATTENTION)
 
+
     def inc_multihead_self_attention(
         self,
         input,
         embed_dim,
-        num_heads,
+        num_q_heads,
+        num_kv_heads,
         kdim=0,
         vdim=0,
         dropout=0.0,
@@ -3591,8 +3593,8 @@ class FFModel(object):
         position_bias=False,
         name=None,
     ):
-        """Defines the MultiHead Attention operation as described in Attention Is All You Need
-        which takes in the tensors :attr:`input`, and uses it for all three of query, key and values.
+        """Defines the multi-query head attention, which allows a different number of Q and KV heads,
+        and takes in the tensors :attr:`input`, and uses it for all three of query, key and values.
         In inference mode, the attention is computed using incremental decoding.
 
         :param input: the input Tensor.
@@ -3601,8 +3603,11 @@ class FFModel(object):
         :param embed_dim: total dimension of the model
         :type embed_dim: int
 
-        :param num_heads: Number of attention heads.
-        :type num_heads: int
+        :param num_q_heads: Number of query attention heads.
+        :type num_q_heads: int
+
+        :param num_kv_heads: Number of key/value attention heads.
+        :type num_kv_heads: int
 
         :param kdim: total number of features in key. Default is 0
         :type kdim: int
@@ -3649,7 +3654,8 @@ class FFModel(object):
             self.handle,
             input.handle,
             embed_dim,
-            num_heads,
+            num_q_heads,
+            num_kv_heads,
             kdim,
             vdim,
             dropout,
@@ -3676,7 +3682,8 @@ class FFModel(object):
         self,
         input,
         embed_dim,
-        num_heads,
+        num_q_heads,
+        num_kv_heads,
         kdim=0,
         vdim=0,
         dropout=0.0,
@@ -3690,8 +3697,8 @@ class FFModel(object):
         position_bias=False,
         name=None,
     ):
-        """Defines the MultiHead Attention operation as described in Attention Is All You Need
-        which takes in the tensors :attr:`input`, and uses it for all three of query, key and values.
+        """Defines the multi-query head attention, which allows a different number of Q and KV heads,
+        and takes in the tensors :attr:`input`, and uses it for all three of query, key and values.
         This operator only supports computing the attention in inference (beam search) mode.
 
         :param input: the input Tensor.
@@ -3700,8 +3707,11 @@ class FFModel(object):
         :param embed_dim: total dimension of the model
         :type embed_dim: int
 
-        :param num_heads: Number of attention heads.
-        :type num_heads: int
+        :param num_q_heads: Number of query attention heads.
+        :type num_q_heads: int
+
+        :param num_kv_heads: Number of key/value attention heads.
+        :type num_kv_heads: int
 
         :param kdim: total number of features in key. Default is 0
         :type kdim: int
@@ -3748,7 +3758,8 @@ class FFModel(object):
             self.handle,
             input.handle,
             embed_dim,
-            num_heads,
+            num_q_heads,
+            num_kv_heads,
             kdim,
             vdim,
             dropout,
@@ -3775,7 +3786,8 @@ class FFModel(object):
         self,
         input,
         embed_dim,
-        num_heads,
+        num_q_heads,
+        num_kv_heads,
         kdim=0,
         vdim=0,
         dropout=0.0,
@@ -3789,8 +3801,8 @@ class FFModel(object):
         position_bias=False,
         name=None,
     ):
-        """Defines the MultiHead Attention operation as described in Attention Is All You Need
-        which takes in the tensors :attr:`input`, and uses it for all three of query, key and values.
+        """Defines the multi-query head attention, which allows a different number of Q and KV heads,
+        and takes in the tensors :attr:`input`, and uses it for all three of query, key and values.
         This operator only supports computing the attention in inference (tree verify) mode.
 
         :param input: the input Tensor.
@@ -3799,8 +3811,11 @@ class FFModel(object):
         :param embed_dim: total dimension of the model
         :type embed_dim: int
 
-        :param num_heads: Number of attention heads.
-        :type num_heads: int
+        :param num_q_heads: Number of query attention heads.
+        :type num_q_heads: int
+
+        :param num_kv_heads: Number of key/value attention heads.
+        :type num_kv_heads: int
 
         :param kdim: total number of features in key. Default is 0
         :type kdim: int
@@ -3844,317 +3859,6 @@ class FFModel(object):
         kernel_init_handle = self.__get_initializer_handle(kernel_initializer)
         c_data_type = enum_to_int(DataType, data_type)
         handle = ffc().flexflow_model_add_inc_multihead_self_attention_verify(
-            self.handle,
-            input.handle,
-            embed_dim,
-            num_heads,
-            kdim,
-            vdim,
-            dropout,
-            add_zero_attn,
-            c_data_type,
-            kernel_init_handle,
-            rotary_embedding_meta.apply_rotary_embedding,
-            rotary_embedding_meta.rope_theta,
-            get_c_name(rotary_embedding_meta.rope_type),
-            rotary_embedding_meta.factor,
-            rotary_embedding_meta.low_freq_factor,
-            rotary_embedding_meta.high_freq_factor,
-            rotary_embedding_meta.original_max_position_embeddings,
-            scaling_query,
-            scaling_factor,
-            qk_prod_scaling,
-            position_bias,
-            c_name,
-        )
-        self.add_layer(OpType.TREE_INC_MULTIHEAD_SELF_ATTENTION, name)
-        return Tensor(handle, owner_op_type=OpType.TREE_INC_MULTIHEAD_SELF_ATTENTION)
-
-    def inc_multiquery_self_attention(
-        self,
-        input,
-        embed_dim,
-        num_q_heads,
-        num_kv_heads,
-        kdim=0,
-        vdim=0,
-        dropout=0.0,
-        add_zero_attn=False,
-        data_type=DataType.DT_NONE,
-        kernel_initializer=None,
-        rotary_embedding_meta=RotaryEmbeddingMeta(),
-        scaling_query=False,
-        scaling_factor=1.0,
-        qk_prod_scaling=True,
-        position_bias=False,
-        name=None,
-    ):
-        """Defines the multi-query head attention, which allows a different number of Q and KV heads,
-        and takes in the tensors :attr:`input`, and uses it for all three of query, key and values.
-        In inference mode, the attention is computed using incremental decoding.
-
-        :param input: the input Tensor.
-        :type input: Tensor
-
-        :param embed_dim: total dimension of the model
-        :type embed_dim: int
-
-        :param num_q_heads: Number of query attention heads.
-        :type num_q_heads: int
-
-        :param num_kv_heads: Number of key/value attention heads.
-        :type num_kv_heads: int
-
-        :param kdim: total number of features in key. Default is 0
-        :type kdim: int
-
-        :param vdim: total number of features in value. Default is 0
-        :type vdim: int
-
-        :param dropout: a Dropout layer on attn_output_weights. Default is 0.0
-        :type dropout: float(0-1)
-
-        :param add_zero_attn: add a new batch of zeros to the key and value sequences at dim=1. Default is False.
-        :type add_zero_attn: bool
-
-        :param data_type: the data type of the tensors. Default is DataType.DT_NONE, which means using the data type of the input tensors.
-        :type data_type: DataType
-
-        :param kernel_initializer: Initializer for dense layer kernels. If it is set to None, the GlorotUniformInitializer is applied.
-        :type kernel_initializer: Initializer
-
-        :param rotary_embedding_meta: Metadata regarding the RoPE embedding, if used.
-        :type rotary_embedding_meta: RotaryEmbeddingMeta
-
-        :param scaling_query: Whether to apply scaling query. Default is False.
-        :type scaling_query: bool
-
-        :param scaling_factor: The scaling factor to use for scaling. Default is 1.0.
-        :type scaling_factor: float
-
-        :param qk_prod_scaling: Whether to apply scaling to the QK product. Default is True.
-        :type qk_prod_scaling: bool
-
-        :param position_bias: Whether to add position bias to the QK product. Default is False.
-        :type position_bias: bool
-
-        :param name: the name of the layer. Default is None.
-        :type name: string
-
-        :returns:  Tensor -- the output tensor.
-        """
-        c_name = get_c_name(name)
-        kernel_init_handle = self.__get_initializer_handle(kernel_initializer)
-        c_data_type = enum_to_int(DataType, data_type)
-        handle = ffc().flexflow_model_add_inc_multiquery_self_attention(
-            self.handle,
-            input.handle,
-            embed_dim,
-            num_q_heads,
-            num_kv_heads,
-            kdim,
-            vdim,
-            dropout,
-            add_zero_attn,
-            c_data_type,
-            kernel_init_handle,
-            rotary_embedding_meta.apply_rotary_embedding,
-            rotary_embedding_meta.rope_theta,
-            get_c_name(rotary_embedding_meta.rope_type),
-            rotary_embedding_meta.factor,
-            rotary_embedding_meta.low_freq_factor,
-            rotary_embedding_meta.high_freq_factor,
-            rotary_embedding_meta.original_max_position_embeddings,
-            scaling_query,
-            scaling_factor,
-            qk_prod_scaling,
-            position_bias,
-            c_name,
-        )
-        self.add_layer(OpType.INC_MULTIHEAD_ATTENTION, name)
-        return Tensor(handle, owner_op_type=OpType.INC_MULTIHEAD_ATTENTION)
-
-    def spec_inc_multiquery_self_attention(
-        self,
-        input,
-        embed_dim,
-        num_q_heads,
-        num_kv_heads,
-        kdim=0,
-        vdim=0,
-        dropout=0.0,
-        add_zero_attn=False,
-        data_type=DataType.DT_NONE,
-        kernel_initializer=None,
-        rotary_embedding_meta=RotaryEmbeddingMeta(),
-        scaling_query=False,
-        scaling_factor=1.0,
-        qk_prod_scaling=True,
-        position_bias=False,
-        name=None,
-    ):
-        """Defines the multi-query head attention, which allows a different number of Q and KV heads,
-        and takes in the tensors :attr:`input`, and uses it for all three of query, key and values.
-        This operator only supports computing the attention in inference (beam search) mode.
-
-        :param input: the input Tensor.
-        :type input: Tensor
-
-        :param embed_dim: total dimension of the model
-        :type embed_dim: int
-
-        :param num_q_heads: Number of query attention heads.
-        :type num_q_heads: int
-
-        :param num_kv_heads: Number of key/value attention heads.
-        :type num_kv_heads: int
-
-        :param kdim: total number of features in key. Default is 0
-        :type kdim: int
-
-        :param vdim: total number of features in value. Default is 0
-        :type vdim: int
-
-        :param dropout: a Dropout layer on attn_output_weights. Default is 0.0
-        :type dropout: float(0-1)
-
-        :param add_zero_attn: add a new batch of zeros to the key and value sequences at dim=1. Default is False.
-        :type add_zero_attn: bool
-
-        :param data_type: the data type of the tensors. Default is DataType.DT_NONE, which means using the data type of the input tensors.
-        :type data_type: DataType
-
-        :param kernel_initializer: Initializer for dense layer kernels. If it is set to None, the GlorotUniformInitializer is applied.
-        :type kernel_initializer: Initializer
-
-        :param rotary_embedding_meta: Metadata regarding the RoPE embedding, if used.
-        :type rotary_embedding_meta: RotaryEmbeddingMeta
-
-        :param scaling_query: Whether to apply scaling query. Default is False.
-        :type scaling_query: bool
-
-        :param scaling_factor: The scaling factor to use for scaling. Default is 1.0.
-        :type scaling_factor: float
-
-        :param qk_prod_scaling: Whether to apply scaling to the QK product. Default is True.
-        :type qk_prod_scaling: bool
-
-        :param position_bias: Whether to add position bias to the QK product. Default is False.
-        :type position_bias: bool
-
-        :param name: the name of the layer. Default is None.
-        :type name: string
-
-        :returns:  Tensor -- the output tensor.
-        """
-        c_name = get_c_name(name)
-        kernel_init_handle = self.__get_initializer_handle(kernel_initializer)
-        c_data_type = enum_to_int(DataType, data_type)
-        handle = ffc().flexflow_model_add_spec_inc_multiquery_self_attention(
-            self.handle,
-            input.handle,
-            embed_dim,
-            num_q_heads,
-            num_kv_heads,
-            kdim,
-            vdim,
-            dropout,
-            add_zero_attn,
-            c_data_type,
-            kernel_init_handle,
-            rotary_embedding_meta.apply_rotary_embedding,
-            rotary_embedding_meta.rope_theta,
-            get_c_name(rotary_embedding_meta.rope_type),
-            rotary_embedding_meta.factor,
-            rotary_embedding_meta.low_freq_factor,
-            rotary_embedding_meta.high_freq_factor,
-            rotary_embedding_meta.original_max_position_embeddings,
-            scaling_query,
-            scaling_factor,
-            qk_prod_scaling,
-            position_bias,
-            c_name,
-        )
-        self.add_layer(OpType.SPEC_INC_MULTIHEAD_SELF_ATTENTION, name)
-        return Tensor(handle, owner_op_type=OpType.SPEC_INC_MULTIHEAD_SELF_ATTENTION)
-
-    def inc_multiquery_self_attention_verify(
-        self,
-        input,
-        embed_dim,
-        num_q_heads,
-        num_kv_heads,
-        kdim=0,
-        vdim=0,
-        dropout=0.0,
-        add_zero_attn=False,
-        data_type=DataType.DT_NONE,
-        kernel_initializer=None,
-        rotary_embedding_meta=RotaryEmbeddingMeta(),
-        scaling_query=False,
-        scaling_factor=1.0,
-        qk_prod_scaling=True,
-        position_bias=False,
-        name=None,
-    ):
-        """Defines the multi-query head attention, which allows a different number of Q and KV heads,
-        and takes in the tensors :attr:`input`, and uses it for all three of query, key and values.
-        This operator only supports computing the attention in inference (tree verify) mode.
-
-        :param input: the input Tensor.
-        :type input: Tensor
-
-        :param embed_dim: total dimension of the model
-        :type embed_dim: int
-
-        :param num_q_heads: Number of query attention heads.
-        :type num_q_heads: int
-
-        :param num_kv_heads: Number of key/value attention heads.
-        :type num_kv_heads: int
-
-        :param kdim: total number of features in key. Default is 0
-        :type kdim: int
-
-        :param vdim: total number of features in value. Default is 0
-        :type vdim: int
-
-        :param dropout: a Dropout layer on attn_output_weights. Default is 0.0
-        :type dropout: float(0-1)
-
-        :param add_zero_attn: add a new batch of zeros to the key and value sequences at dim=1. Default is False.
-        :type add_zero_attn: bool
-
-        :param data_type: the data type of the tensors. Default is DataType.DT_NONE, which means using the data type of the input tensors.
-        :type data_type: DataType
-
-        :param kernel_initializer: Initializer for dense layer kernels. If it is set to None, the GlorotUniformInitializer is applied.
-        :type kernel_initializer: Initializer
-
-        :param rotary_embedding_meta: Metadata regarding the RoPE embedding, if used.
-        :type rotary_embedding_meta: RotaryEmbeddingMeta
-
-        :param scaling_query: Whether to apply scaling query. Default is False.
-        :type scaling_query: bool
-
-        :param scaling_factor: The scaling factor to use for scaling. Default is 1.0.
-        :type scaling_factor: float
-
-        :param qk_prod_scaling: Whether to apply scaling to the QK product. Default is True.
-        :type qk_prod_scaling: bool
-
-        :param position_bias: Whether to add position bias to the QK product. Default is False.
-        :type position_bias: bool
-
-        :param name: the name of the layer. Default is None.
-        :type name: string
-
-        :returns:  Tensor -- the output tensor.
-        """
-        c_name = get_c_name(name)
-        kernel_init_handle = self.__get_initializer_handle(kernel_initializer)
-        c_data_type = enum_to_int(DataType, data_type)
-        handle = ffc().flexflow_model_add_inc_multiquery_self_attention_verify(
             self.handle,
             input.handle,
             embed_dim,

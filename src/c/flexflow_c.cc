@@ -1228,7 +1228,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -1260,7 +1261,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention(
                                             original_max_position_embeddings);
   Tensor tensor = handle->inc_multihead_self_attention(input,
                                                        embed_dim,
-                                                       num_heads,
+                                                       num_q_heads,
+                                                       num_kv_heads,
                                                        kdim,
                                                        vdim,
                                                        dropout,
@@ -1280,7 +1282,8 @@ flexflow_tensor_t flexflow_model_add_spec_inc_multihead_self_attention(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -1313,7 +1316,8 @@ flexflow_tensor_t flexflow_model_add_spec_inc_multihead_self_attention(
   Tensor tensor =
       handle->spec_inc_multihead_self_attention(input,
                                                 embed_dim,
-                                                num_heads,
+                                                num_q_heads,
+                                                num_kv_heads,
                                                 kdim,
                                                 vdim,
                                                 dropout,
@@ -1333,7 +1337,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -1366,7 +1371,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
   Tensor tensor =
       handle->inc_multihead_self_attention_verify(input,
                                                   embed_dim,
-                                                  num_heads,
+                                                  num_q_heads,
+                                                  num_kv_heads,
                                                   kdim,
                                                   vdim,
                                                   dropout,
@@ -1379,170 +1385,6 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
                                                   qk_prod_scaling,
                                                   position_bias,
                                                   name);
-  return FFCObjectWrapper::wrap(tensor);
-}
-
-flexflow_tensor_t flexflow_model_add_inc_multiquery_self_attention(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  Tensor input = FFCObjectWrapper::unwrap(input_);
-  Initializer *kernel_initializer =
-      FFCObjectWrapper::unwrap(kernel_initializer_);
-  RotaryEmbeddingMeta rotary_embedding_meta(apply_rotary_embedding,
-                                            rope_theta,
-                                            rope_type,
-                                            rope_factor,
-                                            low_freq_factor,
-                                            high_freq_factor,
-                                            original_max_position_embeddings);
-  Tensor tensor = handle->inc_multiquery_self_attention(input,
-                                                        embed_dim,
-                                                        num_q_heads,
-                                                        num_kv_heads,
-                                                        kdim,
-                                                        vdim,
-                                                        dropout,
-                                                        add_zero_attn,
-                                                        data_type,
-                                                        kernel_initializer,
-                                                        rotary_embedding_meta,
-                                                        scaling_query,
-                                                        scaling_factor,
-                                                        qk_prod_scaling,
-                                                        position_bias,
-                                                        name);
-  return FFCObjectWrapper::wrap(tensor);
-}
-
-flexflow_tensor_t flexflow_model_add_spec_inc_multiquery_self_attention(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  Tensor input = FFCObjectWrapper::unwrap(input_);
-  Initializer *kernel_initializer =
-      FFCObjectWrapper::unwrap(kernel_initializer_);
-  RotaryEmbeddingMeta rotary_embedding_meta(apply_rotary_embedding,
-                                            rope_theta,
-                                            rope_type,
-                                            rope_factor,
-                                            low_freq_factor,
-                                            high_freq_factor,
-                                            original_max_position_embeddings);
-  Tensor tensor =
-      handle->spec_inc_multiquery_self_attention(input,
-                                                 embed_dim,
-                                                 num_q_heads,
-                                                 num_kv_heads,
-                                                 kdim,
-                                                 vdim,
-                                                 dropout,
-                                                 add_zero_attn,
-                                                 data_type,
-                                                 kernel_initializer,
-                                                 rotary_embedding_meta,
-                                                 scaling_query,
-                                                 scaling_factor,
-                                                 qk_prod_scaling,
-                                                 position_bias,
-                                                 name);
-  return FFCObjectWrapper::wrap(tensor);
-}
-
-flexflow_tensor_t flexflow_model_add_inc_multiquery_self_attention_verify(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  Tensor input = FFCObjectWrapper::unwrap(input_);
-  Initializer *kernel_initializer =
-      FFCObjectWrapper::unwrap(kernel_initializer_);
-  RotaryEmbeddingMeta rotary_embedding_meta(apply_rotary_embedding,
-                                            rope_theta,
-                                            rope_type,
-                                            rope_factor,
-                                            low_freq_factor,
-                                            high_freq_factor,
-                                            original_max_position_embeddings);
-  Tensor tensor =
-      handle->inc_multiquery_self_attention_verify(input,
-                                                   embed_dim,
-                                                   num_q_heads,
-                                                   num_kv_heads,
-                                                   kdim,
-                                                   vdim,
-                                                   dropout,
-                                                   add_zero_attn,
-                                                   data_type,
-                                                   kernel_initializer,
-                                                   rotary_embedding_meta,
-                                                   scaling_query,
-                                                   scaling_factor,
-                                                   qk_prod_scaling,
-                                                   position_bias,
-                                                   name);
   return FFCObjectWrapper::wrap(tensor);
 }
 

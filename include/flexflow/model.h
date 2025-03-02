@@ -738,7 +738,8 @@ public:
   Tensor inc_multihead_self_attention(
       const Tensor input,
       int embed_dim,
-      int num_heads,
+      int num_q_heads,
+      int num_kv_heads,
       int kdim = 0,
       int vdim = 0,
       float dropout = 0.0f,
@@ -754,7 +755,8 @@ public:
   Tensor spec_inc_multihead_self_attention(
       const Tensor input,
       int embed_dim,
-      int num_heads,
+      int num_q_heads,
+      int num_kv_heads,
       int kdim = 0,
       int vdim = 0,
       float dropout = 0.0f,
@@ -768,56 +770,6 @@ public:
       bool position_bias = false,
       char const *name = NULL);
   Tensor inc_multihead_self_attention_verify(
-      const Tensor input,
-      int embed_dim,
-      int num_heads,
-      int kdim = 0,
-      int vdim = 0,
-      float dropout = 0.0f,
-      bool add_zero_attn = false,
-      DataType data_type = DT_NONE,
-      Initializer *kernel_initializer = NULL,
-      RotaryEmbeddingMeta rotary_embedding_meta = RotaryEmbeddingMeta(),
-      bool scaling_query = false,
-      float scaling_factor = 1.0f,
-      bool qk_prod_scaling = true,
-      bool position_bias = false,
-      char const *name = NULL);
-  Tensor inc_multiquery_self_attention(
-      const Tensor input,
-      int embed_dim,
-      int num_q_heads,
-      int num_kv_heads,
-      int kdim = 0,
-      int vdim = 0,
-      float dropout = 0.0f,
-      bool add_zero_attn = false,
-      DataType data_type = DT_NONE,
-      Initializer *kernel_initializer = NULL,
-      RotaryEmbeddingMeta rotary_embedding_meta = RotaryEmbeddingMeta(),
-      bool scaling_query = false,
-      float scaling_factor = 1.0f,
-      bool qk_prod_scaling = true,
-      bool position_bias = false,
-      char const *name = NULL);
-  Tensor spec_inc_multiquery_self_attention(
-      const Tensor input,
-      int embed_dim,
-      int num_q_heads,
-      int num_kv_heads,
-      int kdim = 0,
-      int vdim = 0,
-      float dropout = 0.0f,
-      bool add_zero_attn = false,
-      DataType data_type = DT_NONE,
-      Initializer *kernel_initializer = NULL,
-      RotaryEmbeddingMeta rotary_embedding_meta = RotaryEmbeddingMeta(),
-      bool scaling_query = false,
-      float scaling_factor = 1.0f,
-      bool qk_prod_scaling = true,
-      bool position_bias = false,
-      char const *name = NULL);
-  Tensor inc_multiquery_self_attention_verify(
       const Tensor input,
       int embed_dim,
       int num_q_heads,
@@ -1098,6 +1050,7 @@ public:
 
   // paged attention
   void set_num_kv_cache_pages(int num_pages);
+  int get_num_kv_cache_pages() const;
 
   void set_position_offset(int offset);
   void graph_optimize(size_t budget,

@@ -152,7 +152,7 @@ class FlexFlowLLAMA(FlexFlowModel):
             )
 
             if self.mode == InferenceMode.BEAM_SEARCH_MODE:
-                mha = ffmodel.spec_inc_multiquery_self_attention(
+                mha = ffmodel.spec_inc_multihead_self_attention(
                     qkv_proj,
                     self.llama_config.hidden_size,
                     self.llama_config.num_attention_heads,
@@ -167,7 +167,7 @@ class FlexFlowLLAMA(FlexFlowModel):
                     name=f"layers.{i}.self_attn",
                 )
             elif self.mode == InferenceMode.TREE_VERIFY_MODE:
-                mha = ffmodel.inc_multiquery_self_attention_verify(
+                mha = ffmodel.inc_multihead_self_attention_verify(
                     qkv_proj,
                     self.llama_config.hidden_size,
                     self.llama_config.num_attention_heads,
@@ -184,7 +184,7 @@ class FlexFlowLLAMA(FlexFlowModel):
                     name=f"layers.{i}.self_attn",
                 )
             elif self.mode == InferenceMode.INC_DECODING_MODE:
-                mha = ffmodel.inc_multiquery_self_attention(
+                mha = ffmodel.inc_multihead_self_attention(
                     qkv_proj,
                     self.llama_config.hidden_size,
                     self.llama_config.num_attention_heads,
