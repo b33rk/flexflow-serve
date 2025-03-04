@@ -9,7 +9,7 @@ TP_DEGREE=${TP_DEGREE:-2}
 PP_DEGREE=${PP_DEGREE:-2}
 CACHE_PATH=${FF_CACHE_PATH:-"~/.cache/flexflow"}
 NUM_STEPS=${NUM_STEPS:-2}
-FULL_PRECISION=${FULL_PRECISION:-true}
+FULL_PRECISION=${FULL_PRECISION:-false}
 FUSION=${FUSION:-true}
 
 # Token to access private huggingface models (e.g. LLAMA-2)
@@ -57,7 +57,7 @@ fi
 MAX_LENGTH=$((PROMPT_LENGTH + NUM_STEPS + 1))
 
 if [ "$FULL_PRECISION" = "true" ]; then full_precision_flag="--use-full-precision"; else full_precision_flag=""; fi
-python ./tests/inference/huggingface_inference.py \
+eval python ./tests/inference/huggingface_inference.py \
     --model-name "${MODEL_NAME}" \
     --max-length "${MAX_LENGTH}" \
     --prompt-file ../../inference/prompt/test.json \

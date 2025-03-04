@@ -1502,10 +1502,9 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     // matrix A's layout: [vProjSize * num_q_heads, num_new_tokens]
     DT const *A = static_cast<DT *>(m->handle.workSpace);
     // matrix B: value cache
-    // matrix B's layout: [vProjSize * num_kv_heads, max_num_tokens, num_req]
-    DT const *B =
-        static_cast<DT *>(m->valueCachePeft) +
-        i * m->vProjSize * m->num_kv_heads * BatchConfig::max_sequence_length();
+    // matrix B's layout: [vProjSize * num_kv_heads, max_num_tokens, 1]
+    DT const *B = static_cast<DT *>(m->valueCachePeft);
+        
     // matrix C: qk_prods_softmax gradients
     // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
     DT *C = static_cast<DT *>(m->qk_prods_softmax);
@@ -1701,9 +1700,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     DT const *A = static_cast<DT *>(m->qk_prods);
     // matrix B: key cache
     // matrix B's layout: [vProjSize * num_kv_heads, max_num_tokens, num_req]
-    DT const *B =
-        static_cast<DT *>(m->keyCachePeft) +
-        i * m->kProjSize * m->num_kv_heads * BatchConfig::max_sequence_length();
+    DT const *B = static_cast<DT *>(m->keyCachePeft);
     // matrix C: gradients for query (saved as part of m->devQKVProjArrayBWD)
     // matrix C's layout: [num_tokens, qProjsize * num_q_heads, 3]
     DT *C = static_cast<DT *>(m->devQKVProjArrayBWD);
@@ -1817,12 +1814,11 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     }
     // matrix B: gradients w.r.t. QKV (concatenated in devQKVArray)
     // matrix B's layout: [num_tokens, qProjsize * tot_num_heads]
-    DT const *B = static_cast<DT *>(m->devQKVProjArray);
+    DT const *B = static_cast<DT *>(m->devQKVProjArrayBWD);
     // matrix C: gradients w.r.t. input
     // matrix C's layout: [qProjsize * tot_num_heads, num_tokens]
     DT *C = input_grad_ptr + bc->requestsInfo[i].first_token_offset_in_batch *
-                                 m->qProjSize *
-                                 (m->num_q_heads + 2 * m->num_kv_heads);
+                                 m->qProjSize * m->num_q_heads;
     int n_ = num_tokens;
     int k_ = m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads);
 
@@ -1835,7 +1831,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".self_attn.input_gradient_0";
-      save_tensor(C, n_ * k_, filename.c_str());
+      save_tensor(C, num_tokens * m->qProjSize * m->num_q_heads, filename.c_str());
     }
   }
 }
