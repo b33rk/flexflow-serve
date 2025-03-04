@@ -1150,26 +1150,28 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
       m->handle.incr_attention_metadata->kv_indptr,
       m->handle.incr_attention_metadata->kv_last_page_len);
 
-  std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".q_indptr";
-  save_tensor(
-      static_cast<int32_t *>(m->handle.incr_attention_metadata->q_indptr),
-      batch_size + 1,
-      fpath.c_str());
-  fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indptr";
-  save_tensor(
-      static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indptr),
-      batch_size + 1,
-      fpath.c_str());
-  fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indices";
-  save_tensor(
-      static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indices),
-      batch_size + 1,
-      fpath.c_str());
-  fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_last_page_len";
-  save_tensor(static_cast<int32_t *>(
-                  m->handle.incr_attention_metadata->kv_last_page_len),
-              batch_size + 1,
-              fpath.c_str());
+  if (m->inference_debugging) {
+    std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".q_indptr";
+    save_tensor(
+        static_cast<int32_t *>(m->handle.incr_attention_metadata->q_indptr),
+        batch_size + 1,
+        fpath.c_str());
+    fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indptr";
+    save_tensor(
+        static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indptr),
+        batch_size + 1,
+        fpath.c_str());
+    fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indices";
+    save_tensor(
+        static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indices),
+        batch_size + 1,
+        fpath.c_str());
+    fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_last_page_len";
+    save_tensor(static_cast<int32_t *>(
+                    m->handle.incr_attention_metadata->kv_last_page_len),
+                batch_size + 1,
+                fpath.c_str());
+  }
 
   assert(m->handle.incr_attention_metadata->prompt_handler_collections.count(
              batch_size) != 0 &&
