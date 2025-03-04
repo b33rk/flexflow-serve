@@ -313,8 +313,8 @@ void peft_bwd_kernel(Context ctx,
                      int in_dim,
                      int out_dim,
                      ffStream_t stream) {
-  checkCUDA(cublasSetStream(m->handle.blas, stream));
-  checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
+  checkCUDA(cublasSetStream(m->handle.peft_blas, stream));
+  checkCUDNN(cudnnSetStream(m->handle.peft_dnn, stream));
   cudaDataType_t input_type = ff_to_cuda_datatype(m->input_type[0]);
   cudaDataType_t output_type = ff_to_cuda_datatype(m->output_type[0]);
   assert(input_type == output_type);
@@ -363,7 +363,7 @@ void peft_bwd_kernel(Context ctx,
                   lora_config.rank * num_peft_tokens,
                   filename.c_str());
     }
-    checkCUDA(cublasGemmEx(m->handle.blas,
+    checkCUDA(cublasGemmEx(m->handle.peft_blas,
                            CUBLAS_OP_N,
                            CUBLAS_OP_T,
                            lora_config.rank,
@@ -388,7 +388,7 @@ void peft_bwd_kernel(Context ctx,
   // low_rank_activation
   {
     DT alpha = 1.0f, beta = 0.0f;
-    checkCUDA(cublasGemmEx(m->handle.blas,
+    checkCUDA(cublasGemmEx(m->handle.peft_blas,
                            CUBLAS_OP_N,
                            CUBLAS_OP_N,
                            lora_config.rank,
@@ -415,7 +415,7 @@ void peft_bwd_kernel(Context ctx,
     DT beta = (bc->requestsInfo[i].optimizer_tasks.reset_gradients_to_zero)
                   ? 0.0f
                   : 1.0f;
-    checkCUDA(cublasGemmEx(m->handle.blas,
+    checkCUDA(cublasGemmEx(m->handle.peft_blas,
                            CUBLAS_OP_N,
                            CUBLAS_OP_T,
                            in_dim,
@@ -440,7 +440,7 @@ void peft_bwd_kernel(Context ctx,
   if (input_grad_ptr != nullptr) {
     DT alpha = 1.0f;
     DT beta = m->reset_input_grads[0] ? 0.0f : 1.0f;
-    checkCUDA(cublasGemmEx(m->handle.blas,
+    checkCUDA(cublasGemmEx(m->handle.peft_blas,
                            CUBLAS_OP_N,
                            CUBLAS_OP_N,
                            in_dim,
@@ -493,7 +493,7 @@ void peft_bwd_kernel(Context ctx,
                               w1_num_elements,
                               nccl_data_type,
                               ncclSum,
-                              m->handle.ncclComm,
+                              m->handle.ncclCommPeft,
                               stream));
       runtime->concurrent_task_barrier(ctx);
 #else

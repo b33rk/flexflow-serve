@@ -1218,7 +1218,10 @@ void Op::set_argumentmap_for_init(FFModel const &ff, ArgumentMap &argmap) {
       if (ff.config.computationMode == COMP_MODE_TRAINING &&                   \
           op_type == OP_WEIGHT) {                                              \
         ncclComm_t *nccl_comms = ff.find_nccl_comms(view);                     \
-        handle.ncclComm = nccl_comms[idx++];                                   \
+        handle.ncclComm = nccl_comms[idx];                                     \
+        ncclComm_t *nccl_comms_peft = ff.find_nccl_comms_peft(view);           \
+        handle.ncclCommPeft = nccl_comms_peft[idx];                            \
+        idx++;                                                                 \
       }                                                                        \
       argmap.set_point(*it, TaskArgument(&handle, sizeof(FFHandler)));         \
     }                                                                          \
@@ -1264,7 +1267,10 @@ void Op::set_argumentmap_for_init_inference(FFModel const &ff,
       if (op_type == OP_ALLREDUCE || op_type == OP_LORA ||                     \
           op_type == OP_PARALLEL_IDENTITY) {                                   \
         ncclComm_t *nccl_comms = ff.find_nccl_comms(view);                     \
-        handle.ncclComm = nccl_comms[idx++];                                   \
+        handle.ncclComm = nccl_comms[idx];                                     \
+        ncclComm_t *nccl_comms_peft = ff.find_nccl_comms_peft(view);           \
+        handle.ncclCommPeft = nccl_comms_peft[idx];                            \
+        idx++;                                                                 \
       }                                                                        \
       argmap.set_point(*it, TaskArgument(&handle, sizeof(FFHandler)));         \
     }                                                                          \
@@ -1627,7 +1633,39 @@ FFModel::FFModel(FFConfig &_config, bool cpu_offload)
 void FFModel::finish_nccl_comms() {
   Context ctx = config.lg_ctx;
   Runtime *runtime = config.lg_hlr;
+  // finish inference nccl comms
   for (auto const &comm : view_hash_to_nccl_comms) {
+    // Find the machine view that has the hash
+    MachineView view;
+    for (size_t l = 0; l < operators.size(); l++) {
+      view = operators[l]->outputs[0]->machine_view;
+      if (view.hash() == comm.first) {
+        break;
+      }
+    }
+    assert(view.hash() == comm.first && "Cannot find the machine view");
+    IndexSpace task_is = get_or_create_task_is(view);
+    Domain domain = runtime->get_index_space_domain(ctx, task_is);
+    ArgumentMap argmap;
+    int idx = 0;
+    for (Domain::DomainPointIterator it(domain); it; it++, idx++) {
+      argmap.set_point(*it,
+                       TaskArgument(&comm.second[idx], sizeof(ncclComm_t)));
+    }
+    IndexLauncher index_launcher(NCCL_FINISH_COMMS_TASK_ID,
+                                 task_is,
+                                 TaskArgument(nullptr, 0),
+                                 argmap,
+                                 Predicate::TRUE_PRED,
+                                 false /*must*/,
+                                 0 /*mapper_id*/,
+                                 comm.first);
+    index_launcher.concurrent = true;
+    FutureMap fm = runtime->execute_index_space(ctx, index_launcher);
+    fm.wait_all_results();
+  }
+  // finish peft nccl comms
+  for (auto const &comm : view_hash_to_nccl_comms_peft) {
     // Find the machine view that has the hash
     MachineView view;
     for (size_t l = 0; l < operators.size(); l++) {
@@ -1676,6 +1714,15 @@ void FFModel::clear_graph_search_cache() {
 
 #ifdef FF_USE_NCCL
 ncclComm_t *FFModel::find_nccl_comms(MachineView const &view) const {
+  auto const &it = view_hash_to_nccl_comms.find(view.hash());
+  if (it == view_hash_to_nccl_comms.end()) {
+    assert(config.computationMode == COMP_MODE_INFERENCE);
+    return nullptr;
+  } else {
+    return it->second;
+  }
+}
+ncclComm_t *FFModel::find_nccl_comms_peft(MachineView const &view) const {
   auto const &it = view_hash_to_nccl_comms.find(view.hash());
   if (it == view_hash_to_nccl_comms.end()) {
     assert(config.computationMode == COMP_MODE_INFERENCE);
@@ -3919,6 +3966,34 @@ void FFModel::compile(LossType loss_type,
           nccl_comms[idx] = fm.get_result<ncclComm_t>(*it);
         }
         view_hash_to_nccl_comms[view.hash()] = nccl_comms;
+      }
+      if (view_hash_to_nccl_comms_peft.find(view.hash()) ==
+          view_hash_to_nccl_comms_peft.end()) {
+        TaskLauncher launcher(NCCL_GETUNIQUEID_TASK_ID, TaskArgument(NULL, 0));
+        Future future = runtime->execute_task(ctx, launcher);
+        ncclUniqueId ncclId = future.get_result<ncclUniqueId>();
+        IndexSpace task_is = get_or_create_task_is(view);
+        ArgumentMap argmap;
+        IndexLauncher index_launcher(
+            NCCL_INIT_COMMS_TASK_ID,
+            task_is,
+            TaskArgument(&ncclId, sizeof(ncclUniqueId)),
+            argmap,
+            Predicate::TRUE_PRED,
+            false /*must*/,
+            0 /*mapper_id*/,
+            view.hash() /*MappingTagID*/);
+        index_launcher.concurrent = true;
+        FutureMap fm = runtime->execute_index_space(ctx, index_launcher);
+        fm.wait_all_results();
+        int idx = 0;
+        Domain task_domain = runtime->get_index_space_domain(ctx, task_is);
+        ncclComm_t *nccl_comms_peft =
+            (ncclComm_t *)malloc(sizeof(ncclComm_t) * task_domain.get_volume());
+        for (Domain::DomainPointIterator it(task_domain); it; it++, idx++) {
+          nccl_comms_peft[idx] = fm.get_result<ncclComm_t>(*it);
+        }
+        view_hash_to_nccl_comms_peft[view.hash()] = nccl_comms_peft;
       }
     }
   }

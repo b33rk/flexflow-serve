@@ -745,6 +745,10 @@ __host__ bool FusedOp::peft_bwd_task(Task const *task,
     if (metas->meta[op] != NULL) {
       assert(metas->meta[start]->handle.blas == metas->meta[op]->handle.blas);
       assert(metas->meta[start]->handle.dnn == metas->meta[op]->handle.dnn);
+      assert(metas->meta[start]->handle.peft_blas ==
+             metas->meta[op]->handle.peft_blas);
+      assert(metas->meta[start]->handle.peft_dnn ==
+             metas->meta[op]->handle.peft_dnn);
     }
   }
 

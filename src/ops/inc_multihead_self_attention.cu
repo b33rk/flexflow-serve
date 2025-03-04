@@ -1259,31 +1259,30 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   }
 
   // peft stream can only start after
-  // if (bc->num_finetuning_fwd_tokens() > 0) {
-  //   // wait until copy to devQKVProjArray and application of scaling & rotary
-  //   // have finished
-  //   cudaEvent_t prep_done;
-  //   cudaEventCreate(&prep_done);
-  //   cudaEventRecord(prep_done, inf_stream);
-  //   cudaStreamWaitEvent(peft_stream, prep_done, 0);
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    // wait until copy to devQKVProjArray and application of scaling & rotary
+    // have finished
+    cudaEvent_t prep_done;
+    cudaEventCreate(&prep_done);
+    cudaEventRecord(prep_done, inf_stream);
+    cudaStreamWaitEvent(peft_stream, prep_done, 0);
 
-  //   update_kv_cache_kernel_peft<DT>(m, bc, peft_stream);
-  //   compute_attention_kernel_peft<DT>(m, bc, output_ptr, shard_id,
-  //   peft_stream);
+    update_kv_cache_kernel_peft<DT>(m, bc, peft_stream);
+    compute_attention_kernel_peft<DT>(m, bc, output_ptr, shard_id, peft_stream);
 
-  //   assert(m->peft_token_infos != nullptr);
-  //   assert(m->peft_token_infos_size == sizeof(BatchConfig::PerTokenInfo) *
-  //                                          BatchConfig::max_sequence_length());
-  //   int num_ft_tokens = bc->num_finetuning_fwd_tokens();
-  //   int i = bc->finetuning_request_index();
-  //   int tokens_previous_requests =
-  //       bc->requestsInfo[i].first_token_offset_in_batch;
-  //   int prev_steps_tokens = bc->requestsInfo[i].first_token_depth_in_request;
-  //   for (int j = 0; j < num_ft_tokens; j++) {
-  //     m->peft_token_infos[prev_steps_tokens + j] =
-  //         bc->tokensInfo[tokens_previous_requests + j];
-  //   }
-  // }
+    assert(m->peft_token_infos != nullptr);
+    assert(m->peft_token_infos_size == sizeof(BatchConfig::PerTokenInfo) *
+                                           BatchConfig::max_sequence_length());
+    int num_ft_tokens = bc->num_finetuning_fwd_tokens();
+    int i = bc->finetuning_request_index();
+    int tokens_previous_requests =
+        bc->requestsInfo[i].first_token_offset_in_batch;
+    int prev_steps_tokens = bc->requestsInfo[i].first_token_depth_in_request;
+    for (int j = 0; j < num_ft_tokens; j++) {
+      m->peft_token_infos[prev_steps_tokens + j] =
+          bc->tokensInfo[tokens_previous_requests + j];
+    }
+  }
 
   // flashinfer sdpa
   assert(bc->num_finetuning_fwd_tokens() >= 0 &&
@@ -1395,8 +1394,8 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                      DT const *output_grad_ptr,
                      cudaStream_t peft_stream) {
   assert(!m->offload);
-  checkCUDA(cublasSetStream(m->handle.blas, peft_stream));
-  checkCUDNN(cudnnSetStream(m->handle.dnn, peft_stream));
+  checkCUDA(cublasSetStream(m->handle.peft_blas, peft_stream));
+  checkCUDNN(cudnnSetStream(m->handle.peft_dnn, peft_stream));
   cudaDataType_t cublas_data_type = ff_to_cuda_datatype(m->output_type[0]);
   cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
   assert(data_type_size(m->output_type[0]) == sizeof(DT));
@@ -1524,7 +1523,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideC = num_tokens * num_tokens; // num_new_tokens * total_tokens
 
     run_batched_matmul<DT>(m,
-                           m->handle.blas,
+                           m->handle.peft_blas,
                            CUBLAS_OP_T,
                            CUBLAS_OP_N,
                            m_,
@@ -1578,7 +1577,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                           c_param,
                                           h_param,
                                           w_param));
-    checkCUDNN(cudnnSoftmaxBackward(m->handle.dnn,
+    checkCUDNN(cudnnSoftmaxBackward(m->handle.peft_dnn,
                                     CUDNN_SOFTMAX_ACCURATE,
                                     CUDNN_SOFTMAX_MODE_CHANNEL,
                                     &alpha,
@@ -1658,7 +1657,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideA = num_tokens * num_tokens;
     int strideB = m->kProjSize;
     int strideC = num_tokens * m->kProjSize;
-    checkCUDA(cublasGemmStridedBatchedEx(m->handle.blas,
+    checkCUDA(cublasGemmStridedBatchedEx(m->handle.peft_blas,
                                          CUBLAS_OP_T,
                                          CUBLAS_OP_T,
                                          m_,
@@ -1721,7 +1720,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideB = m->qProjSize;
     int strideC = num_tokens * m->qProjSize;
     run_batched_matmul<DT>(m,
-                           m->handle.blas,
+                           m->handle.peft_blas,
                            CUBLAS_OP_N,
                            CUBLAS_OP_T,
                            m_,
@@ -1856,8 +1855,8 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
     GenericTensorAccessorW const &output) {
   cudaStream_t inf_stream;
   checkCUDA(get_legion_stream(&inf_stream));
-  // cudaStream_t peft_stream;
-  // checkCUDA(get_legion_stream(&peft_stream));
+  cudaStream_t peft_stream;
+  checkCUDA(get_legion_stream(&peft_stream));
 
   // cudaEvent_t t_start, t_end;
   // if (m->profiling) {
@@ -1875,7 +1874,7 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
                                                      input.get_half_ptr(),
                                                      output.get_half_ptr(),
                                                      inf_stream,
-                                                     inf_stream);
+                                                     peft_stream);
   } else if (input.data_type == DT_FLOAT) {
     Kernels::IncMultiHeadAttention::inference_kernel(m,
                                                      bc,
@@ -1883,7 +1882,7 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
                                                      input.get_float_ptr(),
                                                      output.get_float_ptr(),
                                                      inf_stream,
-                                                     inf_stream);
+                                                     peft_stream);
   } else {
     assert(false && "Unspported data type");
   }
@@ -2331,14 +2330,14 @@ template void Kernels::IncMultiHeadAttention::apply_scaling_and_rotary<float>(
     BatchConfig const *bc,
     int shard_id,
     float *output_ptr,
-    cudaStream_t stream);
+    cudaStream_t inf_stream);
 
 template void Kernels::IncMultiHeadAttention::apply_scaling_and_rotary<half>(
     IncMultiHeadSelfAttentionMeta const *m,
     BatchConfig const *bc,
     int shard_id,
     half *output_ptr,
-    cudaStream_t stream);
+    cudaStream_t inf_stream);
 
 template void
     Kernels::IncMultiHeadAttention::update_kv_cache_kernel_flashinfer<float>(
