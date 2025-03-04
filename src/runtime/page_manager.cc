@@ -288,14 +288,16 @@ void PageManager::append_tokens(RequestGuid const &request_guid,
   }
   // update the number of used pages and the number of tokens in the last used
   // page
-  req_info.num_tokens_in_last_used_page += num_tokens;
-  int tot_num_tokens = req_info.num_tokens_in_last_used_page;
-  if (req_info.num_used_pages > 0) {
-    tot_num_tokens += (req_info.num_used_pages-1) * tokens_per_page;
+  if (req_info.num_tokens_in_last_used_page == 0 && req_info.num_used_pages == 0) {
+    req_info.num_used_pages = 1;
   }
-  req_info.num_used_pages = ceilDiv(tot_num_tokens, tokens_per_page);
-  req_info.num_tokens_in_last_used_page =
-      req_info.num_tokens_in_last_used_page % tokens_per_page;
+
+  req_info.num_tokens_in_last_used_page += num_tokens;
+  while (req_info.num_tokens_in_last_used_page > tokens_per_page) {
+    req_info.num_used_pages += 1;
+    req_info.num_tokens_in_last_used_page -= tokens_per_page;
+  }
+
   printf("appending %d tokens to request %d. It now has %d tokens in the last "
          "used page and %d used pages\n",
          num_tokens, request_guid, req_info.num_tokens_in_last_used_page,

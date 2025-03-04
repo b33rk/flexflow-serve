@@ -6,7 +6,7 @@ from collections import namedtuple
 ff_init_configs = {
     # required parameters
     "num_gpus": 4,
-    "memory_per_gpu": 24000,
+    "memory_per_gpu": 14000,
     "zero_copy_memory_per_node": 40000,
     # optional parameters
     "num_cpus": 8,
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     gen_incr_dec_configs(prompt_file, 
                          output_folder, 
                          incr_dec_models=[llama_models[0], opt_models[0]],
-                         parallelism_settings=[Parallelism(1, 1)], 
+                         parallelism_settings=[Parallelism(4, 1)], 
                          full_precision_settings=[False,], 
                          config_output_folder=config_output_folder
     )
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     gen_incr_dec_configs(prompt_file, 
                          output_folder, 
                          incr_dec_models=[llama_models[1], opt_models[1]],
-                         parallelism_settings=[Parallelism(1, 1)], 
+                         parallelism_settings=[Parallelism(2, 2)], 
                          full_precision_settings=[False,], 
                          config_output_folder=config_output_folder
     )
@@ -156,7 +156,7 @@ if __name__ == "__main__":
     gen_spec_configs(prompt_file, 
                      output_folder, 
                      specinfer_model_pairs=[SpecModelPair(llama_models[0], llama_models[1]),], 
-                     parallelism_settings=[Parallelism(1, 1), Parallelism(1, 1), Parallelism(1, 1)], 
+                     parallelism_settings=[Parallelism(4, 1), Parallelism(2, 2), Parallelism(1, 4)], 
                      full_precision_settings=[False,], 
                      config_output_folder=config_output_folder
     )
@@ -164,7 +164,7 @@ if __name__ == "__main__":
     gen_spec_configs(prompt_file, 
                      output_folder, 
                      specinfer_model_pairs=[SpecModelPair(opt_models[0], opt_models[1]),], 
-                     parallelism_settings=[Parallelism(1, 1)], 
+                     parallelism_settings=[Parallelism(4, 1)], 
                      full_precision_settings=[False,], 
                      config_output_folder=config_output_folder
     )
