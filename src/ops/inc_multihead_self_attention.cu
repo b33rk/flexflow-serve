@@ -327,8 +327,8 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     return;
   }
 
-  checkCUDA(cublasSetStream(m->handle.blas, peft_stream));
-  checkCUDNN(cudnnSetStream(m->handle.dnn, peft_stream));
+  checkCUDA(cublasSetStream(m->handle.peft_blas, peft_stream));
+  checkCUDNN(cudnnSetStream(m->handle.peft_dnn, peft_stream));
   cudaDataType_t cublas_data_type = ff_to_cuda_datatype(m->output_type[0]);
   cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
   assert(data_type_size(m->output_type[0]) == sizeof(DT));
@@ -406,8 +406,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     // matrix A: devQKVProjArray
     // matrix A's layout: [qProjSize, tot_num_heads, num_new_tokens]
     // To get query projection, skip over Q entries from previous requests
-    DT const *A = static_cast<DT *>(m->devQKVProjArray) +
-                  bc->requestsInfo[req_idx].first_token_offset_in_batch *
+    DT const *A = static_cast<DT *>(m->devQKVProjArray) + tokens_previous_requests *
                       m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads);
     // matrix B: key cache (peft)
     // matrix B's layout: [kProjSize, num_kv_heads, total_tokens]
@@ -418,7 +417,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
     DT *C = static_cast<DT *>(m->qk_prods);
     run_batched_matmul<DT>(m,
-                           m->handle.blas,
+                           m->handle.peft_blas,
                            CUBLAS_OP_T,
                            CUBLAS_OP_N,
                            m_,
@@ -535,7 +534,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     // CUDNN_SOFTMAX_MODE_CHANNEL, which is also described in the docs: The
     // softmax operation is computed per spatial location (H,W) per image (N)
     // across dimension C.
-    checkCUDNN(cudnnSoftmaxForward(m->handle.dnn,
+    checkCUDNN(cudnnSoftmaxForward(m->handle.peft_dnn,
                                    CUDNN_SOFTMAX_ACCURATE,
                                    CUDNN_SOFTMAX_MODE_CHANNEL,
                                    &softmax_alpha,
@@ -605,7 +604,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
             (bc->requestsInfo[req_idx].first_token_offset_in_batch) *
                 m->num_q_heads * m->vProjSize;
     run_batched_matmul<DT>(m,
-                           m->handle.blas,
+                           m->handle.peft_blas,
                            CUBLAS_OP_N,
                            CUBLAS_OP_T,
                            m_,
@@ -1505,7 +1504,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     // matrix B: value cache
     // matrix B's layout: [vProjSize * num_kv_heads, max_num_tokens, num_req]
     DT const *B =
-        static_cast<DT *>(m->valueCache) +
+        static_cast<DT *>(m->valueCachePeft) +
         i * m->vProjSize * m->num_kv_heads * BatchConfig::max_sequence_length();
     // matrix C: qk_prods_softmax gradients
     // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
@@ -1703,7 +1702,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     // matrix B: key cache
     // matrix B's layout: [vProjSize * num_kv_heads, max_num_tokens, num_req]
     DT const *B =
-        static_cast<DT *>(m->keyCache) +
+        static_cast<DT *>(m->keyCachePeft) +
         i * m->kProjSize * m->num_kv_heads * BatchConfig::max_sequence_length();
     // matrix C: gradients for query (saved as part of m->devQKVProjArrayBWD)
     // matrix C's layout: [num_tokens, qProjsize * num_q_heads, 3]
@@ -2183,6 +2182,8 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
           peft_key_cache_size * size_of_dt);
       valueCachePeft = gpu_mem_allocator.allocate_instance_untyped(
           peft_value_cache_size * size_of_dt);
+    } else {
+      keyCachePeft = valueCachePeft = nullptr;
     }
 
     // intermediate buffers
