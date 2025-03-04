@@ -97,12 +97,18 @@ FFHandler
   assert(handle.incr_attention_metadata != nullptr &&
          "Attention metadata must be allocated");
 
-  // cublas/dnn handles for inference strema
+  // cublas/dnn handles for inference stream
   checkCUDA(cublasCreate(&handle.blas));
   if (handle.allowTensorOpMathConversion) {
     checkCUDA(cublasSetMathMode(handle.blas, CUBLAS_TENSOR_OP_MATH));
   }
   checkCUDNN(cudnnCreate(&handle.dnn));
+  // cublas/dnn handles for peft stream
+  checkCUDA(cublasCreate(&handle.peft_blas));
+  if (handle.allowTensorOpMathConversion) {
+    checkCUDA(cublasSetMathMode(handle.peft_blas, CUBLAS_TENSOR_OP_MATH));
+  }
+  checkCUDNN(cudnnCreate(&handle.peft_dnn));
 
   // #ifdef FF_USE_NCCL
   //   checkNCCL(ncclCommInitRank(&handle.nccl, info->allRanks, info->ncclId,
