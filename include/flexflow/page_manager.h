@@ -30,8 +30,7 @@ public:
                                        int num_transformer_layers,
                                        int num_kv_heads,
                                        int qkv_dim,
-                                       int size_dt,
-                                       bool spec_mode = false);
+                                       int size_dt);
   PageManager(int block_size, int tot_num_pages);
 
   int get_tot_num_pages() const;
@@ -74,7 +73,7 @@ public:
     int num_tokens_in_last_used_page;
   };
 
-  friend std::ostream& operator<<(std::ostream& os, const PageManager& pm);
+  friend std::ostream &operator<<(std::ostream &os, PageManager const &pm);
 
 private:
   // requests ordered by arrival. We use this order for FIFO eviction
@@ -87,5 +86,12 @@ private:
   int tot_num_pages;
   int tokens_per_page;
 };
+
+int compute_num_kv_cache_pages_needed(bool is_spec,
+                                      int max_kv_cache_size,
+                                      int num_transformer_layers,
+                                      int num_kv_heads,
+                                      int qkv_dim,
+                                      int size_dt);
 
 }; // namespace FlexFlow

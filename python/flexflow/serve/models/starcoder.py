@@ -91,15 +91,20 @@ class FlexFlowSTARCODER(FlexFlowModel):
 
     def build_model(self, max_tokens_per_batch):
         ffmodel = FFModel(self.ffconfig)
-        pm = PageManager(
-            max_kv_cache_size = self.max_kv_cache_size,
-            num_transformer_layers = self.starcoder_config.num_hidden_layers,
-            num_kv_heads = self.starcoder_config.n_head_kv,
-            qkv_dim = (self.starcoder_config.hidden_size // self.starcoder_config.num_attention_heads),
-            size_dt = data_type_size(self.data_type),
-            spec_mode = (self.mode != InferenceMode.INC_DECODING_MODE),
+
+        ffmodel.set_num_kv_cache_pages(
+            compute_num_kv_cache_pages_needed(
+                is_spec=(self.mode != InferenceMode.INC_DECODING_MODE),
+                max_kv_cache_size=self.max_kv_cache_size,
+                num_transformer_layers=self.starcoder_config.num_hidden_layers,
+                num_kv_heads=self.starcoder_config.n_head_kv,
+                qkv_dim=(
+                    self.starcoder_config.hidden_size
+                    // self.starcoder_config.num_attention_heads
+                ),
+                size_dt=data_type_size(self.data_type),
+            )
         )
-        ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 
         tokens_dims = [max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
@@ -177,7 +182,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
                 self.starcoder_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 False,
-                name=f"layers.{i}.self_attn.o_proj"
+                name=f"layers.{i}.self_attn.o_proj",
             )
 
             residual, l2_norm = ffmodel.residual_layer_norm(
@@ -241,7 +246,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
             ffmodel.add_lora_layers(["c_fc", "c_proj"])
-        
+
         self.ffmodel = ffmodel
 
     def convert_hf_model(model, dst_folder):

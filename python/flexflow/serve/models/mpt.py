@@ -79,14 +79,17 @@ class FlexFlowMPT(FlexFlowModel):
 
     def build_model(self, max_tokens_per_batch):
         ffmodel = FFModel(self.ffconfig)
-        pm = PageManager(max_kv_cache_size = self.max_kv_cache_size, 
-                        num_transformer_layers = self.mpt_config.n_layers, 
-                        num_kv_heads = self.mpt_config.n_heads, 
-                        qkv_dim = (self.mpt_config.hidden_size // self.mpt_config.n_heads), 
-                        size_dt = data_type_size(self.data_type),
-                        spec_mode = (self.mode != InferenceMode.INC_DECODING_MODE),
+
+        ffmodel.set_num_kv_cache_pages(
+            compute_num_kv_cache_pages_needed(
+                is_spec=(self.mode != InferenceMode.INC_DECODING_MODE),
+                max_kv_cache_size=self.max_kv_cache_size,
+                num_transformer_layers=self.mpt_config.n_layers,
+                num_kv_heads=self.mpt_config.n_heads,
+                qkv_dim=(self.mpt_config.hidden_size // self.mpt_config.n_heads),
+                size_dt=data_type_size(self.data_type),
+            )
         )
-        ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 
         tokens_dims = [max_tokens_per_batch, 1]
         input = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
@@ -145,6 +148,7 @@ class FlexFlowMPT(FlexFlowModel):
                     qkv_proj,
                     self.mpt_config.hidden_size,
                     self.mpt_config.n_heads,
+                    self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
                     0.0,  # dropout
@@ -164,6 +168,7 @@ class FlexFlowMPT(FlexFlowModel):
                     qkv_proj,
                     self.mpt_config.hidden_size,
                     self.mpt_config.n_heads,
+                    self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
                     0.0,  # dropout
@@ -182,6 +187,7 @@ class FlexFlowMPT(FlexFlowModel):
                 o_proj = ffmodel.inc_multihead_self_attention(
                     qkv_proj,
                     self.mpt_config.hidden_size,
+                    self.mpt_config.n_heads,
                     self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
@@ -205,7 +211,7 @@ class FlexFlowMPT(FlexFlowModel):
                 self.mpt_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 False,
-                name=f"layers.{i}.attn.o_proj"
+                name=f"layers.{i}.attn.o_proj",
             )
 
             hidden_states, layernorm_output = ffmodel.residual_layer_norm(
@@ -268,7 +274,7 @@ class FlexFlowMPT(FlexFlowModel):
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
             ffmodel.add_lora_layers(["up_proj", "down_proj"])
-        
+
         self.ffmodel = ffmodel
 
     # TODO: finish this

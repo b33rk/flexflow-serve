@@ -91,14 +91,19 @@ class FlexFlowOPT(FlexFlowModel):
 
     def build_model(self, max_tokens_per_batch):
         ffmodel = FFModel(self.ffconfig)
-        pm = PageManager(max_kv_cache_size = self.max_kv_cache_size, 
-                        num_transformer_layers = self.opt_config.num_hidden_layers, 
-                        num_kv_heads = self.opt_config.num_attention_heads, 
-                        qkv_dim = (self.opt_config.hidden_size // self.opt_config.num_attention_heads), 
-                        size_dt = data_type_size(self.data_type),
-                        spec_mode = (self.mode != InferenceMode.INC_DECODING_MODE),
+
+        ffmodel.set_num_kv_cache_pages(
+            compute_num_kv_cache_pages_needed(
+                is_spec=(self.mode != InferenceMode.INC_DECODING_MODE),
+                max_kv_cache_size=self.max_kv_cache_size,
+                num_transformer_layers=self.opt_config.num_hidden_layers,
+                num_kv_heads=self.opt_config.num_attention_heads,
+                qkv_dim=(
+                    self.opt_config.hidden_size // self.opt_config.num_attention_heads
+                ),
+                size_dt=data_type_size(self.data_type),
+            )
         )
-        ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 
         tokens_dims = [max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
@@ -151,7 +156,7 @@ class FlexFlowOPT(FlexFlowModel):
                 residual = hidden_states
 
             qkv_proj = ffmodel.dense(
-               hidden_states,
+                hidden_states,
                 3 * self.opt_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 True,
@@ -162,6 +167,7 @@ class FlexFlowOPT(FlexFlowModel):
                 o_proj = ffmodel.spec_inc_multihead_self_attention(
                     qkv_proj,
                     self.opt_config.hidden_size,
+                    self.opt_config.num_attention_heads,
                     self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
@@ -181,6 +187,7 @@ class FlexFlowOPT(FlexFlowModel):
                     qkv_proj,
                     self.opt_config.hidden_size,
                     self.opt_config.num_attention_heads,
+                    self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
                     0.0,  # dropout
@@ -198,6 +205,7 @@ class FlexFlowOPT(FlexFlowModel):
                 o_proj = ffmodel.inc_multihead_self_attention(
                     qkv_proj,
                     self.opt_config.hidden_size,
+                    self.opt_config.num_attention_heads,
                     self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
@@ -220,7 +228,7 @@ class FlexFlowOPT(FlexFlowModel):
                 self.opt_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 False,
-                name=f"layers.{i}.self_attn.o_proj"
+                name=f"layers.{i}.self_attn.o_proj",
             )
             # This is either a before or after attention LayerNorm. In both cases, we need to compute the LN here.
             residual, ff_norm = ffmodel.add_bias_residual_layer_norm(
@@ -299,7 +307,7 @@ class FlexFlowOPT(FlexFlowModel):
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
             ffmodel.add_lora_layers(["fc1", "fc2"])
-        
+
         self.ffmodel = ffmodel
 
     def convert_hf_weight_name(name):

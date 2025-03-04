@@ -35,16 +35,14 @@ void OPT::create_opt_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  // set the page manager
-  bool spec_mode = (mode == BEAM_SEARCH_MODE || mode == TREE_VERIFY_MODE);
-  PageManager *pm = PageManager::get_page_manager(
+  // set the number of pages
+  ff.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
+      mode != INC_DECODING_MODE,
       ff.config.max_kv_cache_size,
       opt_config.num_hidden_layers,
       opt_config.num_attention_heads,
       (opt_config.hidden_size / opt_config.num_attention_heads),
-      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF),
-      spec_mode);
-  ff.set_num_kv_cache_pages(pm->get_tot_num_pages());
+      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF)));
 
   //------------------------------ build the model --------------------------
   Tensor input;

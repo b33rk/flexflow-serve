@@ -33,16 +33,14 @@ void FALCON::create_falcon_model(FFModel &ff,
     assert(false && "The number of attention heads is smaller, or it is not "
                     "divisible by the tensor parallelism degree");
   }
-  // set the page manager
-  bool spec_mode = (mode == BEAM_SEARCH_MODE || mode == TREE_VERIFY_MODE);
-  PageManager *pm = PageManager::get_page_manager(
+  // set the number of pages
+  ff.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
+      mode != INC_DECODING_MODE,
       ff.config.max_kv_cache_size,
       falcon_config.n_layer,
       falcon_config.n_head_kv,
       (falcon_config.hidden_size / falcon_config.n_head),
-      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF),
-      spec_mode);
-  ff.set_num_kv_cache_pages(pm->get_tot_num_pages());
+      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF)));
 
   Tensor input;
   {

@@ -1010,7 +1010,6 @@ void RequestManager::evict_requests_if_needed(BatchConfig const &old_bc,
     return;
   }
 
-
   PageManager *pm = PageManager::get_page_manager();
   while (!pm->enough_space_to_append_tokens(planned_tokens_per_request)) {
     RequestGuid request_to_evict = pm->evict_request_fifo();
@@ -1585,7 +1584,6 @@ void RequestManager::process_work_from_old_batch(
   // printf("Entering process_work_from_old_batch\n");
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
 
-
   if (verbose) {
     std::cout
         << "\n############### process_work_from_old_batch ###############\n";
@@ -1610,7 +1608,7 @@ void RequestManager::process_work_from_old_batch(
 BatchConfig RequestManager::prepare_next_bwd_batch(BatchConfig &new_bc) {
   // printf("Entering prepare_next_bwd_batch\n");
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
-  
+
   if (finetuning_bwd_work_available()) {
     add_finetuning_req_bwd_batch(new_bc);
   }
@@ -1653,7 +1651,8 @@ BatchConfig
     if (!old_bc.request_completed[req_idx] &&
         !inf_req_completed(old_bc, req_idx) &&
         !inf_req_evicted(old_bc, req_idx)) {
-      printf("Adding continuing inference request %zu\n", old_bc.requestsInfo[req_idx].request_guid);
+      printf("Adding continuing inference request %zu\n",
+             old_bc.requestsInfo[req_idx].request_guid);
       add_continuing_inf_req_to_new_batch(
           new_bc, old_bc, num_active_req, num_concurrent_inf_adapters, req_idx);
     }

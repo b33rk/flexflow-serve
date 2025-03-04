@@ -98,7 +98,8 @@ void prepare_inference_params_kernel_h(
 
   PageManager *pm = PageManager::get_page_manager();
 
-  // std::cout << "prepare_inference_params_kernel_h: " << *batch_config << std::endl;
+  // std::cout << "prepare_inference_params_kernel_h: " << *batch_config <<
+  // std::endl;
 
   q_indptr_h.clear();
   kv_indptr_h.clear();
@@ -242,7 +243,8 @@ void RequestManager::load_batch_config_task(
   int batch_size = batch_config->num_active_requests() -
                    batch_config->num_finetuning_fwd_requests() -
                    batch_config->num_finetuning_bwd_requests();
-  if (batch_config->get_mode() == INC_DECODING_MODE && batch_size > 0 && handle.incr_attention_metadata->enabled()) {
+  if (batch_config->get_mode() == INC_DECODING_MODE && batch_size > 0 &&
+      handle.incr_attention_metadata->enabled()) {
     // assert(handle.incr_attention_metadata->enabled());
     // printf("Entering here, handler: %p\n", handle.incr_attention_metadata);
     std::vector<int32_t> q_indptr_h;
@@ -276,7 +278,8 @@ void RequestManager::load_batch_config_task(
                               cudaMemcpyHostToDevice,
                               stream));
     // prepare attention forward handler
-    if (handle.incr_attention_metadata->prompt_handler_collections.count(batch_size) == 0) {
+    if (handle.incr_attention_metadata->prompt_handler_collections.count(
+            batch_size) == 0) {
       handle.incr_attention_metadata->prompt_handler_collections[batch_size] =
           static_cast<void *>(new flashinfer::BatchPrefillHandler(true));
     }
@@ -309,12 +312,16 @@ void RequestManager::load_batch_config_task(
     // std::cout << std::endl;
     // std::cout << "batch_size: " << batch_size << std::endl;
 
-    // std::cout << "num_q_heads: " << handle.incr_attention_metadata->num_q_heads() << std::endl;
-    // std::cout << "num_kv_heads: " << handle.incr_attention_metadata->num_kv_heads() << std::endl;
-    // std::cout << "head_dim: " << handle.incr_attention_metadata->head_dim() << std::endl;
-    // std::cout << "tokens_per_page: " << pm->get_tokens_per_page() << std::endl;
-    // std::cout << "float_workspace_size: " << handle.incr_attention_metadata->float_workspace_size << std::endl;
-    // std::cout << "int_workspace_size: " << handle.incr_attention_metadata->int_workspace_size << std::endl;
+    // std::cout << "num_q_heads: " <<
+    // handle.incr_attention_metadata->num_q_heads() << std::endl; std::cout <<
+    // "num_kv_heads: " << handle.incr_attention_metadata->num_kv_heads() <<
+    // std::endl; std::cout << "head_dim: " <<
+    // handle.incr_attention_metadata->head_dim() << std::endl; std::cout <<
+    // "tokens_per_page: " << pm->get_tokens_per_page() << std::endl; std::cout
+    // << "float_workspace_size: " <<
+    // handle.incr_attention_metadata->float_workspace_size << std::endl;
+    // std::cout << "int_workspace_size: " <<
+    // handle.incr_attention_metadata->int_workspace_size << std::endl;
 
     handler->BeginForward<half, int32_t>(
         static_cast<void *>(handle.incr_attention_metadata->float_workspace),

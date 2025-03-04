@@ -41,15 +41,25 @@ class FalconConfig:
         self.vocab_size = hf_config.vocab_size
         self.rotary_embedding_meta = RotaryEmbeddingMeta(
             apply_rotary_embedding=True,
-            rope_theta=hf_config.rope_theta if "rope_theta" in hf_config.__dict__ else 10000.0,
+            rope_theta=(
+                hf_config.rope_theta if "rope_theta" in hf_config.__dict__ else 10000.0
+            ),
         )
         if "rope_scaling" in hf_config.__dict__:
             if hf_config.rope_scaling is not None:
-                self.rotary_embedding_meta.rope_type = hf_config.rope_scaling["rope_type"]
+                self.rotary_embedding_meta.rope_type = hf_config.rope_scaling[
+                    "rope_type"
+                ]
                 self.rotary_embedding_meta.factor = hf_config.rope_scaling["factor"]
-                self.rotary_embedding_meta.low_freq_factor = hf_config.rope_scaling["low_freq_factor"]
-                self.rotary_embedding_meta.high_freq_factor = hf_config.rope_scaling["high_freq_factor"]
-                self.rotary_embedding_meta.original_max_position_embeddings = hf_config.rope_scaling["original_max_position_embeddings"]
+                self.rotary_embedding_meta.low_freq_factor = hf_config.rope_scaling[
+                    "low_freq_factor"
+                ]
+                self.rotary_embedding_meta.high_freq_factor = hf_config.rope_scaling[
+                    "high_freq_factor"
+                ]
+                self.rotary_embedding_meta.original_max_position_embeddings = (
+                    hf_config.rope_scaling["original_max_position_embeddings"]
+                )
         # Standardized FlexFlow num heads fields below
         self.num_attention_heads = self.n_head
         self.num_key_value_heads = self.n_head_kv
@@ -101,14 +111,17 @@ class FlexFlowFalcon(FlexFlowModel):
 
     def build_model(self, max_tokens_per_batch):
         ffmodel = FFModel(self.ffconfig)
-        pm = PageManager(max_kv_cache_size = self.max_kv_cache_size, 
-                        num_transformer_layers = self.falcon_config.n_layer, 
-                        num_kv_heads = self.falcon_config.n_head_kv, 
-                        qkv_dim = (self.falcon_config.hidden_size // self.falcon_config.n_head), 
-                        size_dt = data_type_size(self.data_type),
-                        spec_mode = (self.mode != InferenceMode.INC_DECODING_MODE),
+
+        ffmodel.set_num_kv_cache_pages(
+            compute_num_kv_cache_pages_needed(
+                is_spec=(self.mode != InferenceMode.INC_DECODING_MODE),
+                max_kv_cache_size=self.max_kv_cache_size,
+                num_transformer_layers=self.falcon_config.n_layer,
+                num_kv_heads=self.falcon_config.n_head_kv,
+                qkv_dim=(self.falcon_config.hidden_size // self.falcon_config.n_head),
+                size_dt=data_type_size(self.data_type),
+            )
         )
-        ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 
         tokens_dims = [max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
@@ -150,13 +163,14 @@ class FlexFlowFalcon(FlexFlowModel):
                     self.falcon_config.layer_norm_epsilon,
                     name=f"layers.{i}.input_layernorm",
                 )
-            
-            assert(self.falcon_config.hidden_size % self.falcon_config.n_head == 0)
+
+            assert self.falcon_config.hidden_size % self.falcon_config.n_head == 0
             head_dim = self.falcon_config.hidden_size // self.falcon_config.n_head
 
             qkv_proj = ffmodel.dense(
                 att_norm,
-                head_dim * (self.falcon_config.n_head + 2*self.falcon_config.n_head_kv),
+                head_dim
+                * (self.falcon_config.n_head + 2 * self.falcon_config.n_head_kv),
                 ActiMode.AC_MODE_NONE,
                 False,
                 name=f"layers.{i}.self_attention.qkv_proj",
@@ -215,7 +229,7 @@ class FlexFlowFalcon(FlexFlowModel):
                 self.falcon_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 False,
-                name=f"layers.{i}.self_attention.o_proj"
+                name=f"layers.{i}.self_attention.o_proj",
             )
 
             dense_h_to_4h = ffmodel.dense(
@@ -267,7 +281,7 @@ class FlexFlowFalcon(FlexFlowModel):
                 # output = ffmodel.arg_top_k(lm_head, 1, False)
                 softmax = ffmodel.softmax(lm_head, -1)
                 output = ffmodel.argmax(softmax, False)
-        
+
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
             ffmodel.add_lora_layers(["dense_h_to_4h", "dense_4h_to_h"])
@@ -276,7 +290,8 @@ class FlexFlowFalcon(FlexFlowModel):
 
     # TODO: finish this
     def convert_hf_weight_name(name):
-        return (name.replace("transformer.h.", "layers.")
+        return (
+            name.replace("transformer.h.", "layers.")
             .replace("transformer.", "")
             .replace("self_attention.dense", "self_attention.o_proj")
         )
@@ -292,9 +307,15 @@ class FlexFlowFalcon(FlexFlowModel):
             name = FlexFlowFalcon.convert_hf_weight_name(name)
             # Split Q,K,V attention weights
             if "self_attention.query_key_value" in name:
-                name_q = name.replace("self_attention.query_key_value", "self_attention.q_proj")
-                name_k = name.replace("self_attention.query_key_value", "self_attention.k_proj")
-                name_v = name.replace("self_attention.query_key_value", "self_attention.v_proj")
+                name_q = name.replace(
+                    "self_attention.query_key_value", "self_attention.q_proj"
+                )
+                name_k = name.replace(
+                    "self_attention.query_key_value", "self_attention.k_proj"
+                )
+                name_v = name.replace(
+                    "self_attention.query_key_value", "self_attention.v_proj"
+                )
                 q, k, v = torch.split(
                     params,
                     [

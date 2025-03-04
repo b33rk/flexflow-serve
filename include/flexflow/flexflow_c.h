@@ -593,6 +593,13 @@ void flexflow_model_set_transformer_layer_id(flexflow_model_t handle, int id);
 void flexflow_model_set_num_kv_cache_pages(flexflow_model_t handle_,
                                            int num_kv_cache_pages);
 
+int flexflow_compute_num_kv_cache_pages_needed(bool is_spec,
+                                               int max_kv_cache_size,
+                                               int num_transformer_layers,
+                                               int num_kv_heads,
+                                               int qkv_dim,
+                                               int size_dt);
+
 void flexflow_model_generate(flexflow_model_t handle_,
                              int num_requests,
                              enum RequestType *request_types,
@@ -1011,8 +1018,7 @@ flexflow_page_manager_t
                                            int num_transformer_layers,
                                            int num_kv_heads,
                                            int qkv_dim,
-                                           int size_dt,
-                                           bool spec_mode);
+                                           int size_dt);
 
 int flexflow_page_manager_get_tot_num_pages(flexflow_page_manager_t handle_);
 

@@ -103,7 +103,7 @@ FFHandler
     checkCUDA(cublasSetMathMode(handle.blas, CUBLAS_TENSOR_OP_MATH));
   }
   checkCUDNN(cudnnCreate(&handle.dnn));
-  
+
   // #ifdef FF_USE_NCCL
   //   checkNCCL(ncclCommInitRank(&handle.nccl, info->allRanks, info->ncclId,
   //   info->myRank)); fprintf(stderr, "handle.nccl(%p)\n", handle.nccl);

@@ -1561,6 +1561,20 @@ void flexflow_model_set_num_kv_cache_pages(flexflow_model_t handle_,
   handle->set_num_kv_cache_pages(num_kv_cache_pages);
 }
 
+int flexflow_compute_num_kv_cache_pages_needed(bool is_spec,
+                                               int max_kv_cache_size,
+                                               int num_transformer_layers,
+                                               int num_kv_heads,
+                                               int qkv_dim,
+                                               int size_dt) {
+  return compute_num_kv_cache_pages_needed(is_spec,
+                                           max_kv_cache_size,
+                                           num_transformer_layers,
+                                           num_kv_heads,
+                                           qkv_dim,
+                                           size_dt);
+}
+
 void flexflow_model_generate(flexflow_model_t handle_,
                              int num_requests,
                              enum RequestType *request_types,
@@ -2745,8 +2759,7 @@ flexflow_page_manager_t
                                            int num_transformer_layers,
                                            int num_kv_heads,
                                            int qkv_dim,
-                                           int size_dt,
-                                           bool spec_mode) {
+                                           int size_dt) {
   assert(max_kv_cache_size >= 0);
   assert(num_kv_heads > 0);
   assert(size_dt > 0);
@@ -2756,8 +2769,7 @@ flexflow_page_manager_t
                                                   num_kv_heads,
                                                   size_dt,
                                                   qkv_dim,
-                                                  num_transformer_layers,
-                                                  spec_mode);
+                                                  num_transformer_layers);
   DEBUG_PRINT("[PageManager] get %p", pm);
   return FFCObjectWrapper::wrap(pm);
 }

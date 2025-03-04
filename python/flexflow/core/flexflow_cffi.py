@@ -812,11 +812,11 @@ class FFConfig(object):
     @property
     def python_data_loader_type(self):
         return ffc().flexflow_config_get_python_data_loader_type(self.handle)
-    
+
     @property
     def enable_peft(self):
         return ffc().flexflow_config_get_enable_peft(self.handle)
-    
+
     @property
     def enable_peft_finetuning(self):
         return ffc().flexflow_config_get_enable_peft_finetuning(self.handle)
@@ -824,9 +824,11 @@ class FFConfig(object):
     @enable_peft_finetuning.setter
     def enable_peft_finetuning(self, value):
         if type(value) is not bool:
-            raise ValueError("enable_peft_finetuning must be specified as a boolean value")
+            raise ValueError(
+                "enable_peft_finetuning must be specified as a boolean value"
+            )
         ffc().flexflow_config_set_enable_peft_finetuning(self.handle, value)
-    
+
     @property
     def max_kv_cache_size(self):
         return ffc().flexflow_config_get_max_kv_cache_size(self.handle)
@@ -836,7 +838,7 @@ class FFConfig(object):
         if type(value) is not int:
             raise ValueError("max_kv_cache_size must be specified as a int value")
         ffc().flexflow_config_set_max_kv_cache_size(self.handle, value)
-    
+
     @property
     def cpu_offload(self):
         return ffc().flexflow_config_get_offload(self.handle)
@@ -1603,8 +1605,17 @@ class BatchConfig(object):
 class PageManager(object):
     __slots__ = ["handle"]
 
-    def __init__(self, max_kv_cache_size: int, num_transformer_layers: int, num_kv_heads: int, qkv_dim: int, size_dt: int, spec_mode: bool):
-        self.handle = ffc().flexflow_page_manager_get_page_manager(max_kv_cache_size, num_transformer_layers, num_kv_heads, qkv_dim, size_dt, spec_mode)
+    def __init__(
+        self,
+        max_kv_cache_size: int,
+        num_transformer_layers: int,
+        num_kv_heads: int,
+        qkv_dim: int,
+        size_dt: int,
+    ):
+        self.handle = ffc().flexflow_page_manager_get_page_manager(
+            max_kv_cache_size, num_transformer_layers, num_kv_heads, qkv_dim, size_dt
+        )
 
     def get_tot_num_pages(self):
         return ffc().flexflow_page_manager_get_tot_num_pages(self.handle)
@@ -1677,6 +1688,7 @@ class RequestManager(object):
         return ffc().flexflow_request_manager_set_num_transformers_layers(
             self.handle, num_layers
         )
+
     def set_num_layers_per_finetuning_step(self, num_layers):
         return ffc().flexflow_request_manager_set_num_layers_per_finetuning_step(
             self.handle, num_layers
@@ -1685,8 +1697,9 @@ class RequestManager(object):
     # flashinfer/paged attention
     def set_max_kv_cache_size(self, max_size):
         return ffc().flexflow_request_manager_set_max_kv_cache_size(
-            self.handle, max_size)
-    
+            self.handle, max_size
+        )
+
     def set_max_concurrent_adapters(self, max_adapters):
         return ffc().flexflow_request_manager_set_max_concurrent_adapters(
             self.handle, max_adapters
@@ -3583,7 +3596,6 @@ class FFModel(object):
         self.add_layer(OpType.MULTIHEAD_ATTENTION, name)
         return Tensor(handle, owner_op_type=OpType.MULTIHEAD_ATTENTION)
 
-
     def inc_multihead_self_attention(
         self,
         input,
@@ -4056,10 +4068,14 @@ class FFModel(object):
 
     def add_lora_layers(self, target_modules: List[str]):
         c_target_modules = [get_c_name(module) for module in target_modules]
-        return ffc().flexflow_model_add_lora_layers(self.handle, len(target_modules), c_target_modules)
-    
+        return ffc().flexflow_model_add_lora_layers(
+            self.handle, len(target_modules), c_target_modules
+        )
+
     def register_peft_adapter(self, peft_config):
-        return ffc().flexflow_model_register_peft_adapter(self.handle, peft_config.handle)
+        return ffc().flexflow_model_register_peft_adapter(
+            self.handle, peft_config.handle
+        )
 
     def reset_metrics(self):
         """Reset performance metrics.
@@ -4289,7 +4305,7 @@ class FFModel(object):
 
     def set_transformer_layer_id(self, id):
         ffc().flexflow_model_set_transformer_layer_id(self.handle, id)
-    
+
     def set_num_kv_cache_pages(self, num_kv_cache_pages):
         ffc().flexflow_model_set_num_kv_cache_pages(self.handle, num_kv_cache_pages)
 
@@ -4528,3 +4544,21 @@ class FFModel(object):
 
     def set_position_offset(self, offset):
         ffc().flexflow_model_set_position_offset(self.handle, offset)
+
+
+def compute_num_kv_cache_pages_needed(
+    is_spec: bool,
+    max_kv_cache_size: int,
+    num_transformer_layers: int,
+    num_kv_heads: int,
+    qkv_dim: int,
+    size_dt: int,
+):
+    return ffc().flexflow_compute_num_kv_cache_pages_needed(
+        is_spec,
+        max_kv_cache_size,
+        num_transformer_layers,
+        num_kv_heads,
+        qkv_dim,
+        size_dt,
+    )

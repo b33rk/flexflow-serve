@@ -29,15 +29,25 @@ class LLAMAConfig:
         self.intermediate_size = hf_config.intermediate_size
         self.rotary_embedding_meta = RotaryEmbeddingMeta(
             apply_rotary_embedding=True,
-            rope_theta=hf_config.rope_theta if "rope_theta" in hf_config.__dict__ else 10000.0,
+            rope_theta=(
+                hf_config.rope_theta if "rope_theta" in hf_config.__dict__ else 10000.0
+            ),
         )
         if "rope_scaling" in hf_config.__dict__:
             if hf_config.rope_scaling is not None:
-                self.rotary_embedding_meta.rope_type = hf_config.rope_scaling["rope_type"]
+                self.rotary_embedding_meta.rope_type = hf_config.rope_scaling[
+                    "rope_type"
+                ]
                 self.rotary_embedding_meta.factor = hf_config.rope_scaling["factor"]
-                self.rotary_embedding_meta.low_freq_factor = hf_config.rope_scaling["low_freq_factor"]
-                self.rotary_embedding_meta.high_freq_factor = hf_config.rope_scaling["high_freq_factor"]
-                self.rotary_embedding_meta.original_max_position_embeddings = hf_config.rope_scaling["original_max_position_embeddings"]
+                self.rotary_embedding_meta.low_freq_factor = hf_config.rope_scaling[
+                    "low_freq_factor"
+                ]
+                self.rotary_embedding_meta.high_freq_factor = hf_config.rope_scaling[
+                    "high_freq_factor"
+                ]
+                self.rotary_embedding_meta.original_max_position_embeddings = (
+                    hf_config.rope_scaling["original_max_position_embeddings"]
+                )
         # Standardized FlexFlow num heads fields below
         self.num_attention_heads = hf_config.num_attention_heads
         self.num_key_value_heads = (
@@ -67,7 +77,7 @@ class FlexFlowLLAMA(FlexFlowModel):
         self.llama_config = LLAMAConfig(hf_config)
         self.weights_filepath = weights_filepath
         self.tokenizer_filepath = tokenizer_filepath
-        self.maxint = 2 ** 31 - 1
+        self.maxint = 2**31 - 1
         max_verify_tokens_per_batch = (
             max_tokens_per_batch + self.llama_config.max_spec_tree_token_num
         )
@@ -98,14 +108,20 @@ class FlexFlowLLAMA(FlexFlowModel):
 
     def build_model(self, max_tokens_per_batch):
         ffmodel = FFModel(self.ffconfig)
-        pm = PageManager(max_kv_cache_size = self.max_kv_cache_size, 
-                        num_transformer_layers = self.llama_config.num_hidden_layers, 
-                        num_kv_heads = self.llama_config.num_key_value_heads, 
-                        qkv_dim = (self.llama_config.hidden_size // self.llama_config.num_attention_heads), 
-                        size_dt = data_type_size(self.data_type),
-                        spec_mode = (self.mode != InferenceMode.INC_DECODING_MODE),
+
+        ffmodel.set_num_kv_cache_pages(
+            compute_num_kv_cache_pages_needed(
+                is_spec=(self.mode != InferenceMode.INC_DECODING_MODE),
+                max_kv_cache_size=self.max_kv_cache_size,
+                num_transformer_layers=self.llama_config.num_hidden_layers,
+                num_kv_heads=self.llama_config.num_key_value_heads,
+                qkv_dim=(
+                    self.llama_config.hidden_size
+                    // self.llama_config.num_attention_heads
+                ),
+                size_dt=data_type_size(self.data_type),
+            )
         )
-        ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 
         tokens_dims = [max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
@@ -141,12 +157,21 @@ class FlexFlowLLAMA(FlexFlowModel):
                     name=f"layers.{i}.input_layernorm",
                 )
 
-            assert( self.llama_config.hidden_size % self.llama_config.num_attention_heads == 0 )
-            head_dim = self.llama_config.hidden_size // self.llama_config.num_attention_heads
+            assert (
+                self.llama_config.hidden_size % self.llama_config.num_attention_heads
+                == 0
+            )
+            head_dim = (
+                self.llama_config.hidden_size // self.llama_config.num_attention_heads
+            )
 
             qkv_proj = ffmodel.dense(
                 attn_norm,
-                head_dim * (self.llama_config.num_attention_heads + 2 * self.llama_config.num_key_value_heads),
+                head_dim
+                * (
+                    self.llama_config.num_attention_heads
+                    + 2 * self.llama_config.num_key_value_heads
+                ),
                 ActiMode.AC_MODE_NONE,
                 False,
                 name=f"layers.{i}.self_attn.qkv_proj",
@@ -209,7 +234,7 @@ class FlexFlowLLAMA(FlexFlowModel):
                 self.llama_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 False,
-                name=f"layers.{i}.self_attn.o_proj"
+                name=f"layers.{i}.self_attn.o_proj",
             )
 
             token, ff_norm = ffmodel.residual_rms_norm(
@@ -272,7 +297,7 @@ class FlexFlowLLAMA(FlexFlowModel):
                 # output = ffmodel.arg_top_k(dense, 1, False)
                 softmax = ffmodel.softmax(dense, -1)
                 output = ffmodel.argmax(softmax, False)
-        
+
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
             ffmodel.add_lora_layers(["gate_proj", "up_proj", "down_proj"])
