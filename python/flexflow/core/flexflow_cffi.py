@@ -828,6 +828,16 @@ class FFConfig(object):
         ffc().flexflow_config_set_enable_peft_finetuning(self.handle, value)
     
     @property
+    def max_kv_cache_size(self):
+        return ffc().flexflow_config_get_max_kv_cache_size(self.handle)
+
+    @max_kv_cache_size.setter
+    def max_kv_cache_size(self, value):
+        if type(value) is not int:
+            raise ValueError("max_kv_cache_size must be specified as a int value")
+        ffc().flexflow_config_set_max_kv_cache_size(self.handle, value)
+    
+    @property
     def cpu_offload(self):
         return ffc().flexflow_config_get_offload(self.handle)
 
@@ -1593,8 +1603,8 @@ class BatchConfig(object):
 class PageManager(object):
     __slots__ = ["handle"]
 
-    def __init__(self, max_kv_cache_size: int, num_transformer_layers: int, num_kv_heads: int, qkv_dim: int, size_dt: int):
-        self.handle = ffc().flexflow_page_manager_get_page_manager(max_kv_cache_size, num_transformer_layers, num_kv_heads, qkv_dim, size_dt)
+    def __init__(self, max_kv_cache_size: int, num_transformer_layers: int, num_kv_heads: int, qkv_dim: int, size_dt: int, spec_mode: bool):
+        self.handle = ffc().flexflow_page_manager_get_page_manager(max_kv_cache_size, num_transformer_layers, num_kv_heads, qkv_dim, size_dt, spec_mode)
 
     def get_tot_num_pages(self):
         return ffc().flexflow_page_manager_get_tot_num_pages(self.handle)

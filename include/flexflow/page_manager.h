@@ -74,13 +74,15 @@ public:
     int num_tokens_in_last_used_page;
   };
 
+  friend std::ostream& operator<<(std::ostream& os, const PageManager& pm);
+
 private:
   // requests ordered by arrival. We use this order for FIFO eviction
   std::deque<RequestGuid> active_requests;
   // request info keyed by guid
   std::unordered_map<RequestGuid, PerRequestPageInfo> requests_info;
   // pool of available pages
-  std::unordered_set<int> free_pages;
+  std::set<int> free_pages;
 
   int tot_num_pages;
   int tokens_per_page;

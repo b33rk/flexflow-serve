@@ -2745,8 +2745,9 @@ flexflow_page_manager_t
                                            int num_transformer_layers,
                                            int num_kv_heads,
                                            int qkv_dim,
-                                           int size_dt) {
-  assert(max_kv_cache_size > 0);
+                                           int size_dt,
+                                           bool spec_mode) {
+  assert(max_kv_cache_size >= 0);
   assert(num_kv_heads > 0);
   assert(size_dt > 0);
   assert(qkv_dim > 0);
@@ -2755,7 +2756,8 @@ flexflow_page_manager_t
                                                   num_kv_heads,
                                                   size_dt,
                                                   qkv_dim,
-                                                  num_transformer_layers);
+                                                  num_transformer_layers,
+                                                  spec_mode);
   DEBUG_PRINT("[PageManager] get %p", pm);
   return FFCObjectWrapper::wrap(pm);
 }

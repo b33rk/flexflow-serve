@@ -62,6 +62,7 @@ for file in ./inference/inf_test_configs/*.json; do
     fi
     # Run script
     python "$script" -config-file "$file" 
+    exit 0
 done
 
 ##############  Run inference in HuggingFace ##############

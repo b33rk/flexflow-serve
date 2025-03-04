@@ -83,7 +83,8 @@ class FlexFlowMPT(FlexFlowModel):
                         num_transformer_layers = self.mpt_config.n_layers, 
                         num_kv_heads = self.mpt_config.n_heads, 
                         qkv_dim = (self.mpt_config.hidden_size // self.mpt_config.n_heads), 
-                        size_dt = data_type_size(self.data_type)
+                        size_dt = data_type_size(self.data_type),
+                        spec_mode = (self.mode != InferenceMode.INC_DECODING_MODE),
         )
         ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 

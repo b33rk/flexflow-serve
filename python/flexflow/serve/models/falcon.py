@@ -105,7 +105,8 @@ class FlexFlowFalcon(FlexFlowModel):
                         num_transformer_layers = self.falcon_config.n_layer, 
                         num_kv_heads = self.falcon_config.n_head_kv, 
                         qkv_dim = (self.falcon_config.hidden_size // self.falcon_config.n_head), 
-                        size_dt = data_type_size(self.data_type)
+                        size_dt = data_type_size(self.data_type),
+                        spec_mode = (self.mode != InferenceMode.INC_DECODING_MODE),
         )
         ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 

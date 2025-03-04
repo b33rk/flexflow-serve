@@ -95,7 +95,8 @@ class FlexFlowOPT(FlexFlowModel):
                         num_transformer_layers = self.opt_config.num_hidden_layers, 
                         num_kv_heads = self.opt_config.num_attention_heads, 
                         qkv_dim = (self.opt_config.hidden_size // self.opt_config.num_attention_heads), 
-                        size_dt = data_type_size(self.data_type)
+                        size_dt = data_type_size(self.data_type),
+                        spec_mode = (self.mode != InferenceMode.INC_DECODING_MODE),
         )
         ffmodel.set_num_kv_cache_pages(pm.get_tot_num_pages())
 

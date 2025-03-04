@@ -103,12 +103,7 @@ FFHandler
     checkCUDA(cublasSetMathMode(handle.blas, CUBLAS_TENSOR_OP_MATH));
   }
   checkCUDNN(cudnnCreate(&handle.dnn));
-  // cublas/dnn handles for peft stream
-  checkCUDA(cublasCreate(&handle.peft_blas));
-  if (handle.allowTensorOpMathConversion) {
-    checkCUDA(cublasSetMathMode(handle.peft_blas, CUBLAS_TENSOR_OP_MATH));
-  }
-  checkCUDNN(cudnnCreate(&handle.peft_dnn));
+  
   // #ifdef FF_USE_NCCL
   //   checkNCCL(ncclCommInitRank(&handle.nccl, info->allRanks, info->ncclId,
   //   info->myRank)); fprintf(stderr, "handle.nccl(%p)\n", handle.nccl);
@@ -220,7 +215,6 @@ FFHandler
 // checkCUDA(cudaMalloc(&handle.workSpace, handle.workSpaceSize));
 #ifdef FF_USE_NCCL
   handle.ncclComm = NULL;
-  handle.ncclCommPeft = NULL;
 #endif
   return handle;
 }

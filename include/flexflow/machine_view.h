@@ -96,7 +96,6 @@ struct ParallelConfig {
   int device_ids[MAX_NUM_WORKERS];
 #ifdef FF_USE_NCCL
   ncclComm_t nccl_comms[MAX_NUM_WORKERS];
-  ncclComm_t nccl_comms_peft[MAX_NUM_WORKERS];
 #endif
 };
 

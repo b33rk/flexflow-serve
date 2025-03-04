@@ -802,7 +802,6 @@ void FFModel::compile_inference() {
         operators[l]->op_type == OP_PARALLEL_IDENTITY ||
         operators[l]->op_type == OP_LORA || operators[l]->op_type == OP_FUSED) {
       MachineView view = operators[l]->outputs[0]->machine_view;
-      // inference
       if (view_hash_to_nccl_comms.find(view.hash()) ==
           view_hash_to_nccl_comms.end()) {
         TaskLauncher launcher(NCCL_GETUNIQUEID_TASK_ID, TaskArgument(NULL, 0));
@@ -830,35 +829,6 @@ void FFModel::compile_inference() {
           nccl_comms[idx] = fm.get_result<ncclComm_t>(*it);
         }
         view_hash_to_nccl_comms[view.hash()] = nccl_comms;
-      }
-      // peft
-      if (view_hash_to_nccl_comms_peft.find(view.hash()) ==
-          view_hash_to_nccl_comms_peft.end()) {
-        TaskLauncher launcher(NCCL_GETUNIQUEID_TASK_ID, TaskArgument(NULL, 0));
-        Future future = runtime->execute_task(ctx, launcher);
-        ncclUniqueId ncclId = future.get_result<ncclUniqueId>();
-        IndexSpace task_is = get_or_create_task_is(view);
-        ArgumentMap argmap;
-        IndexLauncher index_launcher(
-            NCCL_INIT_COMMS_TASK_ID,
-            task_is,
-            TaskArgument(&ncclId, sizeof(ncclUniqueId)),
-            argmap,
-            Predicate::TRUE_PRED,
-            false /*must*/,
-            0 /*mapper_id*/,
-            view.hash() /*MappingTagID*/);
-        index_launcher.concurrent = true;
-        FutureMap fm = runtime->execute_index_space(ctx, index_launcher);
-        fm.wait_all_results();
-        int idx = 0;
-        Domain task_domain = runtime->get_index_space_domain(ctx, task_is);
-        ncclComm_t *nccl_comms_peft =
-            (ncclComm_t *)malloc(sizeof(ncclComm_t) * task_domain.get_volume());
-        for (Domain::DomainPointIterator it(task_domain); it; it++, idx++) {
-          nccl_comms_peft[idx] = fm.get_result<ncclComm_t>(*it);
-        }
-        view_hash_to_nccl_comms_peft[view.hash()] = nccl_comms_peft;
       }
     }
   }

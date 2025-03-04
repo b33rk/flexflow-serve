@@ -28,7 +28,13 @@ int ceilDiv(int a, int b) {
 PageManager *page_manager_singleton = nullptr;
 
 PageManager::PageManager(int tokens_per_page_, int tot_num_pages_)
-    : tokens_per_page(tokens_per_page_), tot_num_pages(tot_num_pages_) {}
+    : tokens_per_page(tokens_per_page_), tot_num_pages(tot_num_pages_) {
+  assert(tokens_per_page > 0 && tot_num_pages >= 0 &&
+         "Number of tokens per page must be positive and total number of pages must be non-negative");
+  for (int i = 0; i < tot_num_pages; i++) {
+    free_pages.insert(i);
+  } 
+}
 
 PageManager *PageManager::get_page_manager() {
   assert(page_manager_singleton != nullptr && "PageManager not initialized");
@@ -89,6 +95,11 @@ int PageManager::get_num_pages_used_by_req(
     RequestGuid const &request_guid) const {
   assert(requests_info.find(request_guid) != requests_info.end());
   int n = requests_info.at(request_guid).num_used_pages;
+  if (!(n >= 0 && n <= requests_info.at(request_guid).page_indices.size())) {
+    std::cerr << "Error: requests_info.at(request_guid).num_used_pages is out of bounds for request "
+                 << request_guid << std::endl;
+    std::cerr << *this << std::endl;
+  }
   assert(n >= 0 && n <= requests_info.at(request_guid).page_indices.size());
   return n;
 }
@@ -105,7 +116,13 @@ int PageManager::get_num_tokens_in_last_used_page(
     RequestGuid const &request_guid) const {
   assert(requests_info.find(request_guid) != requests_info.end());
   int n = requests_info.at(request_guid).num_tokens_in_last_used_page;
+  if (!(n >= 0 && n <= tokens_per_page)) {
+    std::cerr << "Error: num_tokens_in_last_used_page is out of bounds for request "
+                 << request_guid << std::endl;
+    std::cerr << *this << std::endl;
+  }
   assert(n >= 0 && n <= tokens_per_page);
+  
   return n;
 }
 
@@ -147,6 +164,13 @@ bool PageManager::enough_space_to_add_request(
                                   tokens_per_page);
     }
   }
+  printf("new pages needed to add request with %d prompt tokens, %d "
+         "tokens in first batch, %d max tokens per batch: %d\n",
+         num_prompt_tokens, num_prompt_tokens_in_first_batch,
+         max_tokens_per_batch, new_pages_needed);
+  printf("free pages: %ld\n", free_pages.size());
+  printf("total pages: %d\n", tot_num_pages);
+  printf("active requests: %ld\n", active_requests.size());
   return free_pages.size() >= new_pages_needed;
 }
 
@@ -203,6 +227,7 @@ void PageManager::add_request(RequestGuid const &guid, int num_tokens) {
   req_info.num_used_pages = 0;
   req_info.num_tokens_in_last_used_page = 0;
   requests_info[guid] = req_info;
+  printf("adding request %d with %d tokens. It allocated %ld new pages\n", guid, num_tokens, pages.size());
 }
 
 // remove completed request
@@ -264,10 +289,37 @@ void PageManager::append_tokens(RequestGuid const &request_guid,
   // update the number of used pages and the number of tokens in the last used
   // page
   req_info.num_tokens_in_last_used_page += num_tokens;
-  req_info.num_used_pages +=
-      req_info.num_tokens_in_last_used_page / tokens_per_page;
+  int tot_num_tokens = req_info.num_tokens_in_last_used_page;
+  if (req_info.num_used_pages > 0) {
+    tot_num_tokens += (req_info.num_used_pages-1) * tokens_per_page;
+  }
+  req_info.num_used_pages = ceilDiv(tot_num_tokens, tokens_per_page);
   req_info.num_tokens_in_last_used_page =
       req_info.num_tokens_in_last_used_page % tokens_per_page;
+  printf("appending %d tokens to request %d. It now has %d tokens in the last "
+         "used page and %d used pages\n",
+         num_tokens, request_guid, req_info.num_tokens_in_last_used_page,
+         req_info.num_used_pages);
+}
+
+std::ostream& operator<<(std::ostream& os, const PageManager& pm) {
+  os << "PageManager State: {\n";
+  os << "\tTotal number of pages: " << pm.tot_num_pages << "\n";
+  os << "\tTokens per page: " << pm.tokens_per_page << "\n";
+  os << "\tActive requests: " << pm.active_requests.size() << "\n";
+  os << "\tFree pages: " << pm.free_pages.size() << "\n";
+  os << "\tRequests info:\n";
+  for (const auto& [guid, info] : pm.requests_info) {
+    os << "\t  RequestGuid: " << guid << "\n";
+    os << "\t    Number of used pages: " << info.num_used_pages << "\n";
+    os << "\t    Number of tokens in last used page: " << info.num_tokens_in_last_used_page << "\n";
+    os << "\t    Page indices: ";
+    for (int index : info.page_indices) {
+      os << index << " ";
+    }
+    os << "\n}\n";
+  }
+  return os;
 }
 
 }; // namespace FlexFlow

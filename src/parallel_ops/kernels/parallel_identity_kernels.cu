@@ -84,7 +84,7 @@ void peft_bwd_kernel_wrapper(ParallelIdentityMeta const *m,
                           num_elements,
                           nccl_data_type,
                           ncclSum,
-                          m->handle.ncclCommPeft,
+                          m->handle.ncclComm,
                           stream));
 #else
   assert(false && "Must enable FF_USE_NCCL to use ParallelIdentity operators");

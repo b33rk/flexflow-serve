@@ -756,11 +756,16 @@ bool RequestManager::is_eos_token(int token_id) {
 }
 
 bool RequestManager::inf_req_evicted(BatchConfig const &old_bc, int i) {
+  // printf("Entering inf_req_evicted\n");
   Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
+  if (request.status == Request::EVICTED) {
+    printf("Request %zu was evicted...\n", old_bc.requestsInfo[i].request_guid);
+  }
   return request.status == Request::EVICTED;
 }
 
 bool RequestManager::inf_req_completed(BatchConfig const &old_bc, int i) {
+  // printf("Entering inf_req_completed\n");
   Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
   bool request_completed = false;
   // printf("model_type = %d\n", this->model_type);
@@ -817,6 +822,7 @@ void RequestManager::check_batch(BatchConfig const &old_bc,
 
 void RequestManager::add_peft_config_to_request_info(
     BatchConfig &bc, int req_idx, LoraLinearConfig const &peft_config) {
+  // printf("Entering add_peft_config_to_request_info\n");
   std::memset(bc.requestsInfo[req_idx].peft_model_config_str,
               0,
               BatchConfig::MAX_PEFT_CONFIG_SIZE);
@@ -829,6 +835,7 @@ void RequestManager::add_peft_config_to_request_info(
 
 void RequestManager::record_decoding_req_profiling_info(
     BatchConfig const &old_fwd_bc, int req_idx) {
+  // printf("Entering record_decoding_req_profiling_info\n");
   if (old_fwd_bc.request_completed[req_idx]) {
     return;
   }
@@ -860,6 +867,7 @@ void RequestManager::record_decoding_req_profiling_info(
 
 void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
                                               InferenceResult const &result) {
+  // printf("Entering process_inf_req_progress\n");
   for (int i = 0; i < old_fwd_bc.num_active_tokens(); i++) {
     size_t guid =
         old_fwd_bc.requestsInfo[old_fwd_bc.tokensInfo[i].request_index]
@@ -899,6 +907,8 @@ void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
     record_decoding_req_profiling_info(old_fwd_bc, req_idx);
 
     if (inf_req_completed(old_fwd_bc, req_idx)) {
+      printf("Request %zu completed...\n",
+             old_fwd_bc.requestsInfo[req_idx].request_guid);
       handle_completed_inf_req(old_fwd_bc, req_idx);
     }
   }
@@ -906,6 +916,7 @@ void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
 
 void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
                                               int i) {
+  // printf("Entering handle_completed_inf_req\n");
   Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
   assert(old_bc.requestsInfo[i].num_tokens_in_batch > 0);
   assert(request.req_type == RequestType::REQ_INFERENCE &&
@@ -943,6 +954,7 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
 
 void RequestManager::evict_requests_if_needed(BatchConfig const &old_bc,
                                               int inference_batch_size) {
+  // printf("Entering evict_requests_if_needed\n");
   // compute number of tokens that each request would like to run in the next
   // step
   std::vector<std::pair<RequestGuid, int>> planned_tokens_per_request;
@@ -991,15 +1003,24 @@ void RequestManager::evict_requests_if_needed(BatchConfig const &old_bc,
       tot_num_planned_tokens += num_planned_tokens;
     }
   }
-  assert(tot_num_planned_tokens > 0 &&
+  assert(tot_num_planned_tokens >= 0 &&
          tot_num_planned_tokens <= get_max_tokens_per_batch());
+
+  if (tot_num_planned_tokens == 0) {
+    return;
+  }
+
 
   PageManager *pm = PageManager::get_page_manager();
   while (!pm->enough_space_to_append_tokens(planned_tokens_per_request)) {
     RequestGuid request_to_evict = pm->evict_request_fifo();
     Request &request = all_requests[request_to_evict];
     request.status = Request::EVICTED;
+    size_t before = pending_infr_request_queue.size();
     pending_infr_request_queue.push_front(request);
+    size_t after = pending_infr_request_queue.size();
+    printf("Evicting request: %zu\n", request.guid);
+    printf("Pending infr request queue size: %zu -> %zu\n", before, after);
   }
 }
 
@@ -1009,6 +1030,7 @@ void RequestManager::add_continuing_inf_req_to_new_batch(
     int &num_active_req,
     int &num_concurrent_inf_adapters,
     int i) {
+  // printf("Entering add_continuing_inf_req_to_new_batch\n");
   assert(new_bc.num_tokens < get_max_tokens_per_batch() &&
          "Trying to add a continuing request when the batch is full");
   Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
@@ -1102,6 +1124,7 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
                                      int &num_active_req,
                                      int &num_concurrent_inf_adapters,
                                      int i) {
+  // printf("Entering add_new_inf_req\n");
   assert(!pending_infr_request_queue.empty() &&
          "Trying to add a new inference request when there are none");
   assert(new_bc.num_tokens < get_max_tokens_per_batch() &&
@@ -1119,6 +1142,7 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
   if (!pm->enough_space_to_add_request(new_request.tokens.size(),
                                        prefill_tokens_first_batch,
                                        get_max_tokens_per_batch())) {
+    printf("not enough space to add request %zu\n", new_request.guid);
     return;
   }
 
@@ -1183,6 +1207,7 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
 
 void RequestManager::handle_completed_finetuning_req(
     BatchConfig const &old_finetuning_bc) {
+  // printf("Entering handle_completed_finetuning_req\n");
   if (!inference_finished) {
     assert(
         old_finetuning_bc.num_finetuning_bwd_requests() == 1 &&
@@ -1234,6 +1259,7 @@ void RequestManager::handle_completed_finetuning_req(
 }
 
 void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
+  // printf("Entering add_finetuning_req_fwd_batch\n");
   assert(enable_peft_finetuning && "PEFT finetuning is not enabled");
   assert(!pending_peft_request_queue.empty() &&
          "Trying to add a new finetuning request when there are none");
@@ -1303,6 +1329,7 @@ void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
 }
 
 void RequestManager::add_finetuning_req_bwd_batch(BatchConfig &new_bc) {
+  // printf("Entering add_finetuning_req_bwd_batch\n");
   assert(enable_peft_finetuning && "PEFT finetuning is not enabled");
   assert(!pending_peft_request_queue.empty() &&
          "Trying to add a new finetuning request when there are none");
@@ -1387,6 +1414,7 @@ void RequestManager::add_finetuning_req_bwd_batch(BatchConfig &new_bc) {
 }
 
 bool RequestManager::finetuning_fwd_work_available() {
+  // printf("Entering finetuning_fwd_work_available\n");
   if (pending_peft_request_queue.empty() || inference_finished) {
     return false;
   }
@@ -1395,6 +1423,7 @@ bool RequestManager::finetuning_fwd_work_available() {
 }
 
 bool RequestManager::finetuning_bwd_work_available() {
+  // printf("Entering finetuning_bwd_work_available\n");
   if (pending_peft_request_queue.empty() || inference_finished) {
     return false;
   }
@@ -1404,6 +1433,7 @@ bool RequestManager::finetuning_bwd_work_available() {
 
 void RequestManager::process_finetuning_req_fwd_progress(
     BatchConfig const &old_bc, InferenceResult const &result) {
+  // printf("Entering process_finetuning_req_fwd_progress\n");
   assert(old_bc.num_finetuning_fwd_requests() +
                  old_bc.num_finetuning_bwd_requests() <=
              1 &&
@@ -1464,6 +1494,7 @@ void RequestManager::process_finetuning_req_fwd_progress(
 
 void RequestManager::process_finetuning_req_bwd_progress(
     BatchConfig const &old_bc) {
+  // printf("Entering process_finetuning_req_bwd_progress\n");
   assert(old_bc.num_finetuning_fwd_requests() +
                  old_bc.num_finetuning_bwd_requests() <=
              1 &&
@@ -1503,6 +1534,7 @@ void RequestManager::process_finetuning_req_bwd_progress(
 }
 
 void RequestManager::record_step_profile_info(BatchConfig const &old_bc) {
+  // printf("Entering record_step_profile_info\n");
   StepProfileInfo step_profile_info;
   step_profile_info.step_idx = step_idx++;
   step_profile_info.run_idx = run_idx;
@@ -1550,7 +1582,9 @@ void RequestManager::record_step_profile_info(BatchConfig const &old_bc) {
 
 void RequestManager::process_work_from_old_batch(
     BatchConfig const &old_bc, InferenceResult const &result) {
+  // printf("Entering process_work_from_old_batch\n");
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
+
 
   if (verbose) {
     std::cout
@@ -1574,8 +1608,9 @@ void RequestManager::process_work_from_old_batch(
 }
 
 BatchConfig RequestManager::prepare_next_bwd_batch(BatchConfig &new_bc) {
+  // printf("Entering prepare_next_bwd_batch\n");
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
-
+  
   if (finetuning_bwd_work_available()) {
     add_finetuning_req_bwd_batch(new_bc);
   }
@@ -1591,6 +1626,7 @@ BatchConfig RequestManager::prepare_next_bwd_batch(BatchConfig &new_bc) {
 BatchConfig
     RequestManager::prepare_next_fwd_batch(BatchConfig const &old_bc,
                                            InferenceResult const &result) {
+  // printf("Entering prepare_next_fwd_batch\n");
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
 
   if (verbose) {
@@ -1617,6 +1653,7 @@ BatchConfig
     if (!old_bc.request_completed[req_idx] &&
         !inf_req_completed(old_bc, req_idx) &&
         !inf_req_evicted(old_bc, req_idx)) {
+      printf("Adding continuing inference request %zu\n", old_bc.requestsInfo[req_idx].request_guid);
       add_continuing_inf_req_to_new_batch(
           new_bc, old_bc, num_active_req, num_concurrent_inf_adapters, req_idx);
     }
@@ -1627,11 +1664,15 @@ BatchConfig
   // Step 3: add new inference requests to the next batch if there is space and
   // they are available
   if (!pending_infr_request_queue.empty()) {
+    printf("pending_infr_request_queue.size(): %zu\n",
+           pending_infr_request_queue.size());
     for (int req_idx = 0; req_idx < inference_batch_size &&
                           new_bc.num_tokens < get_max_tokens_per_batch() &&
                           !pending_infr_request_queue.empty();
          req_idx++) {
       if (new_bc.request_completed[req_idx]) {
+        printf("Adding new inference request %zu\n",
+               pending_infr_request_queue.front().guid);
         add_new_inf_req(
             new_bc, num_active_req, num_concurrent_inf_adapters, req_idx);
       }

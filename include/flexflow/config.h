@@ -90,13 +90,9 @@ struct FFHandler {
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
   cudnnHandle_t dnn;
   cublasHandle_t blas;
-  cudnnHandle_t peft_dnn;
-  cublasHandle_t peft_blas;
 #else
   miopenHandle_t dnn;
   hipblasHandle_t blas;
-  miopenHandle_t peft_dnn;
-  hipblasHandle_t peft_blas;
 #endif
   void *workSpace;
   size_t workSpaceSize;
@@ -114,7 +110,6 @@ struct FFHandler {
   bool allowTensorOpMathConversion;
 #ifdef FF_USE_NCCL
   ncclComm_t ncclComm;
-  ncclComm_t ncclCommPeft;
 #endif
 };
 
