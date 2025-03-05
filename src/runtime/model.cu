@@ -183,10 +183,10 @@ FFHandler
     handle.batch_config_metadata = nullptr;
   }
 
-  std::cout << "handle.batch_config_metadata_size: "
-            << handle.batch_config_metadata_size << std::endl;
-  std::cout << "handle.incr_attention_metadata->mem_size(): "
-            << handle.incr_attention_metadata->mem_size() << std::endl;
+  // std::cout << "handle.batch_config_metadata_size: "
+  //           << handle.batch_config_metadata_size << std::endl;
+  // std::cout << "handle.incr_attention_metadata->mem_size(): "
+  //           << handle.incr_attention_metadata->mem_size() << std::endl;
   if (handle.batch_config_metadata_size +
       handle.incr_attention_metadata->mem_size()) {
     // allocate memory for offload reserve space

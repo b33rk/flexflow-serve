@@ -2027,7 +2027,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   *position_bias = _position_bias;
 
   num_kv_cache_pages = _num_kv_cache_pages;
-  assert(num_kv_cache_pages >= 0);
+  assert(num_kv_cache_pages > 0 || enable_peft_finetuning);
 
   // spec decoding and peft finetuning are mutually exclusive
   if (enable_peft_finetuning) {

@@ -40,6 +40,10 @@ void STARCODER::create_starcoder_model(
                     "divisible by the tensor parallelism degree");
   }
 
+  assert(startcoder_config.hidden_size % startcoder_config.num_attention_heads == 0 && "Hidden size not divisible by number of attention heads");
+  int head_dim = startcoder_config.hidden_size / startcoder_config.num_attention_heads;
+  int tot_num_heads = startcoder_config.num_attention_heads + 2 * 1;
+
   std::vector<int> axes = {0};
 
   Tensor input;
@@ -103,9 +107,7 @@ void STARCODER::create_starcoder_model(
 
     Tensor qkv_proj = ff.dense(
         ln_1,
-        startcoder_config.hidden_size *
-            3, // q, k, v. need to change if want to remove replication.
-               // (q_heads + 2 * kv_heads) * proj_size
+        head_dim * tot_num_heads,
         AC_MODE_NONE,
         false,         // seems like it does not use bias
         DT_NONE,       // what is this
@@ -126,10 +128,8 @@ void STARCODER::create_starcoder_model(
             startcoder_config.hidden_size,
             startcoder_config.num_attention_heads,
             1,
-            startcoder_config.hidden_size /
-                startcoder_config.num_attention_heads,
-            startcoder_config.hidden_size /
-                startcoder_config.num_attention_heads,
+            head_dim,
+            head_dim,
             startcoder_config.dropout_p,             /*dropout*/
             false,                                   /*add_zero_attn*/
             DT_NONE,                                 /*data_type*/
@@ -266,7 +266,7 @@ void STARCODER::create_starcoder_model(
       startcoder_config.num_attention_heads,
       1,
       startcoder_config.hidden_size,
-      startcoder_config.hidden_size / startcoder_config.num_attention_heads,
+      head_dim,
       ff.config.tensor_parallelism_degree,
       use_full_precision);
   im->register_model_weights_loader(&ff, fileloader);

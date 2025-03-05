@@ -34,6 +34,10 @@ void FALCON::create_falcon_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
+  assert(falcon_config.hidden_size % falcon_config.n_head == 0 && "Hidden size not divisible by number of attention heads");
+  int head_dim = falcon_config.hidden_size / falcon_config.n_head;
+  int tot_num_heads = falcon_config.n_head + 2 * falcon_config.n_head_kv;
+
   Tensor input;
   {
     // assert(falcon_config.max_num_tokens <= BatchConfig::MAX_NUM_TOKENS);
@@ -98,9 +102,7 @@ void FALCON::create_falcon_model(FFModel &ff,
 
     qkv_proj = ff.dense(
         att_norm,
-        falcon_config.hidden_size *
-            3, // q, k, v. need to change if want to remove replication.
-               // (q_heads + 2 * kv_heads) * proj_size
+        head_dim * tot_num_heads,
         AC_MODE_NONE,
         false,         // seems like it does not use bias
         DT_NONE,       // what is this
@@ -120,8 +122,8 @@ void FALCON::create_falcon_model(FFModel &ff,
             falcon_config.hidden_size,
             falcon_config.n_head,
             falcon_config.n_head_kv,
-            falcon_config.hidden_size / falcon_config.n_head,
-            falcon_config.hidden_size / falcon_config.n_head,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -143,8 +145,8 @@ void FALCON::create_falcon_model(FFModel &ff,
             falcon_config.hidden_size,
             falcon_config.n_head,
             falcon_config.n_head_kv,
-            falcon_config.hidden_size / falcon_config.n_head,
-            falcon_config.hidden_size / falcon_config.n_head,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -166,8 +168,8 @@ void FALCON::create_falcon_model(FFModel &ff,
             falcon_config.hidden_size,
             falcon_config.n_head,
             falcon_config.n_head_kv,
-            falcon_config.hidden_size / falcon_config.n_head,
-            falcon_config.hidden_size / falcon_config.n_head,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -281,7 +283,7 @@ void FALCON::create_falcon_model(FFModel &ff,
                          falcon_config.n_head,
                          falcon_config.n_head_kv,
                          falcon_config.hidden_size,
-                         falcon_config.hidden_size / falcon_config.n_head,
+                         head_dim,
                          ff.config.tensor_parallelism_degree,
                          use_full_precision);
 

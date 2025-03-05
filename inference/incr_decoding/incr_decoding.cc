@@ -47,7 +47,8 @@ void parse_input_args(char **argv,
                       float &topp,
                       int &max_requests_per_batch,
                       int &max_tokens_per_batch,
-                      int &max_sequence_length) {
+                      int &max_sequence_length,
+                      int &max_length) {
   for (int i = 1; i < argc; i++) {
     // llm model type
     if (!strcmp(argv[i], "-llm-model")) {
@@ -101,8 +102,14 @@ void parse_input_args(char **argv,
       max_tokens_per_batch = std::stoi(argv[++i]);
       continue;
     }
+    // max allowed sequence length
     if (!strcmp(argv[i], "--max-sequence-length")) {
       max_sequence_length = std::stoi(argv[++i]);
+      continue;
+    }
+    // max length before stopping if we haven't reached the EOS
+    if (!strcmp(argv[i], "--max-length")) {
+      max_length = std::stoi(argv[++i]);
       continue;
     }
   }
@@ -133,9 +140,10 @@ void FlexFlow::top_level_task(Task const *task,
   bool do_sample = false;
   float temperature = 0.0f;
   float topp = 0.0f;
-  int max_requests_per_batch = 8;
-  int max_tokens_per_batch = 128;
+  int max_requests_per_batch = 4;
+  int max_tokens_per_batch = 64;
   int max_sequence_length = 256;
+  int max_length=128;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -151,7 +159,8 @@ void FlexFlow::top_level_task(Task const *task,
                    topp,
                    max_requests_per_batch,
                    max_tokens_per_batch,
-                   max_sequence_length);
+                   max_sequence_length,
+                   max_length);
 
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
@@ -227,6 +236,9 @@ void FlexFlow::top_level_task(Task const *task,
   rm->register_output_filepath(file_paths.output_file_path);
 
   FFModel model(ffconfig, ffconfig.cpu_offload);
+  // set amount of kv cache needed
+  model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
+      max_sequence_length, max_requests_per_batch, false));
   if (model_type == ModelType::LLAMA) {
     LLAMA::create_llama_model(model,
                               config_filepath,
@@ -264,10 +276,6 @@ void FlexFlow::top_level_task(Task const *task,
     assert(false && "unknow model type");
   }
 
-  // set amount of kv cache needed
-  model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
-      max_sequence_length, max_requests_per_batch, false));
-
   rm->start_background_server(&model);
 
   int total_num_requests = 0;
@@ -286,7 +294,7 @@ void FlexFlow::top_level_task(Task const *task,
       printf("Prompt[%d]: %s\n", total_num_requests, text.c_str());
       Request inference_req;
       inference_req.prompt = text;
-      inference_req.max_length = 128;
+      inference_req.max_length = max_length;
       requests.push_back(inference_req);
       total_num_requests++;
     }

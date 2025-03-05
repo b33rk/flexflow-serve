@@ -46,7 +46,7 @@ export LEGION_BACKTRACE=1
 
 ############## Run inference in flexflow-serve ##############
 
-echo "Running inference in flexflow-serve..."
+echo "Running inference in flexflow-serve (python)..."
 
 # Generate test configs
 rm -rf ./inference/inf_test_configs/*.json || true

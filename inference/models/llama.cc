@@ -37,15 +37,17 @@ void LLAMA::create_llama_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  Tensor input;
-  {
-    int const token_dims[] = {
-        (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE)
-            ? BatchConfig::max_verify_tokens_per_batch()
-            : BatchConfig::max_tokens_per_batch(),
-        1};
-    input = ff.create_tensor<2>(token_dims, DT_INT32);
-  }
+  assert(llama_config.hidden_size % llama_config.num_attention_heads == 0 && "Hidden size not divisible by number of attention heads");
+  int head_dim = llama_config.hidden_size / llama_config.num_attention_heads;
+  int tot_num_heads = llama_config.num_attention_heads + 2*llama_config.num_key_value_heads;
+  
+  int const token_dims[] = {
+      (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE)
+          ? BatchConfig::max_verify_tokens_per_batch()
+          : BatchConfig::max_tokens_per_batch(),
+      1};
+  Tensor input = ff.create_tensor<2>(token_dims, DT_INT32);
+  
 
   Initializer *embed_init = new UniformInitializer(std::rand(), 0, 0);
 
@@ -89,11 +91,10 @@ void LLAMA::create_llama_model(FFModel &ff,
       token = token_att_norm[0];
       att_norm = token_att_norm[1];
     }
+
     Tensor qkv_proj = ff.dense(
         att_norm,
-        llama_config.hidden_size *
-            3, // q, k, v. need to change if want to remove replication.
-               // (q_heads + 2 * kv_heads) * proj_size
+        head_dim*tot_num_heads,
         AC_MODE_NONE,
         false,         // seems like llama does not use bias
         DT_NONE,       // what is this
@@ -113,8 +114,8 @@ void LLAMA::create_llama_model(FFModel &ff,
             llama_config.hidden_size,
             llama_config.num_attention_heads,
             llama_config.num_key_value_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -135,8 +136,8 @@ void LLAMA::create_llama_model(FFModel &ff,
             llama_config.hidden_size,
             llama_config.num_attention_heads,
             llama_config.num_key_value_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -157,8 +158,8 @@ void LLAMA::create_llama_model(FFModel &ff,
             llama_config.hidden_size,
             llama_config.num_attention_heads,
             llama_config.num_key_value_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
-            llama_config.hidden_size / llama_config.num_attention_heads,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -306,7 +307,7 @@ void LLAMA::create_llama_model(FFModel &ff,
       llama_config.num_attention_heads,
       llama_config.num_key_value_heads,
       llama_config.hidden_size,
-      llama_config.hidden_size / llama_config.num_attention_heads,
+      head_dim,
       ff.config.tensor_parallelism_degree,
       use_full_precision);
 
