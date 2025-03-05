@@ -118,7 +118,7 @@ void prepare_inference_params_kernel_h(
 
     // q_indptr: first token offset in batch, plus one token at the end
     // representing the total number of tokens in batch
-    q_indptr_h.push_back(
+    q_indptr_h.push_back(q_indptr_h.back() +
         batch_config->requestsInfo[req_idx].num_tokens_in_batch);
 
     // kv_indptr: starting index of KV cache pages for each request in logical
@@ -286,9 +286,11 @@ void RequestManager::load_batch_config_task(
     BatchPrefillHandler *handler = static_cast<BatchPrefillHandler *>(
         handle.incr_attention_metadata->prompt_handler_collections[batch_size]);
     handler->SetCUDAStream(stream);
+    // static int step=0;
     PageManager *pm = PageManager::get_page_manager();
     // printf("BatchPrefillHandler %p\n", handler);
-    // std::cout <<  *pm << std::endl;
+    // std::cout << "STEP " << step << ": " << *pm << std::endl;
+    // step+=1;
     // std::cout << "batch_config: " << *batch_config << std::endl;
     // std::cout << "q_indptr_h: ";
     // for (int i = 0; i < q_indptr_h.size(); i++) {

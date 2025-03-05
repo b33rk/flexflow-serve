@@ -87,6 +87,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
         self.max_tokens_per_batch = self.rm.get_max_tokens_per_batch()
         if is_spec:
             self.max_tokens_per_batch += self.rm.get_max_spec_tree_token_num()
+            self.max_sequence_length += self.rm.get_max_spec_tree_token_num()
 
         ffmodel.set_num_kv_cache_pages(
             compute_num_kv_cache_pages_needed(

@@ -122,6 +122,10 @@ int BatchConfig::num_inference_tokens() const {
   return num_tokens - num_ft_fwd_tokens;
 }
 
+int BatchConfig::num_inference_requests() const {
+  return num_active_requests() - num_finetuning_fwd_requests() - num_finetuning_bwd_requests();
+}
+
 int BatchConfig::finetuning_request_index() const {
   assert(max_requests_per_batch() > 0);
   return max_requests_per_batch() - 1;
