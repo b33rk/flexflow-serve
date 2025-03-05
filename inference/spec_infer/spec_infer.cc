@@ -307,7 +307,6 @@ void FlexFlow::top_level_task(Task const *task,
 
   get_model_meta(file_paths, model_metadata, use_full_precision);
 
-  ffconfig.max_kv_cache_size = 0; // just use default amount
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
          ffconfig.numNodes * ffconfig.workersPerNode);
@@ -365,6 +364,12 @@ void FlexFlow::top_level_task(Task const *task,
     assert(false && "Invalid LLM model type passed (or no type was passed).");
   }
 
+  // set amount of kv cache needed
+  tree_model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
+      max_sequence_length + max_spec_tree_token_num,
+      max_requests_per_batch,
+      true));
+
   // Create SSM models
   int num_ssms = model_metadata.ssm_model_types.size();
   std::vector<int> ssm_model_ids;
@@ -409,6 +414,11 @@ void FlexFlow::top_level_task(Task const *task,
     } else {
       assert(false && "Invalid SSM model type passed.");
     }
+
+    beam_model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
+        max_sequence_length + max_spec_tree_token_num,
+        max_requests_per_batch,
+        true));
 
     rm->register_ssm_model(&beam_model);
   }

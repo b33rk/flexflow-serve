@@ -35,15 +35,6 @@ void OPT::create_opt_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  // set the number of pages
-  ff.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
-      mode != INC_DECODING_MODE,
-      ff.config.max_kv_cache_size,
-      opt_config.num_hidden_layers,
-      opt_config.num_attention_heads,
-      (opt_config.hidden_size / opt_config.num_attention_heads),
-      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF)));
-
   //------------------------------ build the model --------------------------
   Tensor input;
   Tensor position_input;

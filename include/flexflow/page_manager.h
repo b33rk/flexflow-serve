@@ -1,5 +1,6 @@
 #pragma once
 
+#include "flexflow/attention_config.h"
 #include "flexflow/batch_config.h"
 #include "flexflow/config.h"
 #include "flexflow/inference.h"
@@ -26,12 +27,8 @@ public:
   // Get the singleton instance of the PageManager as it will be shared in
   // multiple places
   static PageManager *get_page_manager();
-  static PageManager *get_page_manager(size_t max_kv_cache_size,
-                                       int num_transformer_layers,
-                                       int num_kv_heads,
-                                       int qkv_dim,
-                                       int size_dt);
-  PageManager(int block_size, int tot_num_pages);
+  static PageManager *get_page_manager(int num_total_pages);
+  PageManager(int tot_num_pages_);
 
   int get_tot_num_pages() const;
   int get_tokens_per_page() const;
@@ -84,14 +81,13 @@ private:
   std::set<int> free_pages;
 
   int tot_num_pages;
-  int tokens_per_page;
 };
 
-int compute_num_kv_cache_pages_needed(bool is_spec,
-                                      int max_kv_cache_size,
-                                      int num_transformer_layers,
-                                      int num_kv_heads,
-                                      int qkv_dim,
-                                      int size_dt);
+// returns number of kv cache pages needed to guarantee no evictions if all
+// requests are up to max_seq_len if is_spec==true, it also initializes the page
+// manager
+int compute_num_kv_cache_pages_needed(int max_seq_len,
+                                      int batch_size,
+                                      bool is_spec);
 
 }; // namespace FlexFlow

@@ -452,7 +452,6 @@ class LLM:
         max_seq_length: int = 256,
         max_tokens_per_batch: int = 64,
         max_concurrent_adapters: int = 1,
-        max_kv_cache_size: int = 0,
         enable_peft_finetuning: bool = False,
         num_bwd_layers_per_ft_step: int = -1,
         ssms: list = [],
@@ -469,8 +468,6 @@ class LLM:
         :type max_tokens_per_batch: int, optional
         :param max_concurrent_adapters: The maximum number of concurrent LoRA adapters, defaults to 1
         :type max_concurrent_adapters: int, optional
-        :param max_kv_cache_size: The maximum size of the key-value cache, defaults to 0
-        :type max_kv_cache_size: int, optional
         :param enable_peft_finetuning: Whether to enable support for PEFT fine-tuning, defaults to False
         :type enable_peft_finetuning: bool, optional
         :param num_bwd_layers_per_ft_step: The number of backward layers to run per finetuning step, defaults to -1 (i.e. all layers)
@@ -494,13 +491,13 @@ class LLM:
             mode = InferenceMode.INC_DECODING_MODE
 
         self.max_seq_length = max_seq_length
-        self.ffconfig.max_kv_cache_size = max_kv_cache_size
         self.ffconfig.enable_peft_finetuning = enable_peft_finetuning
 
         # Create request manager and set serving configuration
         self.rm = RequestManager()
         self.rm.set_max_requests_per_batch(max_requests_per_batch)
         self.rm.set_max_tokens_per_batch(max_tokens_per_batch)
+        self.rm.set_max_spec_tree_token_num(20)
         self.rm.set_max_sequence_length(max_seq_length)
         self.rm.set_max_concurrent_adapters(max_concurrent_adapters)
         self.rm.set_enable_peft_finetuning(enable_peft_finetuning)
@@ -512,12 +509,6 @@ class LLM:
 
         # Create file data loader, load weights into tensors
         model_configs = self.config_class(self.hf_config)
-
-        self.rm.set_max_spec_tree_token_num(
-            model_configs.max_spec_tree_token_num
-            if "max_spec_tree_token_num" in model_configs.__dict__
-            else 20
-        )
 
         # Instantiate the relevant model
         self.model = self.model_class(
@@ -774,7 +765,6 @@ class SSM(LLM):
         max_seq_length: int = 256,
         max_tokens_per_batch: int = 2048,
         max_concurrent_adapters: int = 1,
-        max_kv_cache_size: int = 0,
         enable_peft_finetuning: bool = False,
         num_bwd_layers_per_ft_step: int = -1,
         ssms: list = [],
@@ -790,8 +780,6 @@ class SSM(LLM):
         :type max_tokens_per_batch: int, optional
         :param max_concurrent_adapters: The maximum number of concurrent LoRA adapters, defaults to 1
         :type max_concurrent_adapters: int, optional
-        :param max_kv_cache_size: The maximum size of the key-value cache, defaults to 0
-        :type max_kv_cache_size: int, optional
         :param enable_peft_finetuning: Whether to enable support for PEFT fine-tuning, defaults to False
         :type enable_peft_finetuning: bool, optional
         :param num_bwd_layers_per_ft_step: The number of backward layers to run per finetuning step, defaults to -1 (i.e. all layers)
@@ -805,7 +793,6 @@ class SSM(LLM):
             max_seq_length,
             max_tokens_per_batch,
             max_concurrent_adapters,
-            max_kv_cache_size,
             enable_peft_finetuning,
             num_bwd_layers_per_ft_step,
             ssms,

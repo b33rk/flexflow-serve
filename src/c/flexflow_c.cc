@@ -188,18 +188,6 @@ void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_,
   handle->enable_peft_finetuning = value;
 }
 
-long unsigned int
-    flexflow_config_get_max_kv_cache_size(flexflow_config_t handle_) {
-  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
-  return handle->max_kv_cache_size;
-}
-
-void flexflow_config_set_max_kv_cache_size(
-    flexflow_config_t handle_, long unsigned int max_kv_cache_size) {
-  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
-  handle->max_kv_cache_size = max_kv_cache_size;
-}
-
 int flexflow_config_get_python_data_loader_type(flexflow_config_t handle_) {
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
   return handle->python_data_loader_type;
@@ -1561,18 +1549,10 @@ void flexflow_model_set_num_kv_cache_pages(flexflow_model_t handle_,
   handle->set_num_kv_cache_pages(num_kv_cache_pages);
 }
 
-int flexflow_compute_num_kv_cache_pages_needed(bool is_spec,
-                                               int max_kv_cache_size,
-                                               int num_transformer_layers,
-                                               int num_kv_heads,
-                                               int qkv_dim,
-                                               int size_dt) {
-  return compute_num_kv_cache_pages_needed(is_spec,
-                                           max_kv_cache_size,
-                                           num_transformer_layers,
-                                           num_kv_heads,
-                                           qkv_dim,
-                                           size_dt);
+int flexflow_compute_num_kv_cache_pages_needed(int max_seq_len,
+                                               int batch_size,
+                                               bool is_spec) {
+  return compute_num_kv_cache_pages_needed(max_seq_len, batch_size, is_spec);
 }
 
 void flexflow_model_generate(flexflow_model_t handle_,
@@ -2633,11 +2613,23 @@ void flexflow_request_manager_set_max_requests_per_batch(
               max_num_requests);
 }
 
+int flexflow_request_manager_get_max_requests_per_batch(
+    flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->get_max_requests_per_batch();
+}
+
 void flexflow_request_manager_set_max_tokens_per_batch(
     flexflow_request_manager_t handle_, int max_num_tokens) {
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
   handle->set_max_tokens_per_batch(max_num_tokens);
   DEBUG_PRINT("[RequestManager] set max_tokens_per_batch %d", max_num_tokens);
+}
+
+int flexflow_request_manager_get_max_tokens_per_batch(
+    flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->get_max_tokens_per_batch();
 }
 
 void flexflow_request_manager_set_max_spec_tree_token_num(
@@ -2646,6 +2638,12 @@ void flexflow_request_manager_set_max_spec_tree_token_num(
   handle->set_max_spec_tree_token_num(max_num_tokens);
   DEBUG_PRINT("[RequestManager] set max_spec_tree_token_num %d",
               max_num_tokens);
+}
+
+int flexflow_request_manager_get_max_spec_tree_token_num(
+    flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->get_max_spec_tree_token_num();
 }
 
 void flexflow_request_manager_set_max_sequence_length(
@@ -2755,21 +2753,9 @@ void flexflow_request_manager_terminate_background_server(
 // -----------------------------------------------------------------------
 
 flexflow_page_manager_t
-    flexflow_page_manager_get_page_manager(int max_kv_cache_size,
-                                           int num_transformer_layers,
-                                           int num_kv_heads,
-                                           int qkv_dim,
-                                           int size_dt) {
-  assert(max_kv_cache_size >= 0);
-  assert(num_kv_heads > 0);
-  assert(size_dt > 0);
-  assert(qkv_dim > 0);
-  assert(num_transformer_layers > 0);
-  PageManager *pm = PageManager::get_page_manager(max_kv_cache_size,
-                                                  num_kv_heads,
-                                                  size_dt,
-                                                  qkv_dim,
-                                                  num_transformer_layers);
+    flexflow_page_manager_get_page_manager(int num_total_pages) {
+  assert(num_total_pages);
+  PageManager *pm = PageManager::get_page_manager(num_total_pages);
   DEBUG_PRINT("[PageManager] get %p", pm);
   return FFCObjectWrapper::wrap(pm);
 }

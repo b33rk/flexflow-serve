@@ -40,15 +40,6 @@ void STARCODER::create_starcoder_model(
                     "divisible by the tensor parallelism degree");
   }
 
-  // set the number of pages
-  ff.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
-      mode != INC_DECODING_MODE,
-      ff.config.max_kv_cache_size,
-      startcoder_config.num_hidden_layers,
-      startcoder_config.num_attention_heads,
-      (startcoder_config.hidden_size / startcoder_config.num_attention_heads),
-      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF)));
-
   std::vector<int> axes = {0};
 
   Tensor input;

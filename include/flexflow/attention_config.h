@@ -21,8 +21,14 @@ namespace FlexFlow {
 
 constexpr uint32_t kPagesize = 64;
 
+inline int ceilDiv(int const a, int const b) {
+  assert(b != 0 && "Attempting to divide by 0");
+  assert(a >= 0 && b > 0 && "Expected non-negative numbers");
+  return (a + b - 1) / b;
+}
+
 inline int round_up_pages(int const num_elements) {
-  return (num_elements + kPagesize - 1) / kPagesize;
+  return ceilDiv(num_elements, kPagesize);
 }
 
 #define DISPATCH_HEADDIM(head_dim, HEAD_DIM, ...)                              \

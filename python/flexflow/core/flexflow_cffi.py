@@ -830,16 +830,6 @@ class FFConfig(object):
         ffc().flexflow_config_set_enable_peft_finetuning(self.handle, value)
 
     @property
-    def max_kv_cache_size(self):
-        return ffc().flexflow_config_get_max_kv_cache_size(self.handle)
-
-    @max_kv_cache_size.setter
-    def max_kv_cache_size(self, value):
-        if type(value) is not int:
-            raise ValueError("max_kv_cache_size must be specified as a int value")
-        ffc().flexflow_config_set_max_kv_cache_size(self.handle, value)
-
-    @property
     def cpu_offload(self):
         return ffc().flexflow_config_get_offload(self.handle)
 
@@ -1605,17 +1595,8 @@ class BatchConfig(object):
 class PageManager(object):
     __slots__ = ["handle"]
 
-    def __init__(
-        self,
-        max_kv_cache_size: int,
-        num_transformer_layers: int,
-        num_kv_heads: int,
-        qkv_dim: int,
-        size_dt: int,
-    ):
-        self.handle = ffc().flexflow_page_manager_get_page_manager(
-            max_kv_cache_size, num_transformer_layers, num_kv_heads, qkv_dim, size_dt
-        )
+    def __init__(self, num_total_pages: int):
+        self.handle = ffc().flexflow_page_manager_get_page_manager(num_total_pages)
 
     def get_tot_num_pages(self):
         return ffc().flexflow_page_manager_get_tot_num_pages(self.handle)
@@ -1661,21 +1642,34 @@ class RequestManager(object):
             self.handle, model.handle
         )
 
+    # Max requests per batch
     def set_max_requests_per_batch(self, max_requests):
         return ffc().flexflow_request_manager_set_max_requests_per_batch(
             self.handle, max_requests
         )
 
+    def get_max_requests_per_batch(self):
+        return ffc().flexflow_request_manager_get_max_requests_per_batch(self.handle)
+
+    # Max tokens per batch
     def set_max_tokens_per_batch(self, max_tokens):
         return ffc().flexflow_request_manager_set_max_tokens_per_batch(
             self.handle, max_tokens
         )
 
+    def get_max_tokens_per_batch(self):
+        return ffc().flexflow_request_manager_get_max_tokens_per_batch(self.handle)
+
+    # Max spec tree token num
     def set_max_spec_tree_token_num(self, max_tokens):
         return ffc().flexflow_request_manager_set_max_spec_tree_token_num(
             self.handle, max_tokens
         )
 
+    def get_max_spec_tree_token_num(self):
+        return ffc().flexflow_request_manager_get_max_spec_tree_token_num(self.handle)
+
+    # Max sequence length
     def set_max_sequence_length(self, max_length):
         return ffc().flexflow_request_manager_set_max_sequence_length(
             self.handle, max_length
@@ -1684,20 +1678,16 @@ class RequestManager(object):
     def get_max_sequence_length(self):
         return ffc().flexflow_request_manager_get_max_sequence_length(self.handle)
 
+    # Num transformer layers
     def set_num_transformers_layers(self, num_layers):
         return ffc().flexflow_request_manager_set_num_transformers_layers(
             self.handle, num_layers
         )
 
+    # Num layers per finetuning steps
     def set_num_layers_per_finetuning_step(self, num_layers):
         return ffc().flexflow_request_manager_set_num_layers_per_finetuning_step(
             self.handle, num_layers
-        )
-
-    # flashinfer/paged attention
-    def set_max_kv_cache_size(self, max_size):
-        return ffc().flexflow_request_manager_set_max_kv_cache_size(
-            self.handle, max_size
         )
 
     def set_max_concurrent_adapters(self, max_adapters):
@@ -4547,18 +4537,10 @@ class FFModel(object):
 
 
 def compute_num_kv_cache_pages_needed(
+    max_seq_len: int,
+    batch_size: int,
     is_spec: bool,
-    max_kv_cache_size: int,
-    num_transformer_layers: int,
-    num_kv_heads: int,
-    qkv_dim: int,
-    size_dt: int,
 ):
     return ffc().flexflow_compute_num_kv_cache_pages_needed(
-        is_spec,
-        max_kv_cache_size,
-        num_transformer_layers,
-        num_kv_heads,
-        qkv_dim,
-        size_dt,
+        max_seq_len, batch_size, is_spec
     )

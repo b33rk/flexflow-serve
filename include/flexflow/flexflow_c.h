@@ -98,11 +98,6 @@ bool flexflow_config_get_enable_peft_finetuning(flexflow_config_t handle_);
 void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_,
                                                 bool value);
 
-long unsigned int
-    flexflow_config_get_max_kv_cache_size(flexflow_config_t handle_);
-void flexflow_config_set_max_kv_cache_size(flexflow_config_t handle_,
-                                           long unsigned int value);
-
 void flexflow_config_set_data_parallelism_degree(flexflow_config_t handle_,
                                                  int value);
 
@@ -593,12 +588,9 @@ void flexflow_model_set_transformer_layer_id(flexflow_model_t handle, int id);
 void flexflow_model_set_num_kv_cache_pages(flexflow_model_t handle_,
                                            int num_kv_cache_pages);
 
-int flexflow_compute_num_kv_cache_pages_needed(bool is_spec,
-                                               int max_kv_cache_size,
-                                               int num_transformer_layers,
-                                               int num_kv_heads,
-                                               int qkv_dim,
-                                               int size_dt);
+int flexflow_compute_num_kv_cache_pages_needed(int max_seq_len,
+                                               int batch_size,
+                                               bool is_spec);
 
 void flexflow_model_generate(flexflow_model_t handle_,
                              int num_requests,
@@ -965,11 +957,20 @@ flexflow_request_manager_t flexflow_request_manager_get_request_manager(void);
 void flexflow_request_manager_set_max_requests_per_batch(
     flexflow_request_manager_t handle_, int max_num_requests);
 
+int flexflow_request_manager_get_max_requests_per_batch(
+    flexflow_request_manager_t handle_);
+
 void flexflow_request_manager_set_max_tokens_per_batch(
     flexflow_request_manager_t handle_, int max_num_tokens);
 
+int flexflow_request_manager_get_max_tokens_per_batch(
+    flexflow_request_manager_t handle_);
+
 void flexflow_request_manager_set_max_spec_tree_token_num(
     flexflow_request_manager_t handle_, int max_num_tokens);
+
+int flexflow_request_manager_get_max_spec_tree_token_num(
+    flexflow_request_manager_t handle_);
 
 void flexflow_request_manager_set_max_sequence_length(
     flexflow_request_manager_t handle_, int max_seq_length);
@@ -1014,11 +1015,7 @@ void flexflow_request_manager_terminate_background_server(
 // -----------------------------------------------------------------------
 
 flexflow_page_manager_t
-    flexflow_page_manager_get_page_manager(int max_kv_cache_size,
-                                           int num_transformer_layers,
-                                           int num_kv_heads,
-                                           int qkv_dim,
-                                           int size_dt);
+    flexflow_page_manager_get_page_manager(int num_total_pages);
 
 int flexflow_page_manager_get_tot_num_pages(flexflow_page_manager_t handle_);
 

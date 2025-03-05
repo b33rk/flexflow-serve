@@ -17,19 +17,12 @@
 
 namespace FlexFlow {
 
-int ceilDiv(int a, int b) {
-  assert(b != 0 && "Attempting to divide by 0");
-  assert(a >= 0 && b > 0 && "Expected non-negative numbers");
-  return (a + b - 1) / b;
-}
-
 // For all runtime functions, they share a single page manager for pages
 // information
 PageManager *page_manager_singleton = nullptr;
 
-PageManager::PageManager(int tokens_per_page_, int tot_num_pages_)
-    : tokens_per_page(tokens_per_page_), tot_num_pages(tot_num_pages_) {
-  assert(tokens_per_page > 0 && tot_num_pages >= 0 &&
+PageManager::PageManager(int tot_num_pages_) : tot_num_pages(tot_num_pages_) {
+  assert(kPagesize > 0 && tot_num_pages >= 0 &&
          "Number of tokens per page must be positive and total number of pages "
          "must be non-negative");
   for (int i = 0; i < tot_num_pages; i++) {
@@ -42,41 +35,14 @@ PageManager *PageManager::get_page_manager() {
   return page_manager_singleton;
 }
 
-PageManager *PageManager::get_page_manager(size_t max_kv_cache_size,
-                                           int num_transformer_layers,
-                                           int num_kv_heads,
-                                           int qkv_dim,
-                                           int size_dt) {
-  printf("num_kv_heads: %i\n", num_kv_heads);
-  printf("size_dt: %i\n", size_dt);
-  printf("qkv_dim: %i\n", qkv_dim);
-  printf("num_transformer_layers: %i\n", num_transformer_layers);
-  printf("max_kv_cache_size: %lu\n", max_kv_cache_size);
-  assert(num_kv_heads > 0 && size_dt > 0 && qkv_dim > 0 &&
-         num_transformer_layers >
-             0); // needs to make sure that the model is initialized
+PageManager *PageManager::get_page_manager(int num_total_pages) {
+  assert(num_total_pages > 0 &&
+         "attempting to initialize the PageManager with 0 pages");
   assert(page_manager_singleton == nullptr &&
          "Attempting to initialize PageManager twice");
-  size_t num_total_pages = 0;
-  if (max_kv_cache_size == 0) {
-    // enough pages to fit max seq length in each request
-    int max_seq_len = BatchConfig::max_sequence_length();
-    num_total_pages =
-        ceilDiv(max_seq_len * BatchConfig::max_requests_per_batch(), kPagesize);
-  } else {
-    assert(max_kv_cache_size >
-           size_dt * qkv_dim * num_kv_heads * num_transformer_layers);
-    size_t per_token_size =
-        2 * size_dt * qkv_dim * num_kv_heads; // 2 factor for K and V
-    size_t page_size_bytes =
-        kPagesize * per_token_size; // Each page contains kPagesize tokens
-    num_total_pages = max_kv_cache_size /
-                      (page_size_bytes * num_transformer_layers); // floor div
-  }
-  printf("page manager singleton is initialized with %ld pages\n",
+  printf("page manager singleton is initialized with %d pages\n",
          num_total_pages);
-  page_manager_singleton = new PageManager(kPagesize, num_total_pages);
-
+  page_manager_singleton = new PageManager(num_total_pages);
   return page_manager_singleton;
 }
 
@@ -85,7 +51,7 @@ int PageManager::get_tot_num_pages() const {
 }
 
 int PageManager::get_tokens_per_page() const {
-  return tokens_per_page;
+  return kPagesize;
 }
 
 int PageManager::get_num_pages_used_by_req(
@@ -114,13 +80,13 @@ int PageManager::get_num_tokens_in_last_used_page(
     RequestGuid const &request_guid) const {
   assert(requests_info.find(request_guid) != requests_info.end());
   int n = requests_info.at(request_guid).num_tokens_in_last_used_page;
-  if (!(n >= 0 && n <= tokens_per_page)) {
+  if (!(n >= 0 && n <= kPagesize)) {
     std::cerr
         << "Error: num_tokens_in_last_used_page is out of bounds for request "
         << request_guid << std::endl;
     std::cerr << *this << std::endl;
   }
-  assert(n >= 0 && n <= tokens_per_page);
+  assert(n >= 0 && n <= kPagesize);
 
   return n;
 }
@@ -136,7 +102,7 @@ bool PageManager::enough_space_to_add_request(
   assert(num_prompt_tokens_in_first_batch <= num_prompt_tokens);
 
   // pages needed to process the new request's prompt alone
-  int new_pages_needed = ceilDiv(num_prompt_tokens, tokens_per_page);
+  int new_pages_needed = round_up_pages(num_prompt_tokens);
 
   // number of steps to finish prefilling (during which other requests will
   // accrue more tokens)
@@ -155,12 +121,12 @@ bool PageManager::enough_space_to_add_request(
                       "prefill present in the batch");
     }
     int available_slots =
-        tokens_per_page - req_info.num_tokens_in_last_used_page +
+        kPagesize - req_info.num_tokens_in_last_used_page +
         ((int)req_info.page_indices.size() - req_info.num_used_pages) *
-            tokens_per_page;
+            kPagesize;
     if (num_expected_prefill_steps > available_slots) {
-      new_pages_needed += ceilDiv(num_expected_prefill_steps - available_slots,
-                                  tokens_per_page);
+      new_pages_needed +=
+          round_up_pages(num_expected_prefill_steps - available_slots);
     }
   }
   printf("new pages needed to add request with %d prompt tokens, %d "
@@ -189,16 +155,15 @@ bool PageManager::enough_space_to_append_tokens(
     assert((int)req_info.page_indices.size() - req_info.num_used_pages >= 0 &&
            "Number of used pages must be less than or equal to the number of "
            "pages assigned to the request");
-    assert(tokens_per_page - req_info.num_tokens_in_last_used_page >= 0 &&
+    assert(kPagesize - req_info.num_tokens_in_last_used_page >= 0 &&
            "Number of tokens in last page must be less than or equal to the "
            "number of tokens per page");
     int available_slots =
-        tokens_per_page - req_info.num_tokens_in_last_used_page +
+        kPagesize - req_info.num_tokens_in_last_used_page +
         ((int)req_info.page_indices.size() - req_info.num_used_pages) *
-            tokens_per_page;
+            kPagesize;
     if (num_tokens > available_slots) {
-      int num_pages_needed =
-          ceilDiv(num_tokens - available_slots, tokens_per_page);
+      int num_pages_needed = round_up_pages(num_tokens - available_slots);
       new_pages_needed += num_pages_needed;
     }
   }
@@ -214,7 +179,7 @@ void PageManager::add_request(RequestGuid const &guid, int num_tokens) {
   active_requests.push_back(guid);
   // assign pages to the request
   assert(!free_pages.empty() && "No free pages available");
-  int num_pages_needed = ceilDiv(num_tokens, tokens_per_page);
+  int num_pages_needed = round_up_pages(num_tokens);
   std::vector<int> pages;
   for (int i = 0; i < num_pages_needed; i++) {
     int page = *free_pages.begin();
@@ -278,12 +243,10 @@ void PageManager::append_tokens(RequestGuid const &request_guid,
          "Not enough space to append tokens");
 
   int available_slots =
-      tokens_per_page - req_info.num_tokens_in_last_used_page +
-      ((int)req_info.page_indices.size() - req_info.num_used_pages) *
-          tokens_per_page;
+      kPagesize - req_info.num_tokens_in_last_used_page +
+      ((int)req_info.page_indices.size() - req_info.num_used_pages) * kPagesize;
   if (num_tokens > available_slots) {
-    int num_pages_needed =
-        ceilDiv(num_tokens - available_slots, tokens_per_page);
+    int num_pages_needed = round_up_pages(num_tokens - available_slots);
     for (int i = 0; i < num_pages_needed; i++) {
       int page = *free_pages.begin();
       free_pages.erase(free_pages.find(page));
@@ -298,9 +261,9 @@ void PageManager::append_tokens(RequestGuid const &request_guid,
   }
 
   req_info.num_tokens_in_last_used_page += num_tokens;
-  while (req_info.num_tokens_in_last_used_page > tokens_per_page) {
+  while (req_info.num_tokens_in_last_used_page > kPagesize) {
     req_info.num_used_pages += 1;
-    req_info.num_tokens_in_last_used_page -= tokens_per_page;
+    req_info.num_tokens_in_last_used_page -= kPagesize;
   }
 
   printf("appending %d tokens to request %d. It now has %d tokens in the last "
@@ -314,7 +277,7 @@ void PageManager::append_tokens(RequestGuid const &request_guid,
 std::ostream &operator<<(std::ostream &os, PageManager const &pm) {
   os << "PageManager State: {\n";
   os << "\tTotal number of pages: " << pm.tot_num_pages << "\n";
-  os << "\tTokens per page: " << pm.tokens_per_page << "\n";
+  os << "\tTokens per page: " << kPagesize << "\n";
   os << "\tActive requests: " << pm.active_requests.size() << "\n";
   os << "\tFree pages: " << pm.free_pages.size() << "\n";
   os << "\tRequests info:\n";
@@ -332,40 +295,16 @@ std::ostream &operator<<(std::ostream &os, PageManager const &pm) {
   return os;
 }
 
-int compute_num_kv_cache_pages_needed(bool is_spec,
-                                      int max_kv_cache_size,
-                                      int num_transformer_layers,
-                                      int num_kv_heads,
-                                      int qkv_dim,
-                                      int size_dt) {
+int compute_num_kv_cache_pages_needed(int max_seq_len,
+                                      int batch_size,
+                                      bool is_spec) {
+
+  int num_pages_needed = round_up_pages(max_seq_len * batch_size);
   if (!is_spec) {
-    PageManager *pm = PageManager::get_page_manager(max_kv_cache_size,
-                                                    num_transformer_layers,
-                                                    num_kv_heads,
-                                                    qkv_dim,
-                                                    size_dt);
-    return pm->get_tot_num_pages();
-  } else {
-    if (max_kv_cache_size == 0) {
-      // enough pages to fit max seq length in each request
-      int max_seq_len = BatchConfig::max_sequence_length() +
-                        BatchConfig::max_spec_tree_token_num();
-      int num_total_pages = ceilDiv(
-          max_seq_len * BatchConfig::max_requests_per_batch(), kPagesize);
-      return num_total_pages;
-    } else {
-      assert(max_kv_cache_size >
-             size_dt * qkv_dim * num_kv_heads * num_transformer_layers);
-      int per_token_size =
-          2 * size_dt * qkv_dim * num_kv_heads; // 2 factor for K and V
-      int page_size_bytes =
-          kPagesize * per_token_size; // Each page contains kPagesize tokens
-      int num_total_pages =
-          max_kv_cache_size /
-          (page_size_bytes * num_transformer_layers); // floor div
-      return num_total_pages;
-    }
+    PageManager *pm = PageManager::get_page_manager(num_pages_needed);
+    assert(pm->get_tot_num_pages() == num_pages_needed);
   }
+  return num_pages_needed;
 }
 
 }; // namespace FlexFlow

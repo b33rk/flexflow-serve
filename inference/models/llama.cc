@@ -37,15 +37,6 @@ void LLAMA::create_llama_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  // set the number of pages
-  ff.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
-      mode != INC_DECODING_MODE,
-      ff.config.max_kv_cache_size,
-      llama_config.num_hidden_layers,
-      llama_config.num_key_value_heads,
-      (llama_config.hidden_size / llama_config.num_attention_heads),
-      data_type_size(use_full_precision ? DT_FLOAT : DT_HALF)));
-
   Tensor input;
   {
     int const token_dims[] = {

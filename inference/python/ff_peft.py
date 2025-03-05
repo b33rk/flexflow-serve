@@ -78,7 +78,6 @@ def get_configs():
             "max_seq_length": 256,
             "max_tokens_per_batch": 128,
             "max_concurrent_adapters": 1,
-            "max_kv_cache_size": 0, # use default value
         }
         # Merge dictionaries
         ff_init_configs.update(model_configs)
@@ -115,7 +114,6 @@ def main():
         max_seq_length = configs_dict.get("max_seq_length", 256),
         max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 128),
         max_concurrent_adapters = configs_dict.get("max_concurrent_adapters", 1) + enable_peft_finetuning,
-        max_kv_cache_size = configs_dict.get("max_kv_cache_size", 0),
         enable_peft_finetuning = enable_peft_finetuning,
     )
 

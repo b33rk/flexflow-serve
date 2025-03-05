@@ -19,9 +19,6 @@ import random, torch
 
 class FalconConfig:
     def __init__(self, hf_config):
-        self.max_beam_width = 1
-        self.max_beam_depth = 8
-        self.max_spec_tree_token_num = 20
         self.bias = hf_config.bias
         self.hidden_size = hf_config.hidden_size
         self.layer_norm_epsilon = hf_config.layer_norm_epsilon
@@ -73,22 +70,17 @@ class FlexFlowFalcon(FlexFlowModel):
         ffconfig,
         hf_config,
         data_type,
-        max_tokens_per_batch,
         weights_filepath="",
         tokenizer_filepath="",
     ):
         self.mode = mode
         self.generation_config = generation_config
         self.ffconfig = ffconfig
-        self.max_kv_cache_size = self.ffconfig.max_kv_cache_size
         self.data_type = data_type
         self.falcon_config = FalconConfig(hf_config)
         self.weights_filepath = weights_filepath
         self.tokenizer_filepath = tokenizer_filepath
         self.maxint = 2**31 - 1
-        max_verify_tokens_per_batch = (
-            max_tokens_per_batch + self.falcon_config.max_spec_tree_token_num
-        )
 
         # Sanity checks
         if self.falcon_config.hidden_size % self.falcon_config.n_head != 0:
@@ -103,27 +95,25 @@ class FlexFlowFalcon(FlexFlowModel):
                 f"Number of q attention heads ({self.falcon_config.n_head}) is smaller, or not divisible by tensor parallelism degree ({self.ffconfig.tensor_parallelism_degree})"
             )
 
-        self.build_model(
-            max_tokens_per_batch
-            if self.mode == InferenceMode.INC_DECODING_MODE
-            else max_verify_tokens_per_batch
-        )
+        self.build_model()
 
-    def build_model(self, max_tokens_per_batch):
+    def build_model(self):
         ffmodel = FFModel(self.ffconfig)
+        is_spec = self.mode != InferenceMode.INC_DECODING_MODE
+        self.rm = RequestManager()
+        self.max_requests_per_batch = self.rm.get_max_requests_per_batch()
+        self.max_sequence_length = self.rm.get_max_sequence_length()
+        self.max_tokens_per_batch = self.rm.get_max_tokens_per_batch()
+        if is_spec:
+            self.max_tokens_per_batch += self.rm.get_max_spec_tree_token_num()
 
         ffmodel.set_num_kv_cache_pages(
             compute_num_kv_cache_pages_needed(
-                is_spec=(self.mode != InferenceMode.INC_DECODING_MODE),
-                max_kv_cache_size=self.max_kv_cache_size,
-                num_transformer_layers=self.falcon_config.n_layer,
-                num_kv_heads=self.falcon_config.n_head_kv,
-                qkv_dim=(self.falcon_config.hidden_size // self.falcon_config.n_head),
-                size_dt=data_type_size(self.data_type),
+                self.max_sequence_length, self.max_requests_per_batch, is_spec
             )
         )
 
-        tokens_dims = [max_tokens_per_batch, 1]
+        tokens_dims = [self.max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
 
         embed_init = UniformInitializer(random.randint(0, self.maxint), 0, 0)

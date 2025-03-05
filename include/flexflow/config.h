@@ -209,7 +209,6 @@ public:
   bool enable_control_replication;
   int python_data_loader_type;
   bool perform_memory_search{false};
-  size_t max_kv_cache_size;
 };
 
 class FFIterationConfig {

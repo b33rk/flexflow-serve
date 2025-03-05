@@ -406,8 +406,9 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     // matrix A: devQKVProjArray
     // matrix A's layout: [qProjSize, tot_num_heads, num_new_tokens]
     // To get query projection, skip over Q entries from previous requests
-    DT const *A = static_cast<DT *>(m->devQKVProjArray) + tokens_previous_requests *
-                      m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads);
+    DT const *A = static_cast<DT *>(m->devQKVProjArray) +
+                  tokens_previous_requests * m->qProjSize *
+                      (m->num_q_heads + 2 * m->num_kv_heads);
     // matrix B: key cache (peft)
     // matrix B's layout: [kProjSize, num_kv_heads, total_tokens]
     // To get B, skip over K entries from previous requests (all heads +
@@ -1504,7 +1505,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     // matrix B: value cache
     // matrix B's layout: [vProjSize * num_kv_heads, max_num_tokens, 1]
     DT const *B = static_cast<DT *>(m->valueCachePeft);
-        
+
     // matrix C: qk_prods_softmax gradients
     // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
     DT *C = static_cast<DT *>(m->qk_prods_softmax);
@@ -1831,7 +1832,8 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".self_attn.input_gradient_0";
-      save_tensor(C, num_tokens * m->qProjSize * m->num_q_heads, filename.c_str());
+      save_tensor(
+          C, num_tokens * m->qProjSize * m->num_q_heads, filename.c_str());
     }
   }
 }
