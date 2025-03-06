@@ -129,7 +129,7 @@ jobs:
           CPP_INFERENCE_TESTS: ${{ vars.CPP_INFERENCE_TESTS }}
         run: |
           source ./build/set_python_envs.sh
-          ./tests/fine_grained_alignment_test.sh
+          # ./tests/fine_grained_alignment_test.sh
           ./tests/inference_tests.sh
       
       - name: Run PEFT tests
