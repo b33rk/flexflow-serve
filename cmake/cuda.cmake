@@ -66,9 +66,9 @@ if(CUDA_FOUND)
   # Set FF_CUDA_ARCH to the list of all GPU architectures compatible with FlexFlow
   elseif("${FF_CUDA_ARCH}" STREQUAL "all")
     if(CUDA_VERSION VERSION_GREATER_EQUAL "11.8")
-      set(FF_CUDA_ARCH 60,61,62,70,72,75,80,86,90)
+      set(FF_CUDA_ARCH 70,72,75,80,86,90)
     else()
-      set(FF_CUDA_ARCH 60,61,62,70,72,75,80,86)
+      set(FF_CUDA_ARCH 70,72,75,80,86)
     endif()
   endif()
   
