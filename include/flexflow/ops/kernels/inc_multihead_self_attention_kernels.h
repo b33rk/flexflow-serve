@@ -73,11 +73,6 @@ template <typename DT>
 void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
                                        BatchConfig const *bc,
                                        ffStream_t stream);
-template <typename DT>
-void produce_output(IncMultiHeadSelfAttentionMeta const *m,
-                    BatchConfig const *bc,
-                    DT *output_ptr,
-                    ffStream_t stream);
 
 template <typename DT>
 void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,

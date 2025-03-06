@@ -1080,32 +1080,6 @@ void update_kv_cache_kernel_peft(IncMultiHeadSelfAttentionMeta const *m,
 }
 
 template <typename DT>
-__global__ void produce_output_kernel(DT const *input_ptr,
-                                      DT *output_ptr,
-                                      int parallelism) {
-  CUDA_KERNEL_LOOP(idx, parallelism) {
-    output_ptr[idx] = static_cast<DT>(input_ptr[idx]);
-  }
-}
-
-template <typename DT>
-void produce_output(IncMultiHeadSelfAttentionMeta const *m,
-                    BatchConfig const *bc,
-                    DT *output_ptr,
-                    cudaStream_t stream) {
-  int const num_tokens = bc->num_inference_tokens();
-  if (num_tokens == 0) {
-    return;
-  }
-  int parallelism = m->vProjSize * m->num_q_heads * num_tokens;
-  produce_output_kernel<<<GET_BLOCKS(parallelism),
-                          min(CUDA_NUM_THREADS, parallelism),
-                          0,
-                          stream>>>(
-      static_cast<DT *>(m->outputTmp), output_ptr, parallelism);
-}
-
-template <typename DT>
 void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
                                BatchConfig const *bc,
                                int shard_id,
@@ -1126,8 +1100,7 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   assert(bc->num_inference_tokens() > 0);
 
   half *q = static_cast<half *>(m->queryTmp),
-       *kv = static_cast<half *>(m->kvCache),
-       *o = static_cast<half *>(m->outputTmp);
+       *kv = static_cast<half *>(m->kvCache), *o = (half *)output_ptr;
   assert(q != nullptr && "q is null!");
   assert(kv != nullptr && "kv is null!");
   assert(o != nullptr && "o is null!");
@@ -1223,8 +1196,6 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
                                std::string(cudaGetErrorString(result)));
     }
   });
-
-  produce_output(m, bc, output_ptr, stream);
 }
 
 template <typename DT>
@@ -2093,8 +2064,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     // queryTmp and outputTmp: only for paged attention
     if (infer_mode == INC_DECODING_MODE) {
       query_tmp_size = num_q_heads * qProjSize * max_tokens_per_batch;
-      output_tmp_size = max_tokens_per_batch * num_q_heads * vProjSize;
-      totalSize += (query_tmp_size + output_tmp_size) * size_of_dt;
+      totalSize += (query_tmp_size)*size_of_dt;
     }
     // complex_input & complex_input_bwd
     complex_size = max_tokens_per_batch * qProjSize *
@@ -2204,8 +2174,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     if (infer_mode == INC_DECODING_MODE) {
       queryTmp = gpu_mem_allocator.allocate_instance_untyped(query_tmp_size *
                                                              size_of_dt);
-      outputTmp = gpu_mem_allocator.allocate_instance_untyped(output_tmp_size *
-                                                              size_of_dt);
     }
     // complex input
     complex_input =
@@ -2355,18 +2323,6 @@ template void
         IncMultiHeadSelfAttentionMeta const *m,
         BatchConfig const *bc,
         cudaStream_t stream);
-
-template void Kernels::IncMultiHeadAttention::produce_output<float>(
-    IncMultiHeadSelfAttentionMeta const *m,
-    BatchConfig const *bc,
-    float *output_ptr,
-    cudaStream_t stream);
-
-template void Kernels::IncMultiHeadAttention::produce_output<half>(
-    IncMultiHeadSelfAttentionMeta const *m,
-    BatchConfig const *bc,
-    half *output_ptr,
-    cudaStream_t stream);
 
 template __global__ void
     Kernels::IncMultiHeadAttention::apply_position_bias_qkprd<float>(

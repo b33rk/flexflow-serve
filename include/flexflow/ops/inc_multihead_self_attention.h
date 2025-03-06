@@ -186,7 +186,7 @@ public:
   size_t key_cache_size = 0, value_cache_size = 0;           // numel
   size_t peft_key_cache_size = 0, peft_value_cache_size = 0; // numel
   size_t qkv_max_proj_size, qkv_max_proj_size_bwd = 0;       // numel
-  size_t query_tmp_size = 0, output_tmp_size = 0;            // numel
+  size_t query_tmp_size = 0;                                 // numel
   size_t complex_size = 0, complex_size_bwd = 0;             // numel
   size_t qk_prod_size = 0;                                   // numel
   size_t allocated_peft_buffer_size1 = 0, allocated_peft_buffer_size2 = 0,
