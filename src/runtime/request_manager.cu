@@ -118,7 +118,8 @@ void prepare_inference_params_kernel_h(
 
     // q_indptr: first token offset in batch, plus one token at the end
     // representing the total number of tokens in batch
-    q_indptr_h.push_back(q_indptr_h.back() +
+    q_indptr_h.push_back(
+        q_indptr_h.back() +
         batch_config->requestsInfo[req_idx].num_tokens_in_batch);
 
     // kv_indptr: starting index of KV cache pages for each request in logical

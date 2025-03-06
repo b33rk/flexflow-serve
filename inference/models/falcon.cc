@@ -34,7 +34,8 @@ void FALCON::create_falcon_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  assert(falcon_config.hidden_size % falcon_config.n_head == 0 && "Hidden size not divisible by number of attention heads");
+  assert(falcon_config.hidden_size % falcon_config.n_head == 0 &&
+         "Hidden size not divisible by number of attention heads");
   int head_dim = falcon_config.hidden_size / falcon_config.n_head;
   int tot_num_heads = falcon_config.n_head + 2 * falcon_config.n_head_kv;
 

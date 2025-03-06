@@ -239,6 +239,8 @@ public:
   bool is_eos_token(int token_id);
   bool inf_req_completed(BatchConfig const &old_bc, int i);
   bool inf_req_evicted(BatchConfig const &old_bc, int i);
+  bool enough_space_to_add_request(BatchConfig const &new_bc,
+                                   int num_concurrent_inf_adapters);
   void check_batch(BatchConfig const &old_bc, BatchConfig const &new_bc);
   void add_peft_config_to_request_info(BatchConfig &bc,
                                        int req_idx,

@@ -906,7 +906,8 @@ __global__ void update_kv_cache_kernel_flashinfer_kernel(
     int token_abs_idx = tokenInfos[token_idx].abs_depth_in_request;
     int const req_idx = tokenInfos[token_idx].request_index;
 
-    assert (req_idx != peft_req_idx && "Attempting to use inference KV cache for PEFT tokens");
+    assert(req_idx != peft_req_idx &&
+           "Attempting to use inference KV cache for PEFT tokens");
 
     int req_idx_compact = 0;
     for (int j = 0; j < req_idx; j++) {
@@ -1022,7 +1023,9 @@ void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
   }
   int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
   int parallelism = m->qProjSize * tot_num_heads * num_new_tokens;
-  int peft_req_idx = (bc->num_finetuning_fwd_tokens() > 0) ? bc->finetuning_request_index() : -1;
+  int peft_req_idx = (bc->num_finetuning_fwd_tokens() > 0)
+                         ? bc->finetuning_request_index()
+                         : -1;
   int32_t *kv_indptr = m->handle.incr_attention_metadata->kv_indptr;
   int32_t *kv_indices = m->handle.incr_attention_metadata->kv_indices;
   update_kv_cache_kernel_flashinfer_kernel<<<GET_BLOCKS(parallelism),
@@ -1160,12 +1163,13 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
         batch_size + 1,
         fpath.c_str());
     fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indices";
-    
+
     int num_pages;
-    checkCUDA(cudaMemcpy(&num_pages,
-                          m->handle.incr_attention_metadata->kv_indptr + batch_size,
-                          sizeof(int),
-                          cudaMemcpyDeviceToHost));
+    checkCUDA(
+        cudaMemcpy(&num_pages,
+                   m->handle.incr_attention_metadata->kv_indptr + batch_size,
+                   sizeof(int),
+                   cudaMemcpyDeviceToHost));
     save_tensor(
         static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indices),
         num_pages,

@@ -758,9 +758,10 @@ bool RequestManager::is_eos_token(int token_id) {
 bool RequestManager::inf_req_evicted(BatchConfig const &old_bc, int i) {
   // printf("Entering inf_req_evicted\n");
   Request &request = all_requests[old_bc.requestsInfo[i].request_guid];
-  if (request.status == Request::EVICTED) {
-    printf("Request %zu was evicted...\n", old_bc.requestsInfo[i].request_guid);
-  }
+  // if (request.status == Request::EVICTED) {
+  //   printf("Request %zu cannot continue because it is now in evicted
+  //   state...\n", old_bc.requestsInfo[i].request_guid);
+  // }
   return request.status == Request::EVICTED;
 }
 
@@ -776,6 +777,32 @@ bool RequestManager::inf_req_completed(BatchConfig const &old_bc, int i) {
     request_completed = true;
   }
   return request_completed;
+}
+
+bool RequestManager::enough_space_to_add_request(
+    BatchConfig const &new_bc, int num_concurrent_inf_adapters) {
+  Request new_request = pending_infr_request_queue.front();
+  assert(new_request.req_type == RequestType::REQ_INFERENCE);
+
+  int prefill_tokens_first_batch =
+      std::min(get_max_tokens_per_batch() - new_bc.num_tokens,
+               (int)new_request.tokens.size());
+
+  // if there is not enough space in the page table, don't add it yet
+  PageManager *pm = PageManager::get_page_manager();
+  if (!pm->enough_space_to_add_request(new_request.tokens.size(),
+                                       prefill_tokens_first_batch,
+                                       get_max_tokens_per_batch())) {
+    // printf("not enough space to add request %zu\n", new_request.guid);
+    return false;
+  }
+
+  // if the request has peft adapters and we are at capacity, don't add it yet
+  if (new_request.peft_model_id != PEFTModelID::NO_ID &&
+      num_concurrent_inf_adapters == get_max_concurrent_adapters()) {
+    return false;
+  }
+  return true;
 }
 
 void RequestManager::check_batch(BatchConfig const &old_bc,
@@ -1010,7 +1037,15 @@ void RequestManager::evict_requests_if_needed(BatchConfig const &old_bc,
     return;
   }
 
+  // std::cout << "\nplanned tokens per request: " << std::endl;
+  // for (const auto &pair : planned_tokens_per_request) {
+  //   std::cout << "Request GUID: " << pair.first << ", Planned Tokens: " <<
+  //   pair.second << std::endl;
+  // }
+
   PageManager *pm = PageManager::get_page_manager();
+  // std::cout << "pm state before evicting (if needed): " << *pm << std::endl;
+
   while (!pm->enough_space_to_append_tokens(planned_tokens_per_request)) {
     RequestGuid request_to_evict = pm->evict_request_fifo();
     Request &request = all_requests[request_to_evict];
@@ -1018,8 +1053,20 @@ void RequestManager::evict_requests_if_needed(BatchConfig const &old_bc,
     size_t before = pending_infr_request_queue.size();
     pending_infr_request_queue.push_front(request);
     size_t after = pending_infr_request_queue.size();
-    printf("Evicting request: %zu\n", request.guid);
-    printf("Pending infr request queue size: %zu -> %zu\n", before, after);
+    // printf("\nEvicting request: %zu\n", request.guid);
+    // printf("Pending infr request queue size: %zu -> %zu\n", before, after);
+    // Remove the evicted request from planned_tokens_per_request
+    // before = planned_tokens_per_request.size();
+    planned_tokens_per_request.erase(
+        std::remove_if(
+            planned_tokens_per_request.begin(),
+            planned_tokens_per_request.end(),
+            [request_to_evict](std::pair<RequestGuid, int> const &p) {
+              return p.first == request_to_evict;
+            }),
+        planned_tokens_per_request.end());
+    // after = planned_tokens_per_request.size();
+    // printf("planned_tokens_per_request size: %zu -> %zu\n", before, after);
   }
 }
 
@@ -1129,29 +1176,16 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
   assert(new_bc.num_tokens < get_max_tokens_per_batch() &&
          "Trying to add a new inference request when the batch is full");
 
-  Request new_request = pending_infr_request_queue.front();
-  assert(new_request.req_type == RequestType::REQ_INFERENCE);
+  assert(enough_space_to_add_request(new_bc, num_concurrent_inf_adapters) &&
+         "Attempting to add a request that does not fit");
+
+  Request &pq_request = pending_infr_request_queue.front();
+  Request &new_request = all_requests[pq_request.guid];
+  pending_infr_request_queue.pop_front();
 
   int prefill_tokens_first_batch =
       std::min(get_max_tokens_per_batch() - new_bc.num_tokens,
                (int)new_request.tokens.size());
-
-  // if there is not enough space in the page table, don't add it yet
-  PageManager *pm = PageManager::get_page_manager();
-  if (!pm->enough_space_to_add_request(new_request.tokens.size(),
-                                       prefill_tokens_first_batch,
-                                       get_max_tokens_per_batch())) {
-    printf("not enough space to add request %zu\n", new_request.guid);
-    return;
-  }
-
-  // if the request has peft adapters and we are at capacity, don't add it yet
-  if (new_request.peft_model_id != PEFTModelID::NO_ID &&
-      num_concurrent_inf_adapters == get_max_concurrent_adapters()) {
-    return;
-  }
-
-  pending_infr_request_queue.pop_front();
 
   new_bc.requestsInfo[i].first_token_depth_in_request = 0;
   new_bc.requestsInfo[i].first_token_offset_in_batch = new_bc.num_tokens;
@@ -1199,6 +1233,7 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
     new_request.status = Request::RUNNING;
   }
 
+  PageManager *pm = PageManager::get_page_manager();
   pm->add_request(new_request.guid, (int)new_request.tokens.size());
   pm->append_tokens(new_request.guid,
                     new_bc.requestsInfo[i].num_tokens_in_batch);
@@ -1624,7 +1659,7 @@ BatchConfig RequestManager::prepare_next_bwd_batch(BatchConfig &new_bc) {
 BatchConfig
     RequestManager::prepare_next_fwd_batch(BatchConfig const &old_bc,
                                            InferenceResult const &result) {
-  // printf("Entering prepare_next_fwd_batch\n");
+  // printf("\nEntering prepare_next_fwd_batch\n");
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
 
   if (verbose) {
@@ -1651,8 +1686,8 @@ BatchConfig
     if (!old_bc.request_completed[req_idx] &&
         !inf_req_completed(old_bc, req_idx) &&
         !inf_req_evicted(old_bc, req_idx)) {
-      printf("Adding continuing inference request %zu\n",
-             old_bc.requestsInfo[req_idx].request_guid);
+      // printf("Adding continuing inference request %zu\n",
+      //        old_bc.requestsInfo[req_idx].request_guid);
       add_continuing_inf_req_to_new_batch(
           new_bc, old_bc, num_active_req, num_concurrent_inf_adapters, req_idx);
     }
@@ -1663,15 +1698,17 @@ BatchConfig
   // Step 3: add new inference requests to the next batch if there is space and
   // they are available
   if (!pending_infr_request_queue.empty()) {
-    printf("pending_infr_request_queue.size(): %zu\n",
-           pending_infr_request_queue.size());
-    for (int req_idx = 0; req_idx < inference_batch_size &&
-                          new_bc.num_tokens < get_max_tokens_per_batch() &&
-                          !pending_infr_request_queue.empty();
+    // printf("pending_infr_request_queue.size(): %zu\n",
+    //        pending_infr_request_queue.size());
+    for (int req_idx = 0;
+         req_idx < inference_batch_size &&
+         new_bc.num_tokens < get_max_tokens_per_batch() &&
+         !pending_infr_request_queue.empty() &&
+         enough_space_to_add_request(new_bc, num_concurrent_inf_adapters);
          req_idx++) {
       if (new_bc.request_completed[req_idx]) {
-        printf("Adding new inference request %zu\n",
-               pending_infr_request_queue.front().guid);
+        // printf("Adding new inference request %zu\n",
+        //        pending_infr_request_queue.front().guid);
         add_new_inf_req(
             new_bc, num_active_req, num_concurrent_inf_adapters, req_idx);
       }

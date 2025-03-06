@@ -40,8 +40,12 @@ void STARCODER::create_starcoder_model(
                     "divisible by the tensor parallelism degree");
   }
 
-  assert(startcoder_config.hidden_size % startcoder_config.num_attention_heads == 0 && "Hidden size not divisible by number of attention heads");
-  int head_dim = startcoder_config.hidden_size / startcoder_config.num_attention_heads;
+  assert(startcoder_config.hidden_size %
+                 startcoder_config.num_attention_heads ==
+             0 &&
+         "Hidden size not divisible by number of attention heads");
+  int head_dim =
+      startcoder_config.hidden_size / startcoder_config.num_attention_heads;
   int tot_num_heads = startcoder_config.num_attention_heads + 2 * 1;
 
   std::vector<int> axes = {0};
@@ -260,15 +264,15 @@ void STARCODER::create_starcoder_model(
   }
 
   InferenceManager *im = InferenceManager::get_inference_manager();
-  FileDataLoader *fileloader = new FileDataLoader(
-      "",
-      weight_file_path,
-      startcoder_config.num_attention_heads,
-      1,
-      startcoder_config.hidden_size,
-      head_dim,
-      ff.config.tensor_parallelism_degree,
-      use_full_precision);
+  FileDataLoader *fileloader =
+      new FileDataLoader("",
+                         weight_file_path,
+                         startcoder_config.num_attention_heads,
+                         1,
+                         startcoder_config.hidden_size,
+                         head_dim,
+                         ff.config.tensor_parallelism_degree,
+                         use_full_precision);
   im->register_model_weights_loader(&ff, fileloader);
 }
 

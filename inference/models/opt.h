@@ -40,7 +40,8 @@ public:
           enable_bias = model_config.value("enable_bias", true);
           ffn_dim = model_config["ffn_dim"];
           hidden_size = model_config["hidden_size"];
-          layer_norm_elementwise_affine = model_config.value("layer_norm_elementwise_affine", true);
+          layer_norm_elementwise_affine =
+              model_config.value("layer_norm_elementwise_affine", true);
           max_position_embeddings = model_config["max_position_embeddings"];
           num_attention_heads = model_config["num_attention_heads"];
           num_hidden_layers = model_config["num_hidden_layers"];

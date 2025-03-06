@@ -117,6 +117,7 @@ bool PageManager::enough_space_to_add_request(
     if (req_info.num_used_pages < req_info.page_indices.size()) {
       // this request is an unfinished prompt
       // we cannot add a new request
+      std::cout << *this << std::endl;
       assert(false && "Attempting to add a request with another unfinished "
                       "prefill present in the batch");
     }
@@ -129,15 +130,15 @@ bool PageManager::enough_space_to_add_request(
           round_up_pages(num_expected_prefill_steps - available_slots);
     }
   }
-  printf("new pages needed to add request with %d prompt tokens, %d "
-         "tokens in first batch, %d max tokens per batch: %d\n",
-         num_prompt_tokens,
-         num_prompt_tokens_in_first_batch,
-         max_tokens_per_batch,
-         new_pages_needed);
-  printf("free pages: %ld\n", free_pages.size());
-  printf("total pages: %d\n", tot_num_pages);
-  printf("active requests: %ld\n", active_requests.size());
+  // printf("new pages needed to add request with %d prompt tokens, %d "
+  //        "tokens in first batch, %d max tokens per batch: %d\n",
+  //        num_prompt_tokens,
+  //        num_prompt_tokens_in_first_batch,
+  //        max_tokens_per_batch,
+  //        new_pages_needed);
+  // printf("free pages: %ld\n", free_pages.size());
+  // printf("total pages: %d\n", tot_num_pages);
+  // printf("active requests: %ld\n", active_requests.size());
   return free_pages.size() >= new_pages_needed;
 }
 
@@ -193,10 +194,10 @@ void PageManager::add_request(RequestGuid const &guid, int num_tokens) {
   req_info.num_used_pages = 0;
   req_info.num_tokens_in_last_used_page = 0;
   requests_info[guid] = req_info;
-  printf("adding request %d with %d tokens. It allocated %ld new pages\n",
-         guid,
-         num_tokens,
-         pages.size());
+  // printf("adding request %d with %d tokens. It allocated %ld new pages\n",
+  //        guid,
+  //        num_tokens,
+  //        pages.size());
 }
 
 // remove completed request
@@ -214,11 +215,18 @@ void PageManager::remove_request(RequestGuid const &request_guid) {
       std::find(active_requests.begin(), active_requests.end(), request_guid);
   assert(it != active_requests.end() && "Request does not exist");
   active_requests.erase(it);
+
+  assert(requests_info.find(request_guid) == requests_info.end() &&
+         "Removal of request info did not go through");
+  assert(std::find(active_requests.begin(),
+                   active_requests.end(),
+                   request_guid) == active_requests.end() &&
+         "Removal of active request did not go through");
 }
 
 RequestGuid PageManager::evict_request_fifo() {
   assert(!active_requests.empty() && "No active requests to evict");
-  RequestGuid request_guid = active_requests.front();
+  RequestGuid request_guid = active_requests.back();
   remove_request(request_guid);
   return request_guid;
 }
@@ -230,23 +238,25 @@ void PageManager::append_tokens(RequestGuid const &request_guid,
          "Request does not exist");
   PerRequestPageInfo &req_info = requests_info[request_guid];
 
-  std::vector<std::pair<RequestGuid, int>> new_tokens_per_request;
-  for (auto const &pair : requests_info) {
-    RequestGuid const &guid = pair.first;
-    if (guid == request_guid) {
-      new_tokens_per_request.push_back(std::make_pair(guid, num_tokens));
-    } else {
-      new_tokens_per_request.push_back(std::make_pair(guid, 1));
-    }
-  }
-  assert(enough_space_to_append_tokens(new_tokens_per_request) &&
-         "Not enough space to append tokens");
+  // std::vector<std::pair<RequestGuid, int>> new_tokens_per_request;
+  // for (auto const &pair : requests_info) {
+  //   RequestGuid const &guid = pair.first;
+  //   if (guid == request_guid) {
+  //     new_tokens_per_request.push_back(std::make_pair(guid, num_tokens));
+  //   } else {
+  //     new_tokens_per_request.push_back(std::make_pair(guid, 1));
+  //   }
+  // }
+  // assert(enough_space_to_append_tokens(new_tokens_per_request) &&
+  //        "Not enough space to append tokens");
 
   int available_slots =
       kPagesize - req_info.num_tokens_in_last_used_page +
       ((int)req_info.page_indices.size() - req_info.num_used_pages) * kPagesize;
   if (num_tokens > available_slots) {
     int num_pages_needed = round_up_pages(num_tokens - available_slots);
+    assert(num_pages_needed <= free_pages.size() &&
+           "Not enough free pages to append new tokens");
     for (int i = 0; i < num_pages_needed; i++) {
       int page = *free_pages.begin();
       free_pages.erase(free_pages.find(page));
@@ -266,12 +276,13 @@ void PageManager::append_tokens(RequestGuid const &request_guid,
     req_info.num_tokens_in_last_used_page -= kPagesize;
   }
 
-  printf("appending %d tokens to request %d. It now has %d tokens in the last "
-         "used page and %d used pages\n",
-         num_tokens,
-         request_guid,
-         req_info.num_tokens_in_last_used_page,
-         req_info.num_used_pages);
+  // printf("appending %d tokens to request %d. It now has %d tokens in the last
+  // "
+  //        "used page and %d used pages\n",
+  //        num_tokens,
+  //        request_guid,
+  //        req_info.num_tokens_in_last_used_page,
+  //        req_info.num_used_pages);
 }
 
 std::ostream &operator<<(std::ostream &os, PageManager const &pm) {

@@ -37,17 +37,18 @@ void LLAMA::create_llama_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  assert(llama_config.hidden_size % llama_config.num_attention_heads == 0 && "Hidden size not divisible by number of attention heads");
+  assert(llama_config.hidden_size % llama_config.num_attention_heads == 0 &&
+         "Hidden size not divisible by number of attention heads");
   int head_dim = llama_config.hidden_size / llama_config.num_attention_heads;
-  int tot_num_heads = llama_config.num_attention_heads + 2*llama_config.num_key_value_heads;
-  
+  int tot_num_heads =
+      llama_config.num_attention_heads + 2 * llama_config.num_key_value_heads;
+
   int const token_dims[] = {
       (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE)
           ? BatchConfig::max_verify_tokens_per_batch()
           : BatchConfig::max_tokens_per_batch(),
       1};
   Tensor input = ff.create_tensor<2>(token_dims, DT_INT32);
-  
 
   Initializer *embed_init = new UniformInitializer(std::rand(), 0, 0);
 
@@ -94,7 +95,7 @@ void LLAMA::create_llama_model(FFModel &ff,
 
     Tensor qkv_proj = ff.dense(
         att_norm,
-        head_dim*tot_num_heads,
+        head_dim * tot_num_heads,
         AC_MODE_NONE,
         false,         // seems like llama does not use bias
         DT_NONE,       // what is this
@@ -301,15 +302,15 @@ void LLAMA::create_llama_model(FFModel &ff,
     ff.add_lora_layers(target_modules);
   }
 
-  FileDataLoader *fileloader = new FileDataLoader(
-      "",
-      weight_file_path,
-      llama_config.num_attention_heads,
-      llama_config.num_key_value_heads,
-      llama_config.hidden_size,
-      head_dim,
-      ff.config.tensor_parallelism_degree,
-      use_full_precision);
+  FileDataLoader *fileloader =
+      new FileDataLoader("",
+                         weight_file_path,
+                         llama_config.num_attention_heads,
+                         llama_config.num_key_value_heads,
+                         llama_config.hidden_size,
+                         head_dim,
+                         ff.config.tensor_parallelism_degree,
+                         use_full_precision);
 
   InferenceManager *im = InferenceManager::get_inference_manager();
   im->register_model_weights_loader(&ff, fileloader);

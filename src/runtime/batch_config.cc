@@ -123,7 +123,8 @@ int BatchConfig::num_inference_tokens() const {
 }
 
 int BatchConfig::num_inference_requests() const {
-  return num_active_requests() - num_finetuning_fwd_requests() - num_finetuning_bwd_requests();
+  return num_active_requests() - num_finetuning_fwd_requests() -
+         num_finetuning_bwd_requests();
 }
 
 int BatchConfig::finetuning_request_index() const {

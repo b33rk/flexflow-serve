@@ -345,9 +345,9 @@ void FlexFlow::top_level_task(Task const *task,
   FFModel tree_model(ffconfig, ffconfig.cpu_offload);
   // set amount of kv cache needed
   tree_model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
-    max_sequence_length + max_spec_tree_token_num,
-    max_requests_per_batch,
-    true));
+      max_sequence_length + max_spec_tree_token_num,
+      max_requests_per_batch,
+      true));
   if (model_metadata.llm_model_type == ModelType::LLAMA) {
     LLAMA::create_llama_model(tree_model,
                               model_metadata.llm_model_config_path,
@@ -393,9 +393,9 @@ void FlexFlow::top_level_task(Task const *task,
   for (int ssm_id = 0; ssm_id < num_ssms; ssm_id++) {
     FFModel &beam_model = ssm_models[ssm_id];
     beam_model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
-      max_sequence_length + max_spec_tree_token_num,
-      max_requests_per_batch,
-      true));
+        max_sequence_length + max_spec_tree_token_num,
+        max_requests_per_batch,
+        true));
     if (model_metadata.ssm_model_types[ssm_id] == ModelType::LLAMA) {
       LLAMA::create_llama_model(beam_model,
                                 model_metadata.ssm_model_config_paths[ssm_id],
