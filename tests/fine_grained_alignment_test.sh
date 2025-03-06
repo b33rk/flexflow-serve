@@ -95,11 +95,11 @@ python ./inference/python/incr_decoding.py -config-file ./fine_grained_alignment
 # C++ test
 echo "C++ test"
 eval ./build/inference/incr_decoding/incr_decoding \
-    -ll:gpu $NUM_GPUS -ll:cpu 4 -ll:util 4 \
-    -tensor-parallelism-degree $TP_DEGREE \
-    -pipeline-parallelism-degree $PP_DEGREE \
-    -ll:fsize ${MEMORY_PER_GPU} -ll:zsize ${ZCOPY_MEMORY} \
-    -llm-model $MODEL_NAME \
+    -ll:gpu "${NUM_GPUS}" -ll:cpu 4 -ll:util 4 \
+    -tensor-parallelism-degree "${TP_DEGREE}" \
+    -pipeline-parallelism-degree "${PP_DEGREE}" \
+    -ll:fsize "${MEMORY_PER_GPU}" -ll:zsize "${ZCOPY_MEMORY}" \
+    -llm-model "${MODEL_NAME}" \
     -prompt ./inference/prompt/test.json \
     --max-length $MAX_LENGTH \
     "${full_precision_flag}" "${fusion_flag}" --inference-debugging

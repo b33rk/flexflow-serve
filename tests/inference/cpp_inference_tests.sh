@@ -30,8 +30,7 @@ run_cpp_inference() {
   # Download the model using the model_name key
   llm_model=$(jq -r '.llm_model' "$config_file")
   echo "Downloading model: $llm_model"
-  python3 ./inference/utils/download_hf_model.py "$llm_model" --half-precision-only
-  if [[ $? -ne 0 ]]; then
+  if ! python3 ./inference/utils/download_hf_model.py "$llm_model" --half-precision-only; then
     echo "Error: Failed to download model $llm_model"
     return 1
   fi
@@ -88,8 +87,7 @@ run_cpp_inference() {
       ssm_models=$(jq -r '.ssms[] | .ssm_model' "$config_file")
       for ssm_model in $ssm_models; do
         echo "Downloading ssm_model: $ssm_model"
-        python3 ./inference/utils/download_hf_model.py "$ssm_model" --half-precision-only
-        if [[ $? -ne 0 ]]; then
+        if ! python3 ./inference/utils/download_hf_model.py "$ssm_model" --half-precision-only; then
           echo "Error: Failed to download ssm_model $ssm_model"
           return 1
         fi
