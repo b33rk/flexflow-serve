@@ -68,11 +68,11 @@ __device__ __forceinline__ size_t get_v_entry_offset(int const req_idx,
 // Note that the q&k here are the value after applying with position encoding.
 void update_qkv_in_batch(IncMultiHeadSelfAttentionMeta const *m,
                          BatchConfig const *bc,
-                         cudaStream_t stream);
+                         ffStream_t stream);
 template <typename DT>
 void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
                                        BatchConfig const *bc,
-                                       cudaStream_t stream);
+                                       ffStream_t stream);
 template <typename DT>
 void produce_output(IncMultiHeadSelfAttentionMeta const *m,
                     BatchConfig const *bc,
@@ -126,7 +126,7 @@ void run_batched_matmul(IncMultiHeadSelfAttentionMeta const *meta,
                         int batchCount,
                         cudaDataType computeType,
                         cublasGemmAlgo_t algo,
-                        cudaStream_t stream,
+                        ffStream_t stream,
                         int batch_ratio_a = 1,
                         int batch_ratio_b = 1,
                         int batch_ratio_c = 1,

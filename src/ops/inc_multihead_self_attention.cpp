@@ -1178,9 +1178,7 @@ void update_kv_cache_kernel(IncMultiHeadSelfAttentionMeta const *m,
                             hipStream_t stream) {
   int num_tokens = bc->num_active_tokens();
   int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
-  assert(m->hidden_size % m->num_q_heads == 0);
-  int head_dim = m->hidden_size / m->num_q_heads;
-  assert(head_dim == m->qProjSize);
+  int head_dim = m->qProjSize;
   if (num_tokens > 0) {
     int parallelism = head_dim * tot_num_heads * num_tokens;
     // devQKVProj has shape [qProjSize, tot_num_heads, num_new_tokens]
@@ -1776,7 +1774,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                m->peft_token_infos_size,
                                hipMemcpyHostToDevice,
                                stream));
-      assert(m->hidden_size == m->qProjSize * m->num_q_heads);
+
       assert(m->qProjSize == m->kProjSize);
       /*q&k*/
       int half_proj = m->qProjSize / 2;
@@ -1835,10 +1833,10 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     // matrix B's layout: [num_tokens, qProjsize * num_heads, 3]
     DT const *B = static_cast<DT *>(m->devQKVProjArray);
     // matrix C: gradients w.r.t. input
-    // matrix C's layout: [m->qSize, num_tokens]
-    DT *C = input_grad_ptr +
-            bc->requestsInfo[i].first_token_offset_in_batch * m->qSize;
-    // int m_ = m->qSize;
+    // matrix C's layout: [m->qProjSize * m->num_q_heads, num_tokens]
+    DT *C = input_grad_ptr + bc->requestsInfo[i].first_token_offset_in_batch *
+                                 m->qProjSize * m->num_q_heads;
+    // int m_ = m->qProjSize * m->num_q_heads;
     int n_ = num_tokens;
     int k_ = m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads);
 
@@ -1851,7 +1849,8 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".self_attn.input_gradient_0";
-      save_tensor(C, num_tokens * m->qSize, filename.c_str());
+      save_tensor(
+          C, num_tokens * m->qProjSize * m->num_q_heads, filename.c_str());
     }
   }
 }
@@ -1954,15 +1953,11 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     FFHandler handler,
     IncMultiHeadSelfAttention const *attn,
     MemoryAllocator &gpu_mem_allocator,
-    int num_samples,
     int _num_q_heads,
     int _num_kv_heads)
     : IncMultiHeadSelfAttentionMeta(handler,
                                     INC_DECODING_MODE,
                                     attn,
-                                    attn->qSize,
-                                    attn->kSize,
-                                    attn->vSize,
                                     attn->qProjSize,
                                     attn->kProjSize,
                                     attn->vProjSize,
@@ -1973,11 +1968,11 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                     attn->position_bias,
                                     attn->scaling_factor,
                                     gpu_mem_allocator,
-                                    num_samples,
                                     attn->num_q_heads,
                                     attn->num_kv_heads,
                                     _num_q_heads,
                                     _num_kv_heads,
+                                    attn->num_kv_cache_pages,
                                     attn->quantization_type,
                                     attn->offload) {}
 
@@ -1985,9 +1980,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     FFHandler handler,
     InferenceMode infer_mode,
     Op const *attn,
-    int _qSize,
-    int _kSize,
-    int _vSize,
     int _qProjSize,
     int _kProjSize,
     int _vProjSize,
@@ -1998,11 +1990,11 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     bool _position_bias,
     float _scaling_factor,
     MemoryAllocator &gpu_mem_allocator,
-    int num_samples,
     int _global_num_q_heads,
     int _global_num_kv_heads,
     int _num_q_heads,
     int _num_kv_heads,
+    int _num_kv_cache_pages,
     DataType _quantization_type,
     bool _offload)
     : OpMeta(handler, attn) {
@@ -2010,12 +2002,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   checkCUDA(get_legion_stream(&stream));
   checkCUDNN(miopenSetStream(handler.dnn, stream));
   checkCUDNN(miopenCreateTensorDescriptor(&qk_tensor));
-  qSize = _qSize;
-  kSize = _kSize;
-  vSize = _vSize;
   // assume dimensions match for now
-  assert(qSize == kSize);
-  assert(kSize == vSize);
   qProjSize = _qProjSize;
   kProjSize = _kProjSize;
   assert(qProjSize == kProjSize); // required for attention QK.T matmul
@@ -2029,7 +2016,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   global_num_kv_heads = _global_num_kv_heads;
   num_q_heads = _num_q_heads;
   num_kv_heads = _num_kv_heads;
-  hidden_size = num_q_heads * qProjSize;
 
   rotary_embedding_meta =
       (RotaryEmbeddingMeta *)calloc(1, sizeof(RotaryEmbeddingMeta));
@@ -2041,6 +2027,14 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   *qk_prod_scaling = _qk_prod_scaling;
   position_bias = (bool *)calloc(1, sizeof(bool));
   *position_bias = _position_bias;
+
+  num_kv_cache_pages = _num_kv_cache_pages;
+  assert(num_kv_cache_pages > 0 || enable_peft_finetuning);
+
+  // spec decoding and peft finetuning are mutually exclusive
+  if (enable_peft_finetuning) {
+    assert(infer_mode == INC_DECODING_MODE);
+  }
 
   assert(num_q_heads % num_kv_heads == 0 &&
          "num_q_heads must be divisible by num_kv_heads");
@@ -2197,8 +2191,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                                              size_of_dt);
       qk_prods_softmax = gpu_mem_allocator.allocate_reserved_untyped(
           qk_prod_size * size_of_dt);
-      attn_heads = gpu_mem_allocator.allocate_reserved_untyped(attn_heads_size *
-                                                               size_of_dt);
+      // attn_heads =
+      // gpu_mem_allocator.allocate_reserved_untyped(attn_heads_size *
+      //                                                          size_of_dt);
       complex_input =
           gpu_mem_allocator.allocate_reserved<hipFloatComplex>(complex_size);
     } else {
@@ -2206,8 +2201,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                                              size_of_dt);
       qk_prods_softmax = gpu_mem_allocator.allocate_instance_untyped(
           qk_prod_size * size_of_dt);
-      attn_heads = gpu_mem_allocator.allocate_instance_untyped(attn_heads_size *
-                                                               size_of_dt);
+      // attn_heads =
+      // gpu_mem_allocator.allocate_instance_untyped(attn_heads_size *
+      //                                                          size_of_dt);
       complex_input =
           gpu_mem_allocator.allocate_instance<hipFloatComplex>(complex_size);
     }

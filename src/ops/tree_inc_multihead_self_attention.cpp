@@ -405,8 +405,7 @@ template <typename DT>
 void commit_tokens(TreeIncMultiHeadSelfAttentionMeta const *m,
                    TreeVerifyBatchConfig const *bc,
                    hipStream_t stream) {
-  int head_dim = m->hidden_size / m->num_q_heads;
-  assert(head_dim == m->qProjSize);
+  int head_dim = m->qProjSize;
   // int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
   int num_tokens_to_commit = bc->num_tokens_to_commit;
   if (num_tokens_to_commit > 0) {
@@ -534,8 +533,7 @@ void compute_attention_kernel_fused(TreeIncMultiHeadSelfAttentionMeta const *m,
 
   // update the kv cache
   //  update K-V cache
-  int head_dim = m->hidden_size / m->num_q_heads;
-  assert(head_dim == m->qProjSize);
+  int head_dim = m->qProjSize;
   int num_new_tokens = bc->num_active_tokens();
   int parallelism = head_dim * m->num_kv_heads * num_new_tokens;
   hipLaunchKernelGGL(HIP_KERNEL_NAME(update_tree_branch_kv_cache_fused),
@@ -660,15 +658,11 @@ TreeIncMultiHeadSelfAttentionMeta::TreeIncMultiHeadSelfAttentionMeta(
     FFHandler handler,
     TreeIncMultiHeadSelfAttention const *attn,
     MemoryAllocator &gpu_mem_allocator,
-    int num_samples,
     int _num_q_heads,
     int _num_kv_heads)
     : IncMultiHeadSelfAttentionMeta(handler,
                                     TREE_VERIFY_MODE,
                                     attn,
-                                    attn->qSize,
-                                    attn->kSize,
-                                    attn->vSize,
                                     attn->qProjSize,
                                     attn->kProjSize,
                                     attn->vProjSize,
@@ -679,11 +673,11 @@ TreeIncMultiHeadSelfAttentionMeta::TreeIncMultiHeadSelfAttentionMeta(
                                     attn->position_bias,
                                     attn->scaling_factor,
                                     gpu_mem_allocator,
-                                    num_samples,
                                     attn->num_q_heads,
                                     attn->num_kv_heads,
                                     _num_q_heads,
                                     _num_kv_heads,
+                                    attn->num_kv_cache_pages,
                                     attn->quantization_type,
                                     attn->offload),
       num_active_infr_tokens(0) {
