@@ -48,6 +48,7 @@ void parse_input_args(char **argv,
                       int &max_requests_per_batch,
                       int &max_tokens_per_batch,
                       int &max_sequence_length,
+                      int &num_kv_cache_slots,
                       int &max_length) {
   for (int i = 1; i < argc; i++) {
     // llm model type
@@ -107,6 +108,11 @@ void parse_input_args(char **argv,
       max_sequence_length = std::stoi(argv[++i]);
       continue;
     }
+    // num kv cache slots (i.e. number of tokens across all requests)
+    if (!strcmp(argv[i], "--num-kv-cache-slots")) {
+      num_kv_cache_slots = std::stoi(argv[++i]);
+      continue;
+    }
     // max length before stopping if we haven't reached the EOS
     if (!strcmp(argv[i], "--max-length")) {
       max_length = std::stoi(argv[++i]);
@@ -144,6 +150,7 @@ void FlexFlow::top_level_task(Task const *task,
   int max_tokens_per_batch = 64;
   int max_sequence_length = 256;
   int max_length = 128;
+  int num_kv_cache_slots = -1;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -160,7 +167,12 @@ void FlexFlow::top_level_task(Task const *task,
                    max_requests_per_batch,
                    max_tokens_per_batch,
                    max_sequence_length,
+                   num_kv_cache_slots,
                    max_length);
+
+  if (num_kv_cache_slots == -1) {
+    num_kv_cache_slots = max_sequence_length * max_requests_per_batch;
+  }
 
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
