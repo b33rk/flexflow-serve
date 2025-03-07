@@ -280,6 +280,7 @@ public:
                                   int tensor_parallelism_degree,
                                   int max_requests_per_batch,
                                   int max_tokens_per_batch,
+                                  int num_kv_cache_slots,
                                   double arrival_rate,
                                   int num_warmup_requests);
   BatchConfig prepare_next_bwd_batch(BatchConfig &new_bc);

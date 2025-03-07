@@ -1807,6 +1807,7 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
                                                 int tensor_parallelism_degree,
                                                 int max_requests_per_batch,
                                                 int max_tokens_per_batch,
+                                                int num_kv_cache_slots,
                                                 double arrival_rate,
                                                 int num_warmup_requests) {
   // create output file based on the parameters
@@ -1824,7 +1825,8 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
       llm_model_name_safe + "_tensor_parallelism_" +
       std::to_string(tensor_parallelism_degree) + "_max_requests_per_batch_" +
       std::to_string(max_requests_per_batch) + "_max_tokens_per_batch_" +
-      std::to_string(max_tokens_per_batch) + "_arrival_rate_" +
+      std::to_string(max_tokens_per_batch) + "_num_kv_cache_slots_" +
+      std::to_string(num_kv_cache_slots) + "_arrival_rate_" +
       std::to_string(arrival_rate) + "_num_warmup_requests_" +
       std::to_string(num_warmup_requests) + ".csv";
   std::cout << "Opening the output file: " << step_info_output_filepath
@@ -1834,7 +1836,8 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
     // print CSV header
     StepInfoOutputFile
         << "llm_model_name,dataset_name,tensor_parallelism_degree,max_requests_"
-           "per_batch,max_tokens_per_batch,arrival_rate,num_warmup_requests,"
+           "per_batch,max_tokens_per_batch,num_kv_cache_slots,arrival_rate,num_"
+           "warmup_requests,"
         << "run_idx,step_idx,is_warmup_step,timestamp,num_inference_requests,"
            "num_prefilling_tokens,num_decoding_tokens,num_finetuning_fwd_"
            "tokens,num_finetuning_bwd_tokens,num_bwd_layers\n";
@@ -1843,9 +1846,9 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
       StepInfoOutputFile << llm_model_name << "," << dataset_name << ","
                          << tensor_parallelism_degree << ","
                          << max_requests_per_batch << ","
-                         << max_tokens_per_batch << "," << arrival_rate << ","
-                         << num_warmup_requests << ","
-                         << step_profile_info.run_idx << ","
+                         << max_tokens_per_batch << "," << num_kv_cache_slots
+                         << "," << arrival_rate << "," << num_warmup_requests
+                         << "," << step_profile_info.run_idx << ","
                          << step_profile_info.step_idx << ","
                          << step_profile_info.is_warmup_step << ","
                          << step_profile_info.timestamp << ","
@@ -1867,7 +1870,8 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
       "_" + llm_model_name_safe + "_tensor_parallelism_" +
       std::to_string(tensor_parallelism_degree) + "_max_requests_per_batch_" +
       std::to_string(max_requests_per_batch) + "_max_tokens_per_batch_" +
-      std::to_string(max_tokens_per_batch) + "_arrival_rate_" +
+      std::to_string(max_tokens_per_batch) + "_num_kv_cache_slots_" +
+      std::to_string(num_kv_cache_slots) + "_arrival_rate_" +
       std::to_string(arrival_rate) + "_num_warmup_requests_" +
       std::to_string(num_warmup_requests) + ".csv";
   std::cout << "Opening the output file: " << request_info_output_filepath
@@ -1877,15 +1881,17 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
     // print CSV header
     RequestInfoOutputFile
         << "llm_model_name,dataset_name,tensor_parallelism_degree,max_requests_"
-           "per_batch,max_tokens_per_batch,arrival_rate,num_warmup_requests,"
+           "per_batch,max_tokens_per_batch,num_kv_cache_slots,arrival_rate,num_"
+           "warmup_requests,"
         << "request_guid,is_warmup_request,timestamp,decoding_step_idx\n";
     for (int i = 0; i < inf_req_profile_infos.size(); i++) {
       InferenceReqProfileInfo &inf_profile_info = inf_req_profile_infos[i];
       RequestInfoOutputFile
           << llm_model_name << "," << dataset_name << ","
           << tensor_parallelism_degree << "," << max_requests_per_batch << ","
-          << max_tokens_per_batch << "," << arrival_rate << ","
-          << num_warmup_requests << "," << inf_profile_info.request_guid << ","
+          << max_tokens_per_batch << "," << num_kv_cache_slots << ","
+          << arrival_rate << "," << num_warmup_requests << ","
+          << inf_profile_info.request_guid << ","
           << all_requests[inf_profile_info.request_guid].warmup << ","
           << inf_profile_info.timestamp << ","
           << inf_profile_info.decoding_step_idx << "\n";

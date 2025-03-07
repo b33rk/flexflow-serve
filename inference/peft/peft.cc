@@ -52,6 +52,7 @@ void parse_input_args(char **argv,
                       int &max_requests_per_batch,
                       int &max_tokens_per_batch,
                       int &max_sequence_length,
+                      int &num_kv_cache_slots,
                       int &max_training_steps,
                       int &num_layers_per_finetuning_step,
                       bool &run_warmup) {
@@ -136,6 +137,12 @@ void parse_input_args(char **argv,
       max_sequence_length = std::stoi(argv[++i]);
       continue;
     }
+    // num kv cache slots for inference (i.e. number of tokens across all
+    // requests)
+    if (!strcmp(argv[i], "--num-kv-cache-slots")) {
+      num_kv_cache_slots = std::stoi(argv[++i]);
+      continue;
+    }
     if (!strcmp(argv[i], "--max-training-steps")) {
       max_training_steps = std::stoi(argv[++i]);
       continue;
@@ -204,6 +211,7 @@ void FlexFlow::top_level_task(Task const *task,
   bool enable_peft_finetuning = true;
   int num_layers_per_finetuning_step = -1;
   bool run_warmup = false;
+  int num_kv_cache_slots = -1;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -222,9 +230,15 @@ void FlexFlow::top_level_task(Task const *task,
                    max_requests_per_batch,
                    max_tokens_per_batch,
                    max_sequence_length,
+                   num_kv_cache_slots,
                    max_training_steps,
                    num_layers_per_finetuning_step,
                    run_warmup);
+
+  if (num_kv_cache_slots == -1) {
+    num_kv_cache_slots = max_sequence_length * max_requests_per_batch;
+  }
+
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
          ffconfig.numNodes * ffconfig.workersPerNode);
@@ -485,8 +499,9 @@ void FlexFlow::top_level_task(Task const *task,
                                    model.config.tensor_parallelism_degree,
                                    max_requests_per_batch,
                                    max_tokens_per_batch,
-                                   0.0, // arrival rate
-                                   10); // num_warmup_requests
+                                   num_kv_cache_slots,
+                                   0.0,                  // arrival rate
+                                   run_warmup ? 10 : 0); // num_warmup_requests
   }
 
   if (peft_model_id != nullptr) {
