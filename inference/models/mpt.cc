@@ -37,14 +37,14 @@ void MPT::create_mpt_model(FFModel &ff,
 
   //------------------------------ build the model --------------------------
   Tensor input;
-  {
-    int const token_dims[] = {
-        (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE)
-            ? BatchConfig::max_verify_tokens_per_batch()
-            : BatchConfig::max_tokens_per_batch(),
-        1};
-    input = ff.create_tensor<2>(token_dims, DT_INT32);
+  int batch_tensor_num_tokens = BatchConfig::max_tokens_per_batch();
+  if (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE) {
+    batch_tensor_num_tokens = BatchConfig::max_verify_tokens_per_batch();
+  } else if (ff.config.enable_peft_finetuning) {
+    batch_tensor_num_tokens = BatchConfig::max_sequence_length();
   }
+  int const token_dims[] = {batch_tensor_num_tokens, 1};
+  input = ff.create_tensor<2>(token_dims, DT_INT32);
 
   Initializer *embed_init = new UniformInitializer(std::rand(), 0, 0);
   std::vector<int> axes = {0};

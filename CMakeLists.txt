@@ -457,6 +457,7 @@ target_link_libraries(flexflow tokenizers_cpp)
 add_subdirectory(inference/spec_infer)
 add_subdirectory(inference/incr_decoding)
 add_subdirectory(inference/peft)
+add_subdirectory(inference/flexllm)
 
 
 # installation

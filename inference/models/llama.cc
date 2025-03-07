@@ -43,11 +43,13 @@ void LLAMA::create_llama_model(FFModel &ff,
   int tot_num_heads =
       llama_config.num_attention_heads + 2 * llama_config.num_key_value_heads;
 
-  int const token_dims[] = {
-      (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE)
-          ? BatchConfig::max_verify_tokens_per_batch()
-          : BatchConfig::max_tokens_per_batch(),
-      1};
+  int batch_tensor_num_tokens = BatchConfig::max_tokens_per_batch();
+  if (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE) {
+    batch_tensor_num_tokens = BatchConfig::max_verify_tokens_per_batch();
+  } else if (ff.config.enable_peft_finetuning) {
+    batch_tensor_num_tokens = BatchConfig::max_sequence_length();
+  }
+  int const token_dims[] = {batch_tensor_num_tokens, 1};
   Tensor input = ff.create_tensor<2>(token_dims, DT_INT32);
 
   Initializer *embed_init = new UniformInitializer(std::rand(), 0, 0);
@@ -298,7 +300,7 @@ void LLAMA::create_llama_model(FFModel &ff,
   if (ff.config.enable_peft) {
     // todo: add attention projections
     std::vector<std::string> target_modules = {
-        "gate_proj", "up_proj", "down_proj"};
+        "qkv_proj", "o_proj", "gate_proj", "down_proj", "up_proj"};
     ff.add_lora_layers(target_modules);
   }
 

@@ -87,7 +87,7 @@ void parse_input_args(char **argv,
       continue;
     }
     // dataset for finetuning
-    if (!strcmp(argv[i], "-finetuning-dataset")) {
+    if (!strcmp(argv[i], "")) {
       paths.dataset_file_path = std::string(argv[++i]);
       continue;
     }

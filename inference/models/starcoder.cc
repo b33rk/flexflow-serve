@@ -53,16 +53,16 @@ void STARCODER::create_starcoder_model(
   Tensor input;
   Tensor position_input;
   ff.set_position_offset(0);
-  {
-    // assert(startcoder_config.max_num_tokens <= BatchConfig::MAX_NUM_TOKENS);
-    int const token_dims[] = {
-        (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE)
-            ? BatchConfig::max_verify_tokens_per_batch()
-            : BatchConfig::max_tokens_per_batch(),
-        1};
-    input = ff.create_tensor<2>(token_dims, DT_INT32);
-    position_input = ff.create_tensor<2>(token_dims, DT_INT32);
+
+  int batch_tensor_num_tokens = BatchConfig::max_tokens_per_batch();
+  if (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE) {
+    batch_tensor_num_tokens = BatchConfig::max_verify_tokens_per_batch();
+  } else if (ff.config.enable_peft_finetuning) {
+    batch_tensor_num_tokens = BatchConfig::max_sequence_length();
   }
+  int const token_dims[] = {batch_tensor_num_tokens, 1};
+  input = ff.create_tensor<2>(token_dims, DT_INT32);
+  position_input = ff.create_tensor<2>(token_dims, DT_INT32);
 
   Initializer *embed_init = new UniformInitializer(std::rand(), 0, 0);
 
