@@ -42,11 +42,11 @@ def get_configs():
         ff_init_configs = {
             # required parameters
             "num_gpus": 4,
-            "memory_per_gpu": 20000,
-            "zero_copy_memory_per_node": 40000,
+            "memory_per_gpu": 14000,
+            "zero_copy_memory_per_node": 30000,
             # optional parameters
             "num_cpus": 4,
-            "legion_utility_processors": 8,
+            "legion_utility_processors": 4,
             "data_parallelism_degree": 1,
             "tensor_parallelism_degree": 4,
             "pipeline_parallelism_degree": 1,
@@ -55,33 +55,27 @@ def get_configs():
             "use_4bit_quantization": False,
             "use_8bit_quantization": False,
             "enable_peft": True,
-            "peft_activation_reserve_space_size": 1024 * 2,  # 1GB
+            "peft_activation_reserve_space_size": 1024,  # 1GB
             "profiling": False,
-            "benchmarking": False,
-            # "inference_debugging": True,
-            "inference_debugging": False,
-            "fusion": True,
+            "inference_debugging": True,
+            "fusion": False,
         }
         model_configs = {
             # required parameters
             # "base_model": "JackFram/llama-160m",
-            "base_model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
             # "inference_peft_model_id": "goliaro/llama-160m-lora",
             # "finetuning_peft_model_id": "goliaro/llama-160m-lora",
-            "inference_peft_model_id": "DreamGallery/task-14-meta-llama-Meta-Llama-3.1-8B-Instruct",
-            "finetuning_peft_model_id": "DreamGallery/task-14-meta-llama-Meta-Llama-3.1-8B-Instruct",
-            # "base_model": "meta-llama/Meta-Llama-3-8B",
-            # "inference_peft_model_id": "goliaro/llama-3-8b-lora",
-            # "finetuning_peft_model_id": "goliaro/llama-3-8b-lora-dolly",
+            "base_model": "meta-llama/Meta-Llama-3-8B",
+            "inference_peft_model_id": "goliaro/llama-3-8b-lora",
+            "finetuning_peft_model_id": "goliaro/llama-3-8b-lora-dolly",
             # optional parameters
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,
             "full_precision": False,
-            "prompt": "test",
+            "prompt": "",
             "finetuning_dataset": os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
-                # "../prompt/peft_dataset.json",
-                "finetuning_data.json",
+                "../prompt/peft_dataset.json",
             ),
             "output_file": "",
         }
@@ -116,10 +110,11 @@ def main():
     enable_peft_finetuning = len(configs.finetuning_dataset) > 0
     llm.compile(
         generation_config,
-        max_requests_per_batch=16,
+        max_requests_per_batch=1 if not enable_peft_finetuning else 2,
         max_seq_length=256,
-        max_tokens_per_batch=1024,
-        enable_peft_finetuning=True,
+        max_tokens_per_batch=128,
+        max_concurrent_adapters=1 if not enable_peft_finetuning else 2,
+        enable_peft_finetuning=enable_peft_finetuning,
     )
 
     llm.start_server()
@@ -127,22 +122,22 @@ def main():
     # Add inference and/or finetuning lora
     lora_inference_config = None
     lora_finetuning_config = None
-    # if len(configs.prompt) > 0:
-    #     lora_inference_config = ff.LoraLinearConfig(
-    #         llm.cache_path,
-    #         configs.inference_peft_model_id,
-    #         base_model_name_or_path=configs.base_model,
-    #     )
-    #     llm.register_peft_adapter(lora_inference_config)
+    if len(configs.prompt) > 0:
+        lora_inference_config = ff.LoraLinearConfig(
+            llm.cache_path,
+            configs.inference_peft_model_id,
+            base_model_name_or_path=configs.base_model,
+        )
+        llm.register_peft_adapter(lora_inference_config)
     if len(configs.finetuning_dataset) > 0:
         lora_finetuning_config = ff.LoraLinearConfig(
             llm.cache_path,
-            configs.finetuning_peft_model_id,
+            configs.inference_peft_model_id,
             trainable=True,
             init_lora_weights=True,
+            target_modules=["down_proj"],
             base_model_name_or_path=configs.base_model,
             optimizer_type=ff.OptimizerType.OPTIMIZER_TYPE_SGD,
-            target_modules=["down_proj"],
             optimizer_kwargs={
                 "learning_rate": 0.001,
                 "momentum": 0.0,
@@ -155,31 +150,28 @@ def main():
     requests = []
     # Serving
     if len(configs.prompt) > 0:
-        # prompts = [s for s in json.load(open(configs.prompt))]
-        prompts = ["hello"]
+        prompts = [s for s in json.load(open(configs.prompt))]
         inference_requests = [
             ff.Request(
                 ff.RequestType.REQ_INFERENCE,
                 prompt=prompt,
                 max_new_tokens=128,
-                # peft_model_id=llm.get_ff_peft_id(lora_inference_config),
+                peft_model_id=llm.get_ff_peft_id(lora_inference_config),
             )
             for prompt in prompts
         ]
         requests += inference_requests
     # Finetuning
-    # if len(configs.finetuning_dataset) > 0:
-    #     finetuning_request = ff.Request(
-    #         ff.RequestType.REQ_FINETUNING,
-    #         peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
-    #         dataset_filepath=configs.finetuning_dataset,
-    #         max_training_steps=2,
-    #     )
-    #     requests.append(finetuning_request)
+    if len(configs.finetuning_dataset) > 0:
+        finetuning_request = ff.Request(
+            ff.RequestType.REQ_FINETUNING,
+            peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
+            dataset_filepath=configs.finetuning_dataset,
+            max_training_steps=2,
+        )
+        requests.append(finetuning_request)
 
     results = llm.generate(requests)
-
-    print("Result: " + results[0].output_text.decode("utf-8"))
 
     llm.stop_server()
 
