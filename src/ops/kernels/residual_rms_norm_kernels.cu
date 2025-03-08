@@ -429,7 +429,7 @@ void peft_bwd_kernel(ResidualRMSNormMeta const *m,
       bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id));
   int i = bc->finetuning_request_index();
 
-  int M = bc->requestsInfo[i].num_tokens_in_batch;
+  int M = bc->num_finetuning_bwd_tokens();
   int N = m->in_dim;
 
   T const *residual_output_rms_input_ptr =

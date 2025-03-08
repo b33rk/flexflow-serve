@@ -1604,7 +1604,7 @@ void flexflow_model_generate(flexflow_model_t handle_,
       }
       std::string const dataset_fp(dataset_filepaths[i]);
       fine_tuning_req.peft_finetuning_info.dataset_filepath = dataset_fp;
-      fine_tuning_req.peft_finetuning_info.max_training_steps =
+      fine_tuning_req.peft_finetuning_info.max_training_epochs =
           training_steps[i];
       requests.push_back(fine_tuning_req);
       DEBUG_PRINT("[Model] finetune[%d] %p %s %i %i %i %i",

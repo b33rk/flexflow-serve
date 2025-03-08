@@ -104,9 +104,10 @@ bool RequestManager::load_request_token_ids(Request &request) {
         request.max_length = request.tokens.size() + request.max_new_tokens;
       }
       if (request.max_length >= get_max_sequence_length()) {
-        std::cout << "Error: max_length (" << request.max_length
+        std::cerr << "Error: max_length (" << request.max_length
                   << ") exceeds max sequence length of "
                   << get_max_sequence_length() << ".\n";
+        assert(false);
         return false;
       }
     } else {
@@ -118,9 +119,10 @@ bool RequestManager::load_request_token_ids(Request &request) {
       // check that max sequence length is not exceeded
       // 1. prompt itself should be less than max sequence length
       if (tokens.size() >= get_max_sequence_length()) {
-        std::cout << "Error: prompt (" << tokens.size()
+        std::cerr << "Error: prompt (" << tokens.size()
                   << " tokens) exceeds max sequence length of "
                   << get_max_sequence_length() << ".\n";
+        assert(false);
         return false;
       }
       // 2. max_length should not exceed the max_sequence_length
@@ -128,6 +130,7 @@ bool RequestManager::load_request_token_ids(Request &request) {
         std::cout << "Error: max_length (" << request.max_length
                   << ") exceeds max sequence length of "
                   << get_max_sequence_length() << ".\n";
+        assert(false);
         return false;
       }
       // for (int i = 0; i < tokens.size(); i++) {
@@ -170,13 +173,13 @@ bool RequestManager::load_request_token_ids(Request &request) {
           << "Creating dataset with benchmarking tokens. Size of dataset: "
           << request.dataset.size() << std::endl;
     } else {
-      using json = nlohmann::json;
       std::ifstream file_handle(request.peft_finetuning_info.dataset_filepath);
       assert(file_handle.good() && "Dataset file does not exist.");
-      json dataset_json = json::parse(file_handle,
-                                      /*parser_callback_t */ nullptr,
-                                      /*allow_exceptions */ true,
-                                      /*ignore_comments */ true);
+      nlohmann::ordered_json dataset_json =
+          nlohmann::ordered_json::parse(file_handle,
+                                        /*parser_callback_t */ nullptr,
+                                        /*allow_exceptions */ true,
+                                        /*ignore_comments */ true);
 
       for (auto &prompt : dataset_json) {
         std::string text = prompt.get<std::string>();
@@ -187,10 +190,11 @@ bool RequestManager::load_request_token_ids(Request &request) {
           input_tokens.insert(input_tokens.begin(), bos_token_id);
         }
         if (input_tokens.size() > get_max_sequence_length()) {
-          std::cout << "Error: sample in training dataset is "
+          std::cerr << "Error: sample in training dataset is "
                     << input_tokens.size()
                     << " tokens long, exceeding the maximum sequence length of "
                     << get_max_sequence_length() << " tokens.\n";
+          assert(false);
           return false;
         } else {
           request.dataset.push_back(input_tokens);
@@ -207,7 +211,8 @@ bool RequestManager::load_request_token_ids(Request &request) {
     assert(request.peft_finetuning_info.gradient_accumulation_steps > 0 &&
            "Invalid gradient accumulation steps");
     assert(request.peft_finetuning_info.gradient_accumulation_steps <=
-               request.peft_finetuning_info.max_training_steps &&
+               request.peft_finetuning_info.max_training_epochs *
+                   request.dataset.size() &&
            "Gradient accumulation steps should be less than or equal to max "
            "training steps");
     assert(get_num_ssms() == 0 && "Small speculative models not supported for "
@@ -245,8 +250,8 @@ std::ostream &operator<<(std::ostream &os, Request const &req) {
     os << "    status: " << req.peft_finetuning_info.status << "\n";
     os << "    dataset_filepath: " << req.peft_finetuning_info.dataset_filepath
        << "\n";
-    os << "    max_training_steps: "
-       << req.peft_finetuning_info.max_training_steps << "\n";
+    os << "    max_training_epochs: "
+       << req.peft_finetuning_info.max_training_epochs << "\n";
     os << "    completed_training_steps: "
        << req.peft_finetuning_info.completed_training_steps << "\n";
     os << "    dataset_entry_processed_tokens: "
@@ -934,8 +939,8 @@ void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
     record_decoding_req_profiling_info(old_fwd_bc, req_idx);
 
     if (inf_req_completed(old_fwd_bc, req_idx)) {
-      printf("Request %zu completed...\n",
-             old_fwd_bc.requestsInfo[req_idx].request_guid);
+      // printf("Request %zu completed...\n",
+      //        old_fwd_bc.requestsInfo[req_idx].request_guid);
       handle_completed_inf_req(old_fwd_bc, req_idx);
     }
   }
@@ -967,16 +972,19 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
   gr.output_text = output_text;
   request.status = Request::COMPLETED;
   trigger_request_completion_future(request.guid);
-  log_req_mgr.print("[Done] guid(%zu) initial_len(%d) final_length(%zu)",
-                    old_bc.requestsInfo[i].request_guid,
-                    request.initial_len,
-                    gr.input_tokens.size() + gr.output_tokens.size());
   // log_req_mgr.print("Final output: %s", output.c_str());
   num_processed_requests++;
   ProfileInfo profile_info = profiling_requests[request.guid];
   profile_info.finish_time = Realm::Clock::current_time_in_microseconds();
   total_request_run_time += profile_info.finish_time - profile_info.start_time;
   profiling_requests[request.guid] = profile_info;
+  log_req_mgr.print("Inference req %zu completed. Length: %lu (prompt=%lu, "
+                    "response=%lu). Evicted %i times.",
+                    old_bc.requestsInfo[i].request_guid,
+                    gr.input_tokens.size() + gr.output_tokens.size(),
+                    gr.input_tokens.size(),
+                    gr.output_tokens.size(),
+                    profile_info.num_evictions);
 }
 
 void RequestManager::evict_requests_if_needed(BatchConfig const &old_bc,
@@ -1057,6 +1065,7 @@ void RequestManager::evict_requests_if_needed(BatchConfig const &old_bc,
     // printf("Pending infr request queue size: %zu -> %zu\n", before, after);
     // Remove the evicted request from planned_tokens_per_request
     // before = planned_tokens_per_request.size();
+    profiling_requests[request_to_evict].num_evictions += 1;
     planned_tokens_per_request.erase(
         std::remove_if(
             planned_tokens_per_request.begin(),
@@ -1345,7 +1354,8 @@ void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
 
   // set_optimizer_tasks(
   //     new_bc.requestsInfo[inference_batch_size].optimizer_tasks,
-  //     request.peft_finetuning_info.max_training_steps,
+  //     request.peft_finetuning_info.max_training_epochs *
+  //     request.dataset.size(),
   //     request.peft_finetuning_info.completed_training_steps,
   //     request.peft_finetuning_info.gradient_accumulation_steps);
 
@@ -1433,7 +1443,8 @@ void RequestManager::add_finetuning_req_bwd_batch(BatchConfig &new_bc) {
          new_bc.requestsInfo[inference_batch_size].peft_bwd_first_layer);
 
   set_optimizer_tasks(new_bc.requestsInfo[inference_batch_size].optimizer_tasks,
-                      request.peft_finetuning_info.max_training_steps,
+                      request.peft_finetuning_info.max_training_epochs *
+                          request.dataset.size(),
                       request.peft_finetuning_info.completed_training_steps,
                       request.peft_finetuning_info.gradient_accumulation_steps);
 
@@ -1485,7 +1496,8 @@ void RequestManager::process_finetuning_req_fwd_progress(
   assert(request.req_type == RequestType::REQ_FINETUNING &&
          "Found misplaced inference request");
   assert(request.peft_finetuning_info.completed_training_steps <=
-         request.peft_finetuning_info.max_training_steps);
+         request.peft_finetuning_info.max_training_epochs *
+             request.dataset.size());
   assert(request.guid ==
              old_bc.requestsInfo[inference_batch_size].request_guid &&
          "Request GUID mismatch");
@@ -1560,8 +1572,18 @@ void RequestManager::process_finetuning_req_bwd_progress(
     request.peft_finetuning_info.status = Request::FORWARD_PHASE;
     request.peft_finetuning_info.last_processed_bwd_layer = INT_MAX;
   }
-  if (request.peft_finetuning_info.completed_training_steps ==
-          request.peft_finetuning_info.max_training_steps ||
+  // print status update after each epoch
+  int tot_steps =
+      request.peft_finetuning_info.max_training_epochs * request.dataset.size();
+  if (request.peft_finetuning_info.completed_training_steps %
+          ((int)request.dataset.size()) ==
+      0) {
+    log_req_mgr.print("Completed finetuning epoch %i/%i",
+                      request.peft_finetuning_info.completed_training_steps /
+                          ((int)request.dataset.size()),
+                      request.peft_finetuning_info.max_training_epochs);
+  }
+  if (request.peft_finetuning_info.completed_training_steps == tot_steps ||
       inference_finished) {
     handle_completed_finetuning_req(old_bc);
   }

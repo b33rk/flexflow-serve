@@ -165,7 +165,7 @@ def main():
             ff.RequestType.REQ_FINETUNING,
             peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
             dataset_filepath=configs.finetuning_dataset,
-            max_training_steps=2,
+            max_training_epochs=2,
         )
         requests.append(finetuning_request)
 

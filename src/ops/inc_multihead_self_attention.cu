@@ -1388,7 +1388,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   assert(num_tokens == num_total_tokens);
   assert(num_total_tokens == bc->requestsInfo[i].max_length);
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
-  assert(bc->requestsInfo[i].first_token_offset_in_batch == 0);
+  // assert(bc->requestsInfo[i].first_token_offset_in_batch == 0);
 
   if (m->inference_debugging) {
     // save result to file for checking

@@ -53,7 +53,7 @@ void parse_input_args(char **argv,
                       int &max_tokens_per_batch,
                       int &max_sequence_length,
                       int &num_kv_cache_slots,
-                      int &max_training_steps,
+                      int &max_training_epochs,
                       int &num_layers_per_finetuning_step,
                       bool &run_warmup) {
   for (int i = 1; i < argc; i++) {
@@ -144,7 +144,7 @@ void parse_input_args(char **argv,
       continue;
     }
     if (!strcmp(argv[i], "--max-training-steps")) {
-      max_training_steps = std::stoi(argv[++i]);
+      max_training_epochs = std::stoi(argv[++i]);
       continue;
     }
     if (!strcmp(argv[i], "--num-layers-per-finetuning-step")) {
@@ -183,7 +183,8 @@ std::vector<Request> make_warmup_requests(int num_inf_request,
   finetuning_req.warmup = true;
   finetuning_req.peft_model_id =
       (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
-  finetuning_req.peft_finetuning_info.max_training_steps = num_finetuning_steps;
+  finetuning_req.peft_finetuning_info.max_training_epochs =
+      num_finetuning_steps;
   warmup_requests.push_back(finetuning_req);
   return warmup_requests;
 }
@@ -229,7 +230,12 @@ std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
 std::vector<Request> load_requests(std::string prompt_file_path,
                                    int max_length_if_needed) {
   std::ifstream file_handle(prompt_file_path);
-  assert(!file_handle.good() && "Error opening prompt file!");
+  if (!file_handle.good()) {
+    std::cerr << "Error opening prompt file " << prompt_file_path << std::endl;
+    std::cerr << "Current working directory: "
+              << std::filesystem::current_path() << std::endl;
+    assert(!file_handle.good() && "Error opening prompt file!");
+  }
   nlohmann::ordered_json prompt_json;
   try {
     prompt_json = nlohmann::ordered_json::parse(file_handle,
@@ -248,9 +254,9 @@ std::vector<Request> load_requests(std::string prompt_file_path,
     std::cerr << "Error: JSON file is null!" << std::endl;
     assert(false);
   } else if (prompt_json.is_array()) {
-    return load_prompt_list(prompt_file_path, max_length_if_needed);
+    return load_prompt_list(prompt_json, max_length_if_needed);
   } else if (prompt_json.is_object()) {
-    return load_trace(prompt_file_path);
+    return load_trace(prompt_json);
   } else {
     std::cerr << "JSON is neither an array nor an object!" << std::endl;
     assert(false);
@@ -277,7 +283,7 @@ void FlexFlow::top_level_task(Task const *task,
   int max_requests_per_batch = 1;
   int max_tokens_per_batch = 128;
   int max_sequence_length = 256;
-  int max_training_steps = 2;
+  int max_training_epochs = 2;
   bool enable_peft_finetuning = true;
   int num_layers_per_finetuning_step = -1;
   bool run_warmup = false;
@@ -301,7 +307,7 @@ void FlexFlow::top_level_task(Task const *task,
                    max_tokens_per_batch,
                    max_sequence_length,
                    num_kv_cache_slots,
-                   max_training_steps,
+                   max_training_epochs,
                    num_layers_per_finetuning_step,
                    run_warmup);
   enable_peft_finetuning = file_paths.dataset_file_path.empty() ? false : true;
@@ -386,8 +392,7 @@ void FlexFlow::top_level_task(Task const *task,
   // load PEFT config
   int rank = 16;
   LoraOptimizerConfig *optim_config = new LoraSGDOptimizerConfig(0.001f);
-  std::vector<std::string> target_modules = {
-      "qkv_proj", "o_proj", "gate_proj", "down_proj", "up_proj"};
+  std::vector<std::string> target_modules = {"down_proj"};
   LoraLinearConfig peft_config_finetuning(file_paths.cache_folder_path,
                                           peft_model_name,
                                           true /*trainable*/,
@@ -480,20 +485,17 @@ void FlexFlow::top_level_task(Task const *task,
         load_requests(file_paths.prompt_file_path, 128);
 
     // Add fine-tuning request
-
     assert(!file_paths.dataset_file_path.empty() &&
            "Dataset file path is required for fine-tuning.");
     printf("Finetuning request with dataset %s\n",
            file_paths.dataset_file_path.c_str());
     Request fine_tuning_req;
     fine_tuning_req.req_type = RequestType::REQ_FINETUNING;
-    fine_tuning_req.peft_model_id = (peft_model_id_finetuning != nullptr)
-                                        ? *peft_model_id_finetuning
-                                        : PEFTModelID::NO_ID;
+    fine_tuning_req.peft_model_id = *peft_model_id_finetuning;
     fine_tuning_req.peft_finetuning_info.dataset_filepath =
         file_paths.dataset_file_path;
-    fine_tuning_req.peft_finetuning_info.max_training_steps =
-        max_training_steps;
+    fine_tuning_req.peft_finetuning_info.max_training_epochs =
+        max_training_epochs;
     requests.push_back(fine_tuning_req);
 
     std::cout << "----------inference started--------------" << std::endl;

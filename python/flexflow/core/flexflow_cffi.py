@@ -2136,7 +2136,7 @@ class Request:
     add_special_tokens: bool = True
     peft_model_id: Optional[PEFTModelID] = None
     dataset_filepath: Optional[str] = None
-    max_training_steps: int = 1
+    max_training_epochs: int = 1
 
 
 # -----------------------------------------------------------------------
@@ -4492,7 +4492,7 @@ class FFModel(object):
         dataset_filepaths = [
             get_c_name(request.dataset_filepath) for request in requests_list
         ]
-        training_steps = [request.max_training_steps for request in requests_list]
+        training_steps = [request.max_training_epochs for request in requests_list]
         num_finetuning_losses = ffi.new("int *")
         # c_finetuning_losses = ffi.new("float**")
         # TODO: set this value automatically

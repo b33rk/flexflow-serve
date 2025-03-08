@@ -448,8 +448,8 @@ void peft_bwd_kernel(RMSNormMeta const *m,
       bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id));
   int i = bc->finetuning_request_index();
 
-  int M = bc->requestsInfo[i].num_tokens_in_batch;
-  int N = m->num_elements;
+  int M = bc->num_finetuning_bwd_tokens();
+  int N = m->in_dim;
   ComputeInternalGradientsCUDAKernel<T>
       <<<M, std::min(N, CUDA_NUM_THREADS), 0, stream>>>(
           N,

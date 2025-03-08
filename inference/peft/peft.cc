@@ -53,7 +53,7 @@ void parse_input_args(char **argv,
                       int &max_tokens_per_batch,
                       int &max_sequence_length,
                       int &num_kv_cache_slots,
-                      int &max_training_steps,
+                      int &max_training_epochs,
                       int &num_layers_per_finetuning_step,
                       bool &run_warmup) {
   for (int i = 1; i < argc; i++) {
@@ -87,7 +87,7 @@ void parse_input_args(char **argv,
       continue;
     }
     // dataset for finetuning
-    if (!strcmp(argv[i], "")) {
+    if (!strcmp(argv[i], "-finetuning-dataset")) {
       paths.dataset_file_path = std::string(argv[++i]);
       continue;
     }
@@ -144,7 +144,7 @@ void parse_input_args(char **argv,
       continue;
     }
     if (!strcmp(argv[i], "--max-training-steps")) {
-      max_training_steps = std::stoi(argv[++i]);
+      max_training_epochs = std::stoi(argv[++i]);
       continue;
     }
     if (!strcmp(argv[i], "--num-layers-per-finetuning-step")) {
@@ -183,7 +183,8 @@ std::vector<Request> make_warmup_requests(int num_inf_request,
   finetuning_req.warmup = true;
   finetuning_req.peft_model_id =
       (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
-  finetuning_req.peft_finetuning_info.max_training_steps = num_finetuning_steps;
+  finetuning_req.peft_finetuning_info.max_training_epochs =
+      num_finetuning_steps;
   warmup_requests.push_back(finetuning_req);
   return warmup_requests;
 }
@@ -207,7 +208,7 @@ void FlexFlow::top_level_task(Task const *task,
   int max_requests_per_batch = 1;
   int max_tokens_per_batch = 128;
   int max_sequence_length = 256;
-  int max_training_steps = 2;
+  int max_training_epochs = 2;
   bool enable_peft_finetuning = true;
   int num_layers_per_finetuning_step = -1;
   bool run_warmup = false;
@@ -231,7 +232,7 @@ void FlexFlow::top_level_task(Task const *task,
                    max_tokens_per_batch,
                    max_sequence_length,
                    num_kv_cache_slots,
-                   max_training_steps,
+                   max_training_epochs,
                    num_layers_per_finetuning_step,
                    run_warmup);
 
@@ -357,6 +358,8 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_enable_peft_finetuning(enable_peft_finetuning);
 
   FFModel model(ffconfig, ffconfig.cpu_offload);
+  model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
+      max_sequence_length, max_requests_per_batch, false));
   if (model_type == ModelType::LLAMA) {
     LLAMA::create_llama_model(model,
                               config_filepath,
@@ -393,9 +396,6 @@ void FlexFlow::top_level_task(Task const *task,
   } else {
     assert(false && "unknow model type");
   }
-
-  model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
-      max_sequence_length, max_requests_per_batch, false));
 
   rm->set_num_transformer_layers(model.current_transformer_layer_id + 1);
   if (num_layers_per_finetuning_step > 0) {
@@ -464,8 +464,8 @@ void FlexFlow::top_level_task(Task const *task,
                                           : PEFTModelID::NO_ID;
       fine_tuning_req.peft_finetuning_info.dataset_filepath =
           file_paths.dataset_file_path;
-      fine_tuning_req.peft_finetuning_info.max_training_steps =
-          max_training_steps;
+      fine_tuning_req.peft_finetuning_info.max_training_epochs =
+          max_training_epochs;
       requests.push_back(fine_tuning_req);
     }
     std::vector<GenerationResult> result = model.generate(requests);

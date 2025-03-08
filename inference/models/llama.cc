@@ -36,7 +36,8 @@ void LLAMA::create_llama_model(FFModel &ff,
     assert(false && "The number of attention heads is smaller, or it is not "
                     "divisible by the tensor parallelism degree");
   }
-
+  std::cout << "Creating llama model with ff.config.enable_peft_finetuning="
+            << ff.config.enable_peft_finetuning << std::endl;
   assert(llama_config.hidden_size % llama_config.num_attention_heads == 0 &&
          "Hidden size not divisible by number of attention heads");
   int head_dim = llama_config.hidden_size / llama_config.num_attention_heads;
