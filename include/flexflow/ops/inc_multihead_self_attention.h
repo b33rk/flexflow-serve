@@ -18,6 +18,14 @@
 #include <hip/hip_complex.h>
 #endif
 
+#ifndef USE_FLASH_ATTENTION
+#define USE_FLASH_ATTENTION 0
+#endif
+
+#if USE_FLASH_ATTENTION
+#include "flexflow/flash_api.h"
+#endif
+
 namespace FlexFlow {
 
 class IncMultiHeadSelfAttentionMeta;
@@ -225,6 +233,11 @@ public:
   void *query_activation_buffer;
   BatchConfig::PerTokenInfo *peft_token_infos = nullptr;
   BatchConfig::PerTokenInfo *peft_token_infos_device;
+
+#if USE_FLASH_ATTENTION
+  // Flash Attention specific fields
+  void *softmax_lse; // cache softmax_lse for bwd
+#endif
 };
 
 }; // namespace FlexFlow

@@ -27,6 +27,16 @@
 #include "flashinfer_ops.cuh"
 #include "flexflow/page_manager.h"
 
+// flash-attn
+#include "flash_api.h"
+#include <ATen/cuda/CUDAGeneratorImpl.h>
+#include <c10/cuda/CUDAGuard.h>
+#include <c10/cuda/CUDAStream.h>
+#include <cuda_runtime.h>
+#include <torch/extension.h>
+#include <torch/torch.h>
+#include <type_traits>
+
 namespace FlexFlow {
 
 // declare Legion names
@@ -642,6 +652,357 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   }
 }
 
+// TODO(gabriele): only support fp16 and bf16. Do we need to support 32?
+// helper: Convert flexflow datatype to torch datatype
+// only used in flash_compute_attention_kernel_peft
+template <typename DT>
+torch::Dtype getTorchDtype() {
+  if constexpr (std::is_same_v<DT, at::Half>) {
+    return torch::kFloat16;
+  } else if constexpr (std::is_same_v<DT, at::BFloat16>) {
+    return torch::kBFloat16;
+  } else {
+    static_assert(!std::is_same_v<DT, DT>,
+                  "Unsupported datatype. Only fp16 (torch::Half) and bf16 "
+                  "(torch::BFloat16) are supported.");
+  }
+}
+
+// TODO(yingyi): fwd implementation of flash-attn
+template <typename DT>
+void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
+                                         BatchConfig const *bc,
+                                         DT *attn_heads,
+                                         int shard_id,
+                                         cudaStream_t peft_stream) {
+  // Step 0: param check as in compute_attention_kernel_peft
+  // todo(gabriele): step0 is the same as everything before step1 in
+  // compute_attention_kernel_peft (Any updates to should be reflected.)
+  if (bc->num_finetuning_fwd_tokens() <= 0) {
+    return;
+  }
+
+  checkCUDA(cublasSetStream(m->handle.peft_blas, peft_stream));
+  checkCUDNN(cudnnSetStream(m->handle.peft_dnn, peft_stream));
+  cudaDataType_t cublas_data_type = ff_to_cuda_datatype(m->output_type[0]);
+  cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
+  assert(data_type_size(m->output_type[0]) == sizeof(DT));
+  cudaDataType_t compute_type = cublas_data_type;
+
+  assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
+  // int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
+
+  assert(bc->num_finetuning_fwd_tokens() > 0);
+  int req_idx = bc->finetuning_request_index();
+  assert(!bc->request_completed[req_idx]);
+  assert(bc->requestsInfo[req_idx].finetuning_request &&
+         !bc->requestsInfo[req_idx].finetuning_backward_phase);
+
+  int num_new_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
+  int total_tokens = bc->requestsInfo[req_idx].first_token_depth_in_request +
+                     bc->requestsInfo[req_idx].num_tokens_in_batch;
+  assert(num_new_tokens > 0 && total_tokens > 0);
+
+  // Copy query to m->query_activation_buffer for BWD
+  // int max_peft_tokens = bc->requestsInfo[i].max_length;
+  int max_peft_tokens = BatchConfig::max_sequence_length();
+  size_t activation_size_needed =
+      sizeof(DT) * max_peft_tokens * m->num_q_heads * m->qProjSize;
+  if (activation_size_needed != m->allocated_peft_buffer_size1) {
+    std::cout << "activation_size_needed: " << activation_size_needed
+              << std::endl;
+    std::cout << "m->allocated_peft_buffer_size1: "
+              << m->allocated_peft_buffer_size1 << std::endl;
+    std::cout << "max_peft_tokens: " << max_peft_tokens << std::endl;
+    std::cout << "m->num_q_heads: " << m->num_q_heads << std::endl;
+    std::cout << "m->qProjSize: " << m->qProjSize << std::endl;
+    std::cout << "BatchConfig::max_sequence_length()"
+              << BatchConfig::max_sequence_length() << std::endl;
+    std::cout << "sizeof(DT)" << sizeof(DT) << std::endl;
+  }
+  assert(activation_size_needed == m->allocated_peft_buffer_size1);
+  int parallelism = m->qProjSize * m->num_q_heads * num_new_tokens;
+  int tokens_previous_steps = total_tokens - num_new_tokens;
+  int tokens_previous_requests =
+      bc->requestsInfo[req_idx].first_token_offset_in_batch;
+  store_query_cache<<<GET_BLOCKS(parallelism),
+                      min(CUDA_NUM_THREADS, parallelism),
+                      0,
+                      peft_stream>>>(
+      static_cast<DT *>(m->devQKVProjArray),
+      static_cast<DT *>(m->query_activation_buffer),
+      num_new_tokens,
+      tokens_previous_requests,
+      tokens_previous_steps,
+      m->qProjSize,
+      m->num_q_heads,
+      m->num_kv_heads);
+  // end Step 0
+
+  // ================================================
+  // Step 1: configure params for fwd
+  // todo(gabriele): check if alibi_slopes_ generation is correct
+  // Initialize alibi_slopes tensor for ALiBi position bias
+  // The slopes should be consistent with `apply_position_bias_qkprd kernel`
+  std::optional<at::Tensor> alibi_slopes;
+  if (*m->position_bias) {
+    alibi_slopes = at::empty({m->num_q_heads}, at::kFloat);
+    float *slopes_ptr = alibi_slopes.value().data_ptr<float>();
+    for (int head_idx = 0; head_idx < m->num_q_heads; head_idx++) {
+      int global_head_idx = head_idx + (m->num_q_heads * shard_id);
+      float base = (float)(global_head_idx + 1) * 8.0f / m->global_num_q_heads;
+      slopes_ptr[head_idx] = 1.0f / std::pow(2.0f, base);
+    }
+  }
+  alibi_slopes_ = alibi_slopes;
+
+  // todo(gabriele): check if all these params are correct
+  size_t batch_size = 1;
+  size_t seqlen_q = num_new_tokens;
+  size_t seqlen_k = total_tokens;
+  size_t num_heads = m->num_q_heads;
+  size_t num_heads_k = m->num_kv_heads;
+  size_t head_size = m->qProjSize;
+  float softmax_scale =
+      (*m->qk_prod_scaling) ? (1.0f / sqrt(m->kProjSize)) : 1.0f;
+  float dropout = 0.0f;
+  int window_size_left = -1;
+  int window_size_right = -1;
+  float softcap = 0.0f;
+  bool is_causal = true, return_softmax = false;
+  std::optional<at::Tensor> out_ = std::nullopt;
+  std::optional<at::Generator> gen_ = std::nullopt;
+
+  // TODO(gabriele): Is the shape of the output tensor correct in bc?
+  // TODO(gabriele): i didn't figure out the stride format of the output tensor
+  // todo: is the data layout of the output tensor correct?
+  // Get raw pointer of the output tensor [vProjSize, num_q_heads,
+  // num_new_tokens] which is (head_size, num_q_heads, num_new_tokens)
+  DT *out_ptr = static_cast<DT *>(attn_heads) +
+                (bc->requestsInfo[req_idx].first_token_offset_in_batch) *
+                    m->num_q_heads * m->vProjSize;
+  // Store the output tensor to the result attn heads
+  // out size: (batch_size, seqlen_q, num_heads, head_size)
+  torch::Dtype dtype = getTorchDtype<DT>();
+  at::Tensor out_tensor =
+      torch::from_blob(out_ptr,
+                       {head_size, num_heads, seqlen_q},
+                       torch::dtype(getTorchDtype<DT>()).device(torch::kCUDA));
+  auto permuted_out_tensor = out_tensor.permute({2, 1, 0});
+  auto batched_out_tensor = permuted_out_tensor.unsqueeze(0);
+  out_ = batched_out_tensor;
+
+  // todo(gabriele): check if all the raw data pointers are correctly offsetted
+  // TODO(gabriele): i didn't figure out the stride format of the qkv tensor
+  // todo: is the data layout of the qkv tensor correct?
+  // construct q, k, v tensor from m->devQKVProjArray
+  // layout: [qProjSize, num_q_heads, tot_peft_tokens]
+  auto q_ptr = static_cast<DT *>(m->query_activation_buffer) +
+               tokens_previous_steps * m->qProjSize * m->num_q_heads;
+  // layout: [kProjSize, num_kv_heads, total_tokens]
+  auto k_ptr = static_cast<DT *>(m->keyCachePeft);
+  // layout: [vProjSize, num_kv_heads, total_tokens]
+  auto v_ptr = static_cast<DT *>(m->valueCachePeft);
+
+  // re-organize q, k, v tensor to match the layout of flash-attn
+  // q size: (batch_size, seqlen_q, num_heads, head_size)
+  // k size: (batch_size, seqlen_k, num_heads_k, head_size)
+  // v size: (batch_size, seqlen_k, num_heads_k, head_size)
+  at::Tensor q = torch::from_blob(q_ptr,
+                                  {head_size, num_heads, seqlen_q},
+                                  torch::dtype(dtype).device(torch::kCUDA));
+  at::Tensor k = torch::from_blob(k_ptr,
+                                  {head_size, num_heads_k, seqlen_k},
+                                  torch::dtype(dtype).device(torch::kCUDA));
+  at::Tensor v = torch::from_blob(v_ptr,
+                                  {head_size, num_heads_k, seqlen_k},
+                                  torch::dtype(dtype).device(torch::kCUDA));
+  auto permuted_q = q.permute({2, 1, 0});
+  auto permuted_k = k.permute({2, 1, 0});
+  auto permuted_v = v.permute({2, 1, 0});
+  q = permuted_q.unsqueeze(0);
+  k = permuted_k.unsqueeze(0);
+  v = permuted_v.unsqueeze(0);
+
+  auto const sizes = q.sizes();
+  if (m->inference_debugging) {
+    std::cout << "Q Tensor Shape: " << q.sizes() << std::endl;
+    std::cout << "K Tensor Shape: " << k.sizes() << std::endl;
+    std::cout << "V Tensor Shape: " << v.sizes() << std::endl;
+  }
+
+  if (window_size_left >= seqlen_k) {
+    window_size_left = -1;
+  }
+  if (window_size_right >= seqlen_k) {
+    window_size_right = -1;
+  }
+
+  // causal=true is the same as causal=false in this case
+  if (seqlen_q == 1 && !alibi_slopes_.has_value()) {
+    is_causal = false;
+  }
+  if (is_causal) {
+    window_size_right = 0;
+  }
+
+  // Faster to transpose q from (b, 1, (nheads_kv ngroups), d) to (b, ngroups,
+  // nheads_kv, d) in this case H/t Daniel Haziza
+  int const seqlenq_ngroups_swapped =
+      seqlen_q == 1 && num_heads > num_heads_k && window_size_left < 0 &&
+      window_size_right < 0 && p_dropout == 0.f && head_size % 8 == 0 &&
+      !alibi_slopes_.has_value();
+  int const ngroups = num_heads / num_heads_k;
+  if (seqlenq_ngroups_swapped) {
+    q = q.reshape({batch_size, num_heads_k, ngroups, head_size})
+            .transpose(1, 2);
+    seqlen_q = ngroups;
+    num_heads = num_heads_k;
+  }
+
+  CHECK_SHAPE(q, batch_size, seqlen_q, num_heads, head_size);
+  CHECK_SHAPE(k, batch_size, seqlen_k, num_heads_k, head_size);
+  CHECK_SHAPE(v, batch_size, seqlen_k, num_heads_k, head_size);
+
+  at::Tensor out;
+  if (out_.has_value()) {
+    out = out_.value();
+    CHECK_DEVICE(out);
+    TORCH_CHECK(out.stride(-1) == 1,
+                "Output tensor must have contiguous last dimension");
+    CHECK_SHAPE(out, batch_size, sizes[1], sizes[2], head_size);
+    if (seqlenq_ngroups_swapped) {
+      out = out.reshape({batch_size, num_heads_k, ngroups, head_size})
+                .transpose(1, 2);
+    }
+  } else {
+    out = torch::empty_like(q);
+  }
+
+  auto round_multiple = [](int x, int m) { return (x + m - 1) / m * m; };
+  int const head_size_rounded =
+      head_size <= 192 ? round_multiple(head_size, 32) : 256;
+  int const seqlen_q_rounded = round_multiple(seqlen_q, 128);
+  int const seqlen_k_rounded = round_multiple(seqlen_k, 128);
+
+  auto opts = q.options();
+  // todo(gabriele): review the allocation and caching of softmax_lse
+  // auto softmax_lse = torch::empty({batch_size, num_heads, seqlen_q},
+  // opts.dtype(at::kFloat));
+  float *softmax_lse_ptr = static_cast<float *>(m->softmax_lse);
+  auto softmax_lse = torch::from_blob(softmax_lse_ptr,
+                                      {batch_size, num_heads, seqlen_q},
+                                      opts.dtype(at::kFloat));
+  softmax_lse = softmax_lse.clone();
+
+  at::Tensor p;
+  // Only return softmax if there's dropout to reduce compilation time
+  if (return_softmax) {
+    TORCH_CHECK(p_dropout > 0.0f,
+                "return_softmax is only supported when p_dropout > 0.0");
+    p = torch::empty(
+        {batch_size, num_heads, seqlen_q_rounded, seqlen_k_rounded}, opts);
+  } else {
+    p = torch::empty({0}, opts);
+  }
+
+  Flash_fwd_params fwd_params;
+  set_params_fprop(fwd_params,
+                   batch_size,
+                   seqlen_q,
+                   seqlen_k,
+                   seqlen_q_rounded,
+                   seqlen_k_rounded,
+                   num_heads,
+                   num_heads_k,
+                   head_size,
+                   head_size_rounded,
+                   q,
+                   k,
+                   v,
+                   out,
+                   /*cu_seqlens_q_d=*/nullptr,
+                   /*cu_seqlens_k_d=*/nullptr,
+                   /*seqused_k=*/nullptr,
+                   return_softmax ? p.data_ptr() : nullptr,
+                   softmax_lse.data_ptr(),
+                   p_dropout,
+                   softmax_scale,
+                   window_size_left,
+                   window_size_right,
+                   softcap);
+
+  // Keep references to these tensors to extend their lifetime
+  at::Tensor softmax_lse_accum, out_accum;
+  std::tie(softmax_lse_accum, out_accum) =
+      set_params_splitkv(fwd_params,
+                         batch_size,
+                         num_heads,
+                         head_size,
+                         seqlen_k,
+                         seqlen_q,
+                         head_size_rounded,
+                         p_dropout,
+                         /*num_splits*/ 0,
+                         get_num_sm(get_current_device()),
+                         opts);
+
+  // number of times random will be generated per thread, to offset philox
+  // counter in thc random state We use a custom RNG that increases the offset
+  // by batch_size * nheads * 32.
+  int64_t fwd_counter_offset = fwd_params.b * fwd_params.h * 32;
+  auto options =
+      torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+  auto rng_state = torch::empty({2}, options.dtype(torch::kInt64));
+  // Forward kernel will populate memory with the seed and offset.
+  fwd_params.rng_state = reinterpret_cast<uint64_t *>(rng_state.data_ptr());
+
+  if (p_dropout > 0.0) {
+    auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
+        gen_, at::cuda::detail::getDefaultCUDAGenerator());
+    // See Note [Acquire lock when using random generators]
+    std::lock_guard<std::mutex> lock(gen->mutex_);
+    fwd_params.philox_args = gen->philox_cuda_state(fwd_counter_offset);
+  }
+
+  set_params_alibi(fwd_params, alibi_slopes_, batch_size, num_heads);
+
+  if (seqlen_k > 0) {
+    run_mha_fwd(fwd_params, peft_stream);
+  } else {
+    // If seqlen_k == 0, then we have an empty tensor. We need to set the output
+    // to 0.
+    out.zero_();
+    softmax_lse.fill_(std::numeric_limits<float>::infinity());
+  }
+
+  if (seqlenq_ngroups_swapped) {
+    out = out.transpose(1, 2).reshape(
+        {batch_size, 1, num_heads_k * seqlen_q, head_size});
+    q = q.transpose(1, 2).reshape(
+        {batch_size, 1, num_heads_k * seqlen_q, head_size});
+    softmax_lse = softmax_lse.reshape({batch_size, num_heads_k * seqlen_q, 1});
+  }
+
+  // Step 2: Handle the output tensor and cache softmax_lse for BWD
+  // print out the shapes and values of the tensors
+  if (m->inference_debugging) {
+    std::cout << "Output Tensor Shape: " << out.sizes() << std::endl;
+    std::cout << "out: " << out << std::endl;
+
+    std::cout << "Softmax LSE Shape: " << softmax_lse.sizes() << std::endl;
+    std::cout << "softmax_lse: " << softmax_lse << std::endl;
+  }
+  // todo(gabriele): alternatively we pass an output tensor to the fwd kernel and copy
+  // data back to meta buffer
+
+  // todo(gabriele): alternatively we reorganzie the data layout of output in meta buffer
+
+  // todo(gabriele): handle output tensor here for these two options
+
+  // todo(gabriele): handle softmax_lse if copying
+}
+
 // only used by MPT model. https://arxiv.org/abs/2108.12409
 template <typename DT>
 __global__ void apply_position_bias_qkprd(DT *input_ptr,
@@ -1228,6 +1589,9 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                 fpath.c_str());
   }
 
+  // TODO(yingyi): replace with flash-attn
+  // The rotary-embedding is handled by the flash-attn library
+  // So, we should skip this for peft
   // peft stream can only start after
   if (bc->num_finetuning_fwd_tokens() > 0) {
     // wait until copy to devQKVProjArray and application of scaling & rotary
@@ -1237,8 +1601,19 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
     cudaEventRecord(prep_done, inf_stream);
     cudaStreamWaitEvent(peft_stream, prep_done, 0);
 
+    // TODO(yingyi): replace with flash-attn
+    // TODO(yingyi): how should we handle kv cache for peft?
+    // flash-attn requires keeping (q,k,v,o,lse,scaling factor) to re-compute
+    // all intermediate results (S,P) in bwd should we put the q,k,v in kv
+    // cache?
+#if USE_FLASH_ATTENTION
+    update_kv_cache_kernel_peft<DT>(m, bc, peft_stream);
+    flash_compute_attention_kernel_peft<DT>(
+        m, bc, output_ptr, shard_id, peft_stream);
+#else
     update_kv_cache_kernel_peft<DT>(m, bc, peft_stream);
     compute_attention_kernel_peft<DT>(m, bc, output_ptr, shard_id, peft_stream);
+#endif
 
     assert(m->peft_token_infos != nullptr);
     assert(m->peft_token_infos_size == sizeof(BatchConfig::PerTokenInfo) *
@@ -2158,6 +2533,12 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     } else {
       keyCachePeft = valueCachePeft = nullptr;
     }
+
+    // todo(gabriele): review the allocation and caching of softmax_lse
+    // flash-attn softmax_lse
+    softmax_lse = gpu_mem_allocator.allocate_instance_untyped(
+        max_tokens_per_batch * BatchConfig::max_sequence_length() *
+        num_q_heads * size_of_dt);
 
     // intermediate buffers
     // devQKVProjArray: used to store QKV proj so that we can modify them (apply
