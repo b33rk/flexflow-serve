@@ -29,6 +29,15 @@ if (INFERENCE_TESTS)
   message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
 endif()
 
+# Peft with Flash Attention
+option(USE_FLASH_ATTENTION "Enable Flash Attention implementation" OFF)
+if(USE_FLASH_ATTENTION)
+  # find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+  find_package(Torch REQUIRED PATHS ${LIBTORCH_PATH} NO_DEFAULT_PATH)
+  message(STATUS "TORCH_INCLUDE_DIRS: ${TORCH_INCLUDE_DIRS}")
+  message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
+endif()
+
 # Set a default build type if none was specified
 set(default_build_type "Debug")
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -201,6 +210,12 @@ include(optional)
 # list(APPEND FLEXFLOW_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/deps/flashinfer/include)
 # list(APPEND FLEXFLOW_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/deps/flashinfer/src)
 include(flashinfer)
+
+# flash attention
+if (USE_FLASH_ATTENTION)
+  list(APPEND FLEXFLOW_INCLUDE_DIRS ${Python3_INCLUDE_DIRS})
+  list(APPEND FLEXFLOW_INCLUDE_DIRS ${TORCH_INCLUDE_DIRS})
+endif()
 
 if (FF_GPU_BACKEND STREQUAL "cuda")
   list(APPEND FF_CC_FLAGS
@@ -384,6 +399,19 @@ target_include_directories(flexflow PUBLIC ${FLEXFLOW_INCLUDE_DIRS})
 # Legion and Realm runtimes. The library's name is saved into the LEGION_LIBRARY variable. Hence, we only need
 # to link FlexFlow to ${LEGION_LIBRARY}
 target_link_libraries(flexflow ${LEGION_LIBRARY} ${FLEXFLOW_EXT_LIBRARIES} nlohmann_json::nlohmann_json mpark_variant optional)
+
+if (USE_FLASH_ATTENTION)
+  file(GLOB FLASH_ATTN_LIB "${Python_SITELIB}/flash_attn*.so")
+  get_filename_component(FLASH_ATTN_SO ${FLASH_ATTN_LIB} NAME)
+  message("FLASH_ATTN_SO: ${FLASH_ATTN_SO}")
+  target_link_directories(flexflow PRIVATE ${Python_SITELIB}) # add the site-packages directory to the link directories
+  target_link_libraries(${TEST_EXECUTABLE} PRIVATE
+        ${TORCH_LIBRARIES}  # Link against PyTorch
+        ${Python3_LIBRARIES}  # Link against Python
+        "-Wl,-Bsymbolic -Wl,-Bsymbolic-functions"
+        ":${FLASH_ATTN_SO}"
+    )
+endif()
 
 #library api version, bump from time to time
 set(SOVERSION 1)
