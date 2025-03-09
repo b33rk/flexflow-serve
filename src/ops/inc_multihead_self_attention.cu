@@ -668,6 +668,27 @@ torch::Dtype getTorchDtype() {
   }
 }
 
+template <typename DT>
+torch::Tensor createTorchTensorFromCuda(void* cudaData, const std::vector<int64_t>& dims) {
+    // Compute column-major strides:
+    // For a tensor with dims = {d0, d1, ..., d_{n-1}},
+    // the strides are: {1, d0, d0*d1, ...}
+    std::vector<int64_t> strides(dims.size());
+    if (!dims.empty()) {
+        strides[0] = 1;
+        for (size_t i = 1; i < dims.size(); ++i) {
+            strides[i] = strides[i - 1] * dims[i - 1];
+        }
+    }
+
+    // Set tensor options to use CUDA and the appropriate data type.
+    auto options = torch::TensorOptions().dtype(getTorchDtype<DT>()).device(torch::kCUDA);
+
+    // Create the tensor. 
+    // The deleter is a no-op since we assume external management of the memory.
+    return torch::from_blob(cudaData, dims, strides, /*deleter=*/[](void*){}, options);
+}
+
 // TODO(yingyi): fwd implementation of flash-attn
 template <typename DT>
 void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
@@ -690,7 +711,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   cudaDataType_t compute_type = cublas_data_type;
 
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
-  // int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
+  int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
 
   assert(bc->num_finetuning_fwd_tokens() > 0);
   int req_idx = bc->finetuning_request_index();
@@ -756,7 +777,6 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   }
   alibi_slopes_ = alibi_slopes;
 
-  // todo(gabriele): check if all these params are correct
   size_t batch_size = 1;
   size_t seqlen_q = num_new_tokens;
   size_t seqlen_k = total_tokens;
@@ -770,59 +790,34 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   int window_size_right = -1;
   float softcap = 0.0f;
   bool is_causal = true, return_softmax = false;
-  std::optional<at::Tensor> out_ = std::nullopt;
   std::optional<at::Generator> gen_ = std::nullopt;
 
-  // TODO(gabriele): Is the shape of the output tensor correct in bc?
-  // TODO(gabriele): i didn't figure out the stride format of the output tensor
-  // todo: is the data layout of the output tensor correct?
   // Get raw pointer of the output tensor [vProjSize, num_q_heads,
   // num_new_tokens] which is (head_size, num_q_heads, num_new_tokens)
-  DT *out_ptr = static_cast<DT *>(attn_heads) +
-                (bc->requestsInfo[req_idx].first_token_offset_in_batch) *
-                    m->num_q_heads * m->vProjSize;
+  DT *out_ptr = static_cast<DT *>(attn_heads) + tokens_previous_requests * m->num_q_heads * m->vProjSize;
   // Store the output tensor to the result attn heads
   // out size: (batch_size, seqlen_q, num_heads, head_size)
-  torch::Dtype dtype = getTorchDtype<DT>();
-  at::Tensor out_tensor =
-      torch::from_blob(out_ptr,
-                       {head_size, num_heads, seqlen_q},
-                       torch::dtype(getTorchDtype<DT>()).device(torch::kCUDA));
-  auto permuted_out_tensor = out_tensor.permute({2, 1, 0});
-  auto batched_out_tensor = permuted_out_tensor.unsqueeze(0);
-  out_ = batched_out_tensor;
+  at::Tensor out = createTorchTensorFromCuda(out_ptr, {head_size, num_heads, seqlen_q});
+  out = out.permute({2, 1, 0}).unsqueeze(0);
 
-  // todo(gabriele): check if all the raw data pointers are correctly offsetted
-  // TODO(gabriele): i didn't figure out the stride format of the qkv tensor
-  // todo: is the data layout of the qkv tensor correct?
-  // construct q, k, v tensor from m->devQKVProjArray
-  // layout: [qProjSize, num_q_heads, tot_peft_tokens]
+  // cuda layout: [qProjSize, num_q_heads, num_new_tokens]
   auto q_ptr = static_cast<DT *>(m->query_activation_buffer) +
                tokens_previous_steps * m->qProjSize * m->num_q_heads;
-  // layout: [kProjSize, num_kv_heads, total_tokens]
+  // cuda layout: [kProjSize, num_kv_heads, total_tokens]
   auto k_ptr = static_cast<DT *>(m->keyCachePeft);
-  // layout: [vProjSize, num_kv_heads, total_tokens]
+  // cuda layout: [vProjSize, num_kv_heads, total_tokens]
   auto v_ptr = static_cast<DT *>(m->valueCachePeft);
 
   // re-organize q, k, v tensor to match the layout of flash-attn
   // q size: (batch_size, seqlen_q, num_heads, head_size)
+  at::Tensor q = createTorchTensorFromCuda(q_ptr, {head_size, num_heads, seqlen_q});
+  q = q.permute({2, 1, 0}).unsqueeze(0);
   // k size: (batch_size, seqlen_k, num_heads_k, head_size)
+  at::Tensor k = createTorchTensorFromCuda(q_ptr, {head_size, num_heads_k, seqlen_k});
+  k = k.permute({2, 1, 0}).unsqueeze(0);
   // v size: (batch_size, seqlen_k, num_heads_k, head_size)
-  at::Tensor q = torch::from_blob(q_ptr,
-                                  {head_size, num_heads, seqlen_q},
-                                  torch::dtype(dtype).device(torch::kCUDA));
-  at::Tensor k = torch::from_blob(k_ptr,
-                                  {head_size, num_heads_k, seqlen_k},
-                                  torch::dtype(dtype).device(torch::kCUDA));
-  at::Tensor v = torch::from_blob(v_ptr,
-                                  {head_size, num_heads_k, seqlen_k},
-                                  torch::dtype(dtype).device(torch::kCUDA));
-  auto permuted_q = q.permute({2, 1, 0});
-  auto permuted_k = k.permute({2, 1, 0});
-  auto permuted_v = v.permute({2, 1, 0});
-  q = permuted_q.unsqueeze(0);
-  k = permuted_k.unsqueeze(0);
-  v = permuted_v.unsqueeze(0);
+  at::Tensor v = createTorchTensorFromCuda(q_ptr, {head_size, num_heads_k, seqlen_k});
+  v = v.permute({2, 1, 0}).unsqueeze(0);
 
   auto const sizes = q.sizes();
   if (m->inference_debugging) {
@@ -864,20 +859,20 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   CHECK_SHAPE(k, batch_size, seqlen_k, num_heads_k, head_size);
   CHECK_SHAPE(v, batch_size, seqlen_k, num_heads_k, head_size);
 
-  at::Tensor out;
-  if (out_.has_value()) {
-    out = out_.value();
-    CHECK_DEVICE(out);
-    TORCH_CHECK(out.stride(-1) == 1,
-                "Output tensor must have contiguous last dimension");
-    CHECK_SHAPE(out, batch_size, sizes[1], sizes[2], head_size);
-    if (seqlenq_ngroups_swapped) {
-      out = out.reshape({batch_size, num_heads_k, ngroups, head_size})
-                .transpose(1, 2);
-    }
-  } else {
-    out = torch::empty_like(q);
+  // at::Tensor out;
+  // if (out_.has_value()) {
+  //   out = out_.value();
+  CHECK_DEVICE(out);
+  TORCH_CHECK(out.stride(-1) == 1,
+              "Output tensor must have contiguous last dimension");
+  CHECK_SHAPE(out, batch_size, sizes[1], sizes[2], head_size);
+  if (seqlenq_ngroups_swapped) {
+    out = out.reshape({batch_size, num_heads_k, ngroups, head_size})
+              .transpose(1, 2);
   }
+  // } else {
+  //   out = torch::empty_like(q);
+  // }
 
   auto round_multiple = [](int x, int m) { return (x + m - 1) / m * m; };
   int const head_size_rounded =
@@ -886,14 +881,14 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   int const seqlen_k_rounded = round_multiple(seqlen_k, 128);
 
   auto opts = q.options();
-  // todo(gabriele): review the allocation and caching of softmax_lse
-  // auto softmax_lse = torch::empty({batch_size, num_heads, seqlen_q},
-  // opts.dtype(at::kFloat));
-  float *softmax_lse_ptr = static_cast<float *>(m->softmax_lse);
-  auto softmax_lse = torch::from_blob(softmax_lse_ptr,
-                                      {batch_size, num_heads, seqlen_q},
-                                      opts.dtype(at::kFloat));
-  softmax_lse = softmax_lse.clone();
+  
+  // softmax_lse is serialized in torch format (i.e. row major order). 
+  // full shape: [bz, num_q_heads, max sequence length]
+  // chunk modified in this function: [bz, num_q_heads, tokens_previous_steps : tokens_previous_steps + num_new_tokens]
+  at::Tensor softmax_lse = torch::from_blob(static_cast<float *>(m->softmax_lse),
+                                          {1, num_heads, bc->requestsInfo[i].max_length},
+                                          opts.dtype(at::kFloat));
+  softmax_lse = softmax_lse.slice(2, tokens_previous_steps, tokens_previous_steps+seqlen_q);
 
   at::Tensor p;
   // Only return softmax if there's dropout to reduce compilation time
@@ -979,8 +974,8 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   if (seqlenq_ngroups_swapped) {
     out = out.transpose(1, 2).reshape(
         {batch_size, 1, num_heads_k * seqlen_q, head_size});
-    q = q.transpose(1, 2).reshape(
-        {batch_size, 1, num_heads_k * seqlen_q, head_size});
+    // q = q.transpose(1, 2).reshape(
+    //     {batch_size, 1, num_heads_k * seqlen_q, head_size});
     softmax_lse = softmax_lse.reshape({batch_size, num_heads_k * seqlen_q, 1});
   }
 
@@ -2536,8 +2531,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
 
     // todo(gabriele): review the allocation and caching of softmax_lse
     // flash-attn softmax_lse
-    softmax_lse = gpu_mem_allocator.allocate_instance_untyped(
-        max_tokens_per_batch * BatchConfig::max_sequence_length() *
+    softmax_lse = gpu_mem_allocator.allocate_instance_untyped(BatchConfig::max_sequence_length() *
         num_q_heads * size_of_dt);
 
     // intermediate buffers
