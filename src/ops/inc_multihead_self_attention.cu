@@ -695,6 +695,16 @@ torch::Tensor createTorchTensorFromCuda(void *cudaData,
       cudaData, dims, strides, /*deleter=*/[](void *) {}, options);
 }
 
+// TODO(Gabriele): review this inverse `createTorchTensorFromCuda`
+template <typename DT>
+void restoreTorchTensorToCuda(torch::Tensor &torch_tensor, DT *data_ptr) {
+  // Get the raw pointer of the tensor
+  DT *data_ptr = torch_tensor.data_ptr<DT>();
+
+  // Copy the data from the tensor to the CUDA memory
+  cudaMemcpy(cuda_data, data_ptr, torch_tensor.numel() * sizeof(DT), cudaMemcpyDeviceToDevice);
+}
+
 // TODO(yingyi): fwd implementation of flash-attn
 template <typename DT>
 void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
@@ -2295,7 +2305,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   // (batch_size, seqlen_q, num_heads, head_size)
   // convert output_grad_ptr to at::Tensor dout
   at::Tensor dout =
-      create_tensor_from_ptr(output_grad_ptr, {head_size, num_heads, seqlen_q});
+      createTorchTensorFromCuda(output_grad_ptr, {head_size, num_heads, seqlen_q});
   dout = dout.permute({2, 1, 0}).unsqueeze(0);
 
   at::Tensor dq, dk, dv; // should be empty tensors for regular attention
@@ -2480,8 +2490,39 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     dv_file.close();
   }
   // todo(gabriele): check the memory buffer here
-  // todo(yingyi): fix reserving 2x memory for dq, dk, dv
+  // todo(yingyi): fix 2x memory footprint for dq, dk, dv
   // save dq, dk, dv from at::Tensor to memory buffer
+  // tensor dv shape (batch_size, seqlen_k, num_heads_k, head_size)
+  // tensor dk shape (batch_size, seqlen_k, num_heads_k, head_size)
+  // tensor dq shape (batch_size, seqlen_q, num_heads, head_size)
+
+  // expected shape in buffer:
+  // todo(gabriele): dq shareds the same layout as dv & dk??
+  // dv: [seqlen_k, head_size * num_heads, 3]
+  // dk: [seqlen_k, head_size * num_heads, 3]
+  // dq: [seqlen_k, head_size * num_heads, 3]
+
+  // todo(gabriele): review the reshape here
+  // remove batch_size dim from tensor dq, dk, dv
+  dv.squeeze(0);
+  dk.squeeze(0);
+  dq.squeeze(0);
+  // permute the tensor to the expected shape in buffer
+  dv.permute({1, 2, 0});
+  dk.permute({1, 2, 0});
+  dq.permute({1, 2, 0});
+
+  // restore the tensor to the buffer in meta
+  DT *dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+               2 * num_tokens * (m->qProjSize * m->num_q_heads);
+  restoreTorchTensorToCuda(dv, dv_ptr);
+
+  DT *dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+               num_tokens * (m->qProjSize * m->num_q_heads);
+  restoreTorchTensorToCuda(dk, dk_ptr);
+
+  DT *dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
+  restoreTorchTensorToCuda(dq, dq_ptr);
 
   // end step 2
   // ================================================================
