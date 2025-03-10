@@ -121,7 +121,9 @@ class SpecIncMultiHeadSelfAttentionMeta : public IncMultiHeadSelfAttentionMeta {
 public:
   SpecIncMultiHeadSelfAttentionMeta(FFHandler handler,
                                     SpecIncMultiHeadSelfAttention const *attn,
-                                    MemoryAllocator &gpu_mem_allocator,
+                                    MemoryAllocator &inf_mem_allocator,
+                                    MemoryAllocator &kv_cache_mem_allocator,
+                                    MemoryAllocator &peft_mem_allocator,
                                     int _num_q_heads,
                                     int _num_kv_heads);
   ~SpecIncMultiHeadSelfAttentionMeta(void);

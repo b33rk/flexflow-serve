@@ -631,7 +631,9 @@ void TreeIncMultiHeadSelfAttention::inference_kernel_wrapper(
 TreeIncMultiHeadSelfAttentionMeta::TreeIncMultiHeadSelfAttentionMeta(
     FFHandler handler,
     TreeIncMultiHeadSelfAttention const *attn,
-    MemoryAllocator &gpu_mem_allocator,
+    MemoryAllocator &inf_mem_allocator,
+    MemoryAllocator &kv_cache_mem_allocator,
+    MemoryAllocator &peft_mem_allocator,
     int _num_q_heads,
     int _num_kv_heads)
     : IncMultiHeadSelfAttentionMeta(handler,
@@ -646,7 +648,9 @@ TreeIncMultiHeadSelfAttentionMeta::TreeIncMultiHeadSelfAttentionMeta(
                                     attn->qk_prod_scaling,
                                     attn->position_bias,
                                     attn->scaling_factor,
-                                    gpu_mem_allocator,
+                                    inf_mem_allocator,
+                                    kv_cache_mem_allocator,
+                                    peft_mem_allocator,
                                     attn->num_q_heads,
                                     attn->num_kv_heads,
                                     _num_q_heads,

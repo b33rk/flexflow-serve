@@ -447,13 +447,25 @@ OpMeta *SpecIncMultiHeadSelfAttention::init_task(
   assert(attn->oProjSize == output.domain.hi()[0] - output.domain.lo()[0] + 1);
 
   Memory gpu_mem = get_proc_mem(Machine::get_machine(), task->target_proc);
-  MemoryAllocator gpu_mem_allocator(gpu_mem);
+  MemoryAllocator inf_mem_allocator(gpu_mem);
+  MemoryAllocator kv_cache_mem_allocator(gpu_mem);
+  MemoryAllocator peft_mem_allocator(gpu_mem);
   // We don't do offloading for SSMs (small speculative models)
-  SpecIncMultiHeadSelfAttentionMeta *m = new SpecIncMultiHeadSelfAttentionMeta(
-      handle, attn, gpu_mem_allocator, num_q_heads, num_kv_heads);
+  SpecIncMultiHeadSelfAttentionMeta *m =
+      new SpecIncMultiHeadSelfAttentionMeta(handle,
+                                            attn,
+                                            inf_mem_allocator,
+                                            kv_cache_mem_allocator,
+                                            peft_mem_allocator,
+                                            num_q_heads,
+                                            num_kv_heads);
   // assert that we didn't over allocate memory
-  assert(gpu_mem_allocator.instance_allocated_size ==
-         gpu_mem_allocator.instance_total_size);
+  assert(inf_mem_allocator.instance_allocated_size ==
+         inf_mem_allocator.instance_total_size);
+  assert(kv_cache_mem_allocator.instance_allocated_size ==
+         kv_cache_mem_allocator.instance_total_size);
+  assert(peft_mem_allocator.instance_allocated_size ==
+         peft_mem_allocator.instance_total_size);
   m->profiling = attn->profiling;
   m->inference_debugging = attn->inference_debugging;
   m->enable_peft_finetuning = attn->enable_peft_finetuning;

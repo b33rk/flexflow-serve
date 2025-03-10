@@ -486,19 +486,31 @@ OpMeta *TreeIncMultiHeadSelfAttention::init_task(
       (attn->num_kv_heads % attn->tensor_parallelism_degree != 0);
 
   Memory gpu_mem = get_proc_mem(Machine::get_machine(), task->target_proc);
-  MemoryAllocator gpu_mem_allocator(gpu_mem);
+  MemoryAllocator inf_mem_allocator(gpu_mem);
+  MemoryAllocator kv_cache_mem_allocator(gpu_mem);
+  MemoryAllocator peft_mem_allocator(gpu_mem);
   if (attn->offload) {
     // cpu-offload enabled
     // use offload_reserved_space
-    gpu_mem_allocator.register_reserved_work_space(
+    inf_mem_allocator.register_reserved_work_space(
         handle.offload_reserve_space, handle.offload_reserve_space_size);
   }
-  TreeIncMultiHeadSelfAttentionMeta *m = new TreeIncMultiHeadSelfAttentionMeta(
-      handle, attn, gpu_mem_allocator, num_q_heads, num_kv_heads);
+  TreeIncMultiHeadSelfAttentionMeta *m =
+      new TreeIncMultiHeadSelfAttentionMeta(handle,
+                                            attn,
+                                            inf_mem_allocator,
+                                            kv_cache_mem_allocator,
+                                            peft_mem_allocator,
+                                            num_q_heads,
+                                            num_kv_heads);
   if (!attn->offload) {
     // assert that we didn't over allocate memory
-    assert(gpu_mem_allocator.reserved_allocated_size ==
-           gpu_mem_allocator.reserved_total_size);
+    assert(inf_mem_allocator.instance_allocated_size ==
+           inf_mem_allocator.instance_total_size);
+    assert(kv_cache_mem_allocator.instance_allocated_size ==
+           kv_cache_mem_allocator.instance_total_size);
+    assert(peft_mem_allocator.instance_allocated_size ==
+           peft_mem_allocator.instance_total_size);
   }
   m->profiling = attn->profiling;
   m->inference_debugging = attn->inference_debugging;

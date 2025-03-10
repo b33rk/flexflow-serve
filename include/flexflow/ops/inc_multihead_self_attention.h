@@ -142,7 +142,9 @@ class IncMultiHeadSelfAttentionMeta : public OpMeta {
 public:
   IncMultiHeadSelfAttentionMeta(FFHandler handler,
                                 IncMultiHeadSelfAttention const *attn,
-                                MemoryAllocator &gpu_mem_allocator,
+                                MemoryAllocator &inf_mem_allocator,
+                                MemoryAllocator &kv_cache_mem_allocator,
+                                MemoryAllocator &peft_mem_allocator,
                                 int _num_q_heads,
                                 int _num_kv_heads);
   IncMultiHeadSelfAttentionMeta(FFHandler handler,
@@ -157,7 +159,9 @@ public:
                                 bool _qk_prod_scaling,
                                 bool _position_bias,
                                 float _scaling_factor,
-                                MemoryAllocator &gpu_mem_allocator,
+                                MemoryAllocator &inf_mem_allocator,
+                                MemoryAllocator &kv_cache_mem_allocator,
+                                MemoryAllocator &peft_mem_allocator,
                                 int _global_num_q_heads,
                                 int _global_num_kv_heads,
                                 int _num_q_heads,
@@ -168,7 +172,8 @@ public:
   ~IncMultiHeadSelfAttentionMeta(void);
 
 public:
-  Realm::RegionInstance reserveInst;
+  // Realm::RegionInstance reserveInst;
+  Realm::RegionInstance inf_instance, kv_cache_instance, peft_instance;
   size_t reserveSpaceSize;
   int qProjSize, kProjSize, vProjSize, oProjSize;
   int global_num_q_heads, global_num_kv_heads, num_q_heads, num_kv_heads;

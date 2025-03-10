@@ -1912,7 +1912,9 @@ void IncMultiHeadSelfAttention::peft_bwd_kernel_wrapper(
 IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     FFHandler handler,
     IncMultiHeadSelfAttention const *attn,
-    MemoryAllocator &gpu_mem_allocator,
+    MemoryAllocator &inf_mem_allocator,
+    MemoryAllocator &kv_cache_mem_allocator,
+    MemoryAllocator &peft_mem_allocator,
     int _num_q_heads,
     int _num_kv_heads)
     : IncMultiHeadSelfAttentionMeta(handler,
@@ -1927,7 +1929,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                     attn->qk_prod_scaling,
                                     attn->position_bias,
                                     attn->scaling_factor,
-                                    gpu_mem_allocator,
+                                    inf_mem_allocator,
+                                    kv_cache_mem_allocator,
+                                    peft_mem_allocator,
                                     attn->num_q_heads,
                                     attn->num_kv_heads,
                                     _num_q_heads,
@@ -1949,7 +1953,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     bool _qk_prod_scaling,
     bool _position_bias,
     float _scaling_factor,
-    MemoryAllocator &gpu_mem_allocator,
+    MemoryAllocator &inf_mem_allocator,
+    MemoryAllocator &kv_cache_mem_allocator,
+    MemoryAllocator &peft_mem_allocator,
     int _global_num_q_heads,
     int _global_num_kv_heads,
     int _num_q_heads,
@@ -1997,22 +2003,27 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     assert(infer_mode == INC_DECODING_MODE);
   }
 
-  size_t totalSize = 0;
+  size_t inf_instance_size = 0;
+  size_t kv_cache_instance_size = 0;
+  size_t peft_instance_size = 0;
 
   // Compute total GPU memory size needed
   {
     // 1. GQA pointers for batch matmul. Used by PEFT and spec_inc if
     // num_q_heads > num_kv_heads
     if (num_q_heads > num_kv_heads &&
-        (enable_peft_finetuning || infer_mode == BEAM_SEARCH_MODE)) {
+        (infer_mode == BEAM_SEARCH_MODE || enable_peft_finetuning)) {
       assert(num_q_heads % num_kv_heads == 0 &&
              "num_q_heads must be divisible by num_kv_heads");
       assert(attn->data_type == DT_FLOAT ||
              attn->data_type == DT_HALF && "Unsupported data type");
       gqa_ptr_array_size = num_q_heads * sizeof(void *);
-      totalSize += 3 * gqa_ptr_array_size; // fwd
-      if (enable_peft_finetuning) {
-        totalSize += 3 * gqa_ptr_array_size; // bwd
+      if (infer_mode == BEAM_SEARCH_MODE) {
+        inf_instance_size += 3 * gqa_ptr_array_size; // fwd
+      } else if (enable_peft_finetuning) {
+        inf_instance_size += 3 * gqa_ptr_array_size;  // fwd
+        peft_instance_size += 3 * gqa_ptr_array_size; // bwd
+        printf("3 * gqa_ptr_array_size=%lu\n", 3 * gqa_ptr_array_size);
       }
     }
 
@@ -2028,12 +2039,15 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                  (BatchConfig::max_sequence_length() +
                   BatchConfig::max_spec_tree_token_num()));
     }
-    totalSize += (key_cache_size + value_cache_size) * size_of_dt;
+    kv_cache_instance_size += (key_cache_size + value_cache_size) * size_of_dt;
     if (enable_peft_finetuning) {
       // add kv cache for single sequence
       peft_key_cache_size = peft_value_cache_size =
           num_kv_heads * kProjSize * BatchConfig::max_sequence_length();
-      totalSize += (peft_key_cache_size + peft_value_cache_size) * size_of_dt;
+      printf("(peft_key_cache_size + peft_value_cache_size) * size_of_dt=%lu\n",
+             (peft_key_cache_size + peft_value_cache_size) * size_of_dt);
+      peft_instance_size +=
+          (peft_key_cache_size + peft_value_cache_size) * size_of_dt;
     }
 
     // 3. buffers for intermediate results
@@ -2043,39 +2057,45 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                    : BatchConfig::max_tokens_per_batch();
     // devQKVProjArray
     qkv_max_proj_size = qProjSize * tot_num_heads * max_tokens_per_batch;
-    totalSize += qkv_max_proj_size * size_of_dt;
+    inf_instance_size += qkv_max_proj_size * size_of_dt;
     if (enable_peft_finetuning) {
       qkv_max_proj_size_bwd =
           qProjSize * tot_num_heads * BatchConfig::max_sequence_length();
-      totalSize += qkv_max_proj_size_bwd * size_of_dt;
+      printf("qkv_max_proj_size_bwd * size_of_dt=%lu\n",
+             qkv_max_proj_size_bwd * size_of_dt);
+
+      peft_instance_size += qkv_max_proj_size_bwd * size_of_dt;
     }
     // queryTmp and outputTmp: only for paged attention
     if (infer_mode == INC_DECODING_MODE) {
       query_tmp_size = num_q_heads * qProjSize * max_tokens_per_batch;
-      totalSize += (query_tmp_size)*size_of_dt;
+      inf_instance_size += (query_tmp_size)*size_of_dt;
     }
     // complex_input & complex_input_bwd
     complex_size = max_tokens_per_batch * qProjSize *
                    (num_q_heads + num_kv_heads) /
                    2; // only used for Q and K, not V
-    totalSize += complex_size * sizeof(cuFloatComplex);
+    inf_instance_size += complex_size * sizeof(cuFloatComplex);
     if (enable_peft_finetuning) {
       complex_size_bwd = BatchConfig::max_sequence_length() * qProjSize *
                          (num_q_heads + num_kv_heads) /
                          2; // only used for Q and K, not V
-      totalSize += complex_size_bwd * sizeof(cuFloatComplex);
+      printf("complex_size_bwd * sizeof(cuFloatComplex)=%lu\n",
+             complex_size_bwd * sizeof(cuFloatComplex));
+      peft_instance_size += complex_size_bwd * sizeof(cuFloatComplex);
     }
     // QK prods and QK prods (softmax)
     if (infer_mode == BEAM_SEARCH_MODE) {
       qk_prod_size = max_tokens_per_batch * BatchConfig::max_sequence_length() *
                      num_q_heads;
-      totalSize += 2 * qk_prod_size * size_of_dt;
+      inf_instance_size += 2 * qk_prod_size * size_of_dt;
     } else if (enable_peft_finetuning) {
       // only need one copy as they can be reused by PEFT fwd and PEFT bwd, as
       // they never run concurrently
       qk_prod_size = BatchConfig::max_sequence_length() *
                      BatchConfig::max_sequence_length() * num_q_heads;
-      totalSize += qk_prod_size * size_of_dt;
+      printf("qk_prod_size * size_of_dt=%lu\n", qk_prod_size * size_of_dt);
+      peft_instance_size += qk_prod_size * size_of_dt;
     }
     // PEFT partial results buffers
     if (enable_peft_finetuning) {
@@ -2090,8 +2110,12 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
               BatchConfig::max_sequence_length());
       peft_token_infos_size = sizeof(BatchConfig::PerTokenInfo) *
                               BatchConfig::max_sequence_length();
-      totalSize += allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
-      totalSize += peft_token_infos_size;
+      peft_instance_size +=
+          allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
+      printf("allocated_peft_buffer_size1=%lu\n", allocated_peft_buffer_size1);
+      printf("allocated_peft_buffer_size2=%lu\n", allocated_peft_buffer_size2);
+      printf("peft_token_infos_size=%lu\n", peft_token_infos_size);
+      peft_instance_size += peft_token_infos_size;
     }
 
     // 4. offload: TBD
@@ -2101,8 +2125,14 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   }
 
   // Allocate chunk of memory
-  gpu_mem_allocator.create_legion_instance(
-      reserveInst, totalSize, "IncMultiHeadSelfAttentionMeta");
+  inf_mem_allocator.create_legion_instance(
+      inf_instance, inf_instance_size, "IncMultiHeadSelfAttentionMeta (inf)");
+  kv_cache_mem_allocator.create_legion_instance(
+      kv_cache_instance, kv_cache_instance_size, "KV Cache");
+  peft_mem_allocator.create_legion_instance(
+      peft_instance,
+      peft_instance_size,
+      "IncMultiHeadSelfAttentionMeta (peft)");
 
   // Assign pointers from chunk of memory
   {
@@ -2110,39 +2140,39 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     if (num_q_heads > num_kv_heads) {
       assert(num_q_heads % num_kv_heads == 0 &&
              "Num Q heads must be a multiple of num KV heads");
-      d_A_array = (void **)gpu_mem_allocator.allocate_instance_untyped(
+      d_A_array = (void **)inf_mem_allocator.allocate_instance_untyped(
           gqa_ptr_array_size);
-      d_B_array = (void **)gpu_mem_allocator.allocate_instance_untyped(
+      d_B_array = (void **)inf_mem_allocator.allocate_instance_untyped(
           gqa_ptr_array_size);
-      d_C_array = (void **)gpu_mem_allocator.allocate_instance_untyped(
+      d_C_array = (void **)inf_mem_allocator.allocate_instance_untyped(
           gqa_ptr_array_size);
       if (enable_peft_finetuning) {
-        d_A_array2 = (void **)gpu_mem_allocator.allocate_instance_untyped(
+        d_A_array2 = (void **)peft_mem_allocator.allocate_instance_untyped(
             gqa_ptr_array_size);
-        d_B_array2 = (void **)gpu_mem_allocator.allocate_instance_untyped(
+        d_B_array2 = (void **)peft_mem_allocator.allocate_instance_untyped(
             gqa_ptr_array_size);
-        d_C_array2 = (void **)gpu_mem_allocator.allocate_instance_untyped(
+        d_C_array2 = (void **)peft_mem_allocator.allocate_instance_untyped(
             gqa_ptr_array_size);
       }
     }
 
     // KV cache
     if (infer_mode == INC_DECODING_MODE) {
-      kvCache = gpu_mem_allocator.allocate_instance_untyped(
+      kvCache = kv_cache_mem_allocator.allocate_instance_untyped(
           (key_cache_size + value_cache_size) * size_of_dt);
       keyCache = valueCache = nullptr;
     } else {
       kvCache = nullptr;
-      keyCache = gpu_mem_allocator.allocate_instance_untyped(key_cache_size *
-                                                             size_of_dt);
-      valueCache = gpu_mem_allocator.allocate_instance_untyped(
+      keyCache = kv_cache_mem_allocator.allocate_instance_untyped(
+          key_cache_size * size_of_dt);
+      valueCache = kv_cache_mem_allocator.allocate_instance_untyped(
           value_cache_size * size_of_dt);
     }
     if (enable_peft_finetuning) {
       assert(infer_mode == INC_DECODING_MODE);
-      keyCachePeft = gpu_mem_allocator.allocate_instance_untyped(
+      keyCachePeft = peft_mem_allocator.allocate_instance_untyped(
           peft_key_cache_size * size_of_dt);
-      valueCachePeft = gpu_mem_allocator.allocate_instance_untyped(
+      valueCachePeft = peft_mem_allocator.allocate_instance_untyped(
           peft_value_cache_size * size_of_dt);
     } else {
       keyCachePeft = valueCachePeft = nullptr;
@@ -2151,41 +2181,41 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     // intermediate buffers
     // devQKVProjArray: used to store QKV proj so that we can modify them (apply
     // rope, etc)
-    devQKVProjArray = gpu_mem_allocator.allocate_instance_untyped(
+    devQKVProjArray = inf_mem_allocator.allocate_instance_untyped(
         qkv_max_proj_size * size_of_dt);
     // devQKVProjArrayBWD
     if (enable_peft_finetuning) {
-      devQKVProjArrayBWD = gpu_mem_allocator.allocate_instance_untyped(
+      devQKVProjArrayBWD = peft_mem_allocator.allocate_instance_untyped(
           qkv_max_proj_size_bwd * size_of_dt);
     }
     // queryTmp and outputTmp: only for paged attention
     if (infer_mode == INC_DECODING_MODE) {
-      queryTmp = gpu_mem_allocator.allocate_instance_untyped(query_tmp_size *
+      queryTmp = inf_mem_allocator.allocate_instance_untyped(query_tmp_size *
                                                              size_of_dt);
     }
     // complex input
     complex_input =
-        gpu_mem_allocator.allocate_instance<cuFloatComplex>(complex_size);
+        inf_mem_allocator.allocate_instance<cuFloatComplex>(complex_size);
     complex_input_bwd =
-        gpu_mem_allocator.allocate_instance<cuFloatComplex>(complex_size_bwd);
+        peft_mem_allocator.allocate_instance<cuFloatComplex>(complex_size_bwd);
     // qk_prods, qk_prods_softmax
-    if (infer_mode == BEAM_SEARCH_MODE || enable_peft_finetuning) {
-      if (infer_mode == BEAM_SEARCH_MODE) {
-        qk_prods = gpu_mem_allocator.allocate_instance_untyped(qk_prod_size *
-                                                               size_of_dt);
-      }
-      qk_prods_softmax = gpu_mem_allocator.allocate_instance_untyped(
+    if (infer_mode == BEAM_SEARCH_MODE) {
+      qk_prods = inf_mem_allocator.allocate_instance_untyped(qk_prod_size *
+                                                             size_of_dt);
+    }
+    if (enable_peft_finetuning) {
+      qk_prods_softmax = peft_mem_allocator.allocate_instance_untyped(
           qk_prod_size * size_of_dt);
     }
     // peft partial result buffers
     if (enable_peft_finetuning) {
-      query_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
+      query_activation_buffer = peft_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size1);
-      softmax_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
+      softmax_activation_buffer = peft_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size2);
-      peft_token_infos_device = (BatchConfig::PerTokenInfo *)
-                                    gpu_mem_allocator.allocate_instance_untyped(
-                                        peft_token_infos_size);
+      peft_token_infos_device =
+          (BatchConfig::PerTokenInfo *)peft_mem_allocator
+              .allocate_instance_untyped(peft_token_infos_size);
     }
 
     token_infos = static_cast<BatchConfig::PerTokenInfo *>(
@@ -2199,15 +2229,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     if (quantization_type != DT_NONE) {
       assert(offload);
     }
-    if (!offload) {
-      assert(gpu_mem_allocator.reserved_total_size ==
-             gpu_mem_allocator.reserved_allocated_size);
-    }
   }
-
-  // ensure we have consumed the allocated memory
-  assert(gpu_mem_allocator.reserved_total_size ==
-         gpu_mem_allocator.reserved_allocated_size);
 
   // set attention constants
   // std::cerr << "Enabling incr attention metadata for handler incr meta: "
@@ -2221,8 +2243,14 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
 }
 
 IncMultiHeadSelfAttentionMeta::~IncMultiHeadSelfAttentionMeta(void) {
-  if (reserveInst != Realm::RegionInstance::NO_INST) {
-    reserveInst.destroy();
+  if (inf_instance != Realm::RegionInstance::NO_INST) {
+    inf_instance.destroy();
+  }
+  if (kv_cache_instance != Realm::RegionInstance::NO_INST) {
+    kv_cache_instance.destroy();
+  }
+  if (peft_instance != Realm::RegionInstance::NO_INST) {
+    peft_instance.destroy();
   }
 }
 
