@@ -235,8 +235,18 @@ public:
   BatchConfig::PerTokenInfo *peft_token_infos_device;
 
 #if USE_FLASH_ATTENTION
-  // Flash Attention specific fields
-  void *softmax_lse; // cache softmax_lse for bwd
+  // Flash Attention specific fields: context saved for bwd
+  void *flash_attn_softmax_lse; // log_sum_exp for one-pass bwd
+  float flash_attn_p_dropout; // dropout probability
+  bool flash_attn_is_causal; // whether to apply causal mask
+  bool flash_attn_return_softmax; // whether to return softmax
+  bool flash_attn_deterministic; // whether to use deterministic dropout
+  float flash_attn_softcap; // softcap for dropout
+  int64_t flash_attn_rng_state_0; // rng state for dropout
+  int64_t flash_attn_rng_state_1; // rng state for dropout
+  int flash_attn_window_size_left;
+  int flash_attn_window_size_right;
+  // void* alibi_slopes_ptr; // re-init in backward pass
 #endif
 };
 

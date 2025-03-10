@@ -791,11 +791,12 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   size_t head_size = m->qProjSize;
   float softmax_scale =
       (*m->qk_prod_scaling) ? (1.0f / sqrt(m->kProjSize)) : 1.0f;
-  float p_dropout = 0.0f;
-  int window_size_left = -1;
-  int window_size_right = -1;
-  float softcap = 0.0f;
-  bool is_causal = true, return_softmax = false;
+  float p_dropout = m->flash_attn_p_dropout;
+  int window_size_left = m->flash_attn_window_size_left;
+  int window_size_right = m->flash_attn_window_size_right;
+  float softcap = m->flash_attn_softcap;
+  bool is_causal = m->flash_attn_is_causal;
+  bool return_softmax = m->flash_attn_return_softmax;
   std::optional<at::Generator> gen_ = std::nullopt;
 
   // only support head_size aligned with 8 for now
@@ -1030,8 +1031,8 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     softmax_lse_file.close();
   }
   // save rng_state for backward context
-  m->rng_state_0 = rng_state[0];
-  m->rng_state_1 = rng_state[1];
+  m->flash_attn_rng_state_0 = rng_state[0];
+  m->flash_attn_rng_state_1 = rng_state[1];
 
   // out is saved in the data_ptr of out tensor
   // softmax_lse is saved in the data_ptr of softmax_lse tensor
@@ -2600,12 +2601,25 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     } else {
       keyCachePeft = valueCachePeft = nullptr;
     }
-
-    // todo(gabriele): review the allocation and caching of softmax_lse
+#if USE_FLASH_ATTENTION
+    // todo(gabriele): review the allocation of flash-attn bwd context
     // flash-attn softmax_lse
     softmax_lse = gpu_mem_allocator.allocate_instance_untyped(
         BatchConfig::max_sequence_length() * num_q_heads * size_of_dt);
-
+    // alibi_slopes_ptr = gpu_mem_allocator.allocate_instance_untyped(
+    //     num_q_heads * sizeof(float));
+    
+    // todo(gabriele): review flash-attn metadara
+    flash_attn_p_dropout = 0.0f;
+    flash_attn_is_causal = true;
+    flash_attn_return_softmax = false;
+    flash_attn_deterministic = false;
+    flash_attn_softcap = 0.0f;
+    flash_attn_rng_state_0 = 0;
+    flash_attn_rng_state_1 = 0;
+    flash_attn_window_size_left = -1;
+    flash_attn_window_size_right = -1;
+#endif
     // intermediate buffers
     // devQKVProjArray: used to store QKV proj so that we can modify them (apply
     // rope, etc)
