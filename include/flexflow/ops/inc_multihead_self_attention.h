@@ -240,7 +240,6 @@ public:
   float flash_attn_p_dropout; // dropout probability
   bool flash_attn_is_causal; // whether to apply causal mask
   bool flash_attn_return_softmax; // whether to return softmax
-  bool flash_attn_deterministic; // whether to use deterministic dropout
   float flash_attn_softcap; // softcap for dropout
   int64_t flash_attn_rng_state_0; // rng state for dropout
   int64_t flash_attn_rng_state_1; // rng state for dropout

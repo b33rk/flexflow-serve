@@ -2227,6 +2227,265 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                            DT *input_grad_ptr,
                            DT const *output_grad_ptr,
                            cudaStream_t peft_stream) {
+  // Step 0: param check as in peft_bwd_kernel
+  // ================================================================
+  assert(!m->offload);
+  checkCUDA(cublasSetStream(m->handle.peft_blas, peft_stream));
+  checkCUDNN(cudnnSetStream(m->handle.peft_dnn, peft_stream));
+  cudaDataType_t cublas_data_type = ff_to_cuda_datatype(m->output_type[0]);
+  cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
+  assert(data_type_size(m->output_type[0]) == sizeof(DT));
+  cudaDataType_t compute_type = cublas_data_type;
+
+  assert(
+      bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id));
+  int i = bc->finetuning_request_index();
+  int num_tokens = bc->requestsInfo[i].num_tokens_in_batch;
+  int num_total_tokens = bc->requestsInfo[i].first_token_depth_in_request +
+                         bc->requestsInfo[i].num_tokens_in_batch;
+  // Currently assume we are calculating gradients for all tokens
+  // of a request
+  assert(num_tokens == num_total_tokens);
+  assert(num_total_tokens == bc->requestsInfo[i].max_length);
+  assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
+  // assert(bc->requestsInfo[i].first_token_offset_in_batch == 0);
+
+  if (m->inference_debugging) {
+    // save result to file for checking
+    std::string filename =
+        get_peft_dbg_folder(m, shard_id) + ".o_proj.input_gradient_0";
+    save_tensor(output_grad_ptr,
+                m->vProjSize * m->num_q_heads * num_tokens,
+                filename.c_str());
+  }
+  // end step 0
+  // ================================================================
+
+  // step 1: compute gradients w.r.t. QKV
+  // ================================================================
+  // same parameters as in flash_compute_attention_kernel_peft
+  size_t batch_size = 1;
+  size_t seqlen_q = num_tokens;
+  size_t seqlen_k = num_total_tokens;
+  size_t num_heads = m->num_q_heads;
+  size_t num_heads_k = m->num_kv_heads;
+  size_t head_size = m->qProjSize;
+  float softmax_scale =
+      (*m->qk_prod_scaling) ? (1.0f / sqrt(m->kProjSize)) : 1.0f;
+  float p_dropout = m->flash_attn_p_dropout;
+  int window_size_left = m->flash_attn_window_size_left;
+  int window_size_right = m->flash_attn_window_size_right;
+  float softcap = m->flash_attn_softcap;
+
+  // recompute alibi slopes (should be the same as in flash_peft_bwd_kernel)
+  std::optional<at::Tensor> alibi_slopes_ = std::nullopt;
+  if (*m->position_bias) {
+    at::Tensor alibi_slopes = at::empty({m->num_q_heads}, at::kFloat);
+    float *slopes_ptr = alibi_slopes.value().data_ptr<float>();
+    for (int head_idx = 0; head_idx < m->num_q_heads; head_idx++) {
+      int global_head_idx = head_idx + (m->num_q_heads * shard_id);
+      float base = (float)(global_head_idx + 1) * 8.0f / m->global_num_q_heads;
+      slopes_ptr[head_idx] = 1.0f / std::pow(2.0f, base);
+    }
+    alibi_slopes_ = alibi_slopes;
+  }
+
+  // todo(gabriele): review the conversion of output_grad_ptr to at::Tensor dout
+  // dout should have the same shape as out
+  // (batch_size, seqlen_q, num_heads, head_size)
+  // convert output_grad_ptr to at::Tensor dout
+  at::Tensor dout =
+      create_tensor_from_ptr(output_grad_ptr, {head_size, num_heads, seqlen_q});
+  dout = dout.permute({2, 1, 0}).unsqueeze(0);
+
+  at::Tensor dq, dk, dv; // should be empty tensors for regular attention
+  std::optional<at::Tensor> dq_ = std::nullopt;
+  std::optional<at::Tensor> dk_ = std::nullopt;
+  std::optional<at::Tensor> dv_ = std::nullopt;
+  bool deterministic = m->inference_debugging; // only for debugging
+
+  if (dq_.has_value()) {
+    dq = dq_.value();
+    CHECK_DEVICE(dq);
+    TORCH_CHECK(dq.stride(-1) == 1, "dq must have contiguous last dimension");
+    CHECK_SHAPE(dq, batch_size, seqlen_q, num_heads, head_size);
+  } else {
+    dq = torch::empty_like(q);
+  }
+  if (dk_.has_value()) {
+    dk = dk_.value();
+    CHECK_DEVICE(dk);
+    TORCH_CHECK(dk.stride(-1) == 1, "dk must have contiguous last dimension");
+    CHECK_SHAPE(dk, batch_size, seqlen_k, num_heads_k, head_size);
+  } else {
+    dk = torch::empty_like(k);
+  }
+  if (dv_.has_value()) {
+    dv = dv_.value();
+    CHECK_DEVICE(dv);
+    TORCH_CHECK(dv.stride(-1) == 1, "dv must have contiguous last dimension");
+    CHECK_SHAPE(dv, batch_size, seqlen_k, num_heads_k, head_size);
+  } else {
+    dv = torch::empty_like(v);
+  }
+
+  // bool loop = seqlen_k > blocksize_c;
+  // TODO: change later, for now set to true for simplicity
+  bool loop = true;
+
+  auto bwd_opts = q.options();
+  auto softmax_d = torch::empty({batch_size, num_heads, seqlen_q_rounded},
+                                bwd_opts.dtype(at::kFloat));
+  at::Tensor dq_accum;
+  at::Tensor dk_accum, dv_accum;
+  if (loop) {
+    if (!deterministic) {
+      dq_accum = torch::empty(
+          {batch_size, seqlen_q_rounded, num_heads, head_size_rounded},
+          opts.dtype(at::kFloat));
+    } else {
+      int const nsplits =
+          (get_num_sm(get_current_device()) + batch_size * num_heads - 1) /
+          (batch_size * num_heads);
+      dq_accum = torch::zeros(
+          {nsplits, batch_size, seqlen_q_rounded, num_heads, head_size_rounded},
+          bwd_opts.dtype(at::kFloat));
+    }
+    // dk_accum = torch::empty({batch_size, num_heads_k, seqlen_k_rounded,
+    // head_size_rounded}, bwd_opts.dtype(at::kFloat)); dv_accum =
+    // torch::empty({batch_size, num_heads_k, seqlen_k_rounded,
+    // head_size_rounded}, bwd_opts.dtype(at::kFloat));
+  }
+
+  at::Tensor dk_expanded, dv_expanded;
+  if (num_heads_k != num_heads) { // MQA / GQA
+    dk_expanded =
+        torch::empty({batch_size, seqlen_k, num_heads, head_size}, bwd_opts);
+    dv_expanded =
+        torch::empty({batch_size, seqlen_k, num_heads, head_size}, bwd_opts);
+  } else {
+    dk_expanded = dk;
+    dv_expanded = dv;
+  }
+
+  Flash_bwd_params bwd_params;
+
+  set_params_dgrad(bwd_params,
+                   batch_size,
+                   seqlen_q,
+                   seqlen_k,
+                   seqlen_q_rounded,
+                   seqlen_k_rounded,
+                   num_heads,
+                   num_heads_k,
+                   head_size,
+                   head_size_rounded,
+                   q,
+                   k,
+                   v,
+                   out,
+                   dout,
+                   dq,
+                   dk_expanded,
+                   dv_expanded,
+                   nullptr,
+                   nullptr,
+                   loop ? dq_accum.data_ptr() : nullptr,
+                   // loop ? dk_accum.data_ptr() : nullptr,
+                   // loop ? dv_accum.data_ptr() : nullptr,
+                   nullptr,
+                   nullptr,
+                   softmax_lse.data_ptr(),
+                   softmax_d.data_ptr(),
+                   p_dropout,
+                   softmax_scale,
+                   window_size_left,
+                   window_size_right,
+                   softcap,
+                   deterministic,
+                   /*unpadded_lse*/ false);
+  bwd_params.dq_accum_split_stride = !deterministic ? 0 : dq_accum.stride(0);
+
+  auto launch = &run_mha_bwd;
+
+  auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
+      gen_, at::cuda::detail::getDefaultCUDAGenerator());
+
+  // We use a custom RNG that increases the offset by batch_size * nheads * 32.
+  int64_t bwd_counter_offset = bwd_params.b * bwd_params.h * 32;
+
+  // todo(yingyi): comment out the branch for easier compilation
+  // if (rng_state.has_value()) {
+  bwd_params.rng_state = reinterpret_cast<uint64_t *>(rng_state.data_ptr());
+  // }
+  // else if (is_dropout)
+  // {
+  //     // See Note [Acquire lock when using random generators]
+  //     std::lock_guard<std::mutex> lock(gen->mutex_);
+  //     bwd_params.philox_args = gen->philox_cuda_state(bwd_counter_offset);
+  //     auto seeds = at::cuda::philox::unpack(bwd_params.philox_args);
+  //     bwd_params.rng_state[0] = std::get<0>(seeds);
+  //     bwd_params.rng_state[1] = std::get<1>(seeds);
+  // }
+
+  set_params_alibi(bwd_params, alibi_slopes_, batch_size, num_heads);
+
+  if (seqlen_q > 0) {
+    launch(bwd_params, peft_stream);
+  } else {
+    // If seqlen_q == 0, then we have an empty tensor. We need to set the output
+    // to 0.
+    dk_expanded.zero_();
+    dv_expanded.zero_();
+    softmax_d.zero_();
+  }
+
+  // For MQA/GQA we need to sum dK and dV across the groups
+  if (num_heads_k != num_heads) {
+    at::sum_out(dk,
+                at::reshape(dk_expanded,
+                            {batch_size,
+                             seqlen_k,
+                             num_heads_k,
+                             num_heads / num_heads_k,
+                             head_size}),
+                {3});
+    at::sum_out(dv,
+                at::reshape(dv_expanded,
+                            {batch_size,
+                             seqlen_k,
+                             num_heads_k,
+                             num_heads / num_heads_k,
+                             head_size}),
+                {3});
+  }
+  // end step 1
+  // ================================================================
+
+  // step 2: return results
+  // ================================================================
+  // Print the values of dq, dk, dv to files
+  if (m->inference_debugging) {
+    std::string dq_fpath = get_peft_dbg_folder(m, shard_id) + ".dq.txt";
+    std::string dk_fpath = get_peft_dbg_folder(m, shard_id) + ".dk.txt";
+    std::string dv_fpath = get_peft_dbg_folder(m, shard_id) + ".dv.txt";
+    std::ofstream dq_file(dq_fpath);
+    std::ofstream dk_file(dk_fpath);
+    std::ofstream dv_file(dv_fpath);
+    dq_file << dq << std::endl;
+    dk_file << dk << std::endl;
+    dv_file << dv << std::endl;
+    dq_file.close();
+    dk_file.close();
+    dv_file.close();
+  }
+  // todo(gabriele): check the memory buffer here
+  // todo(yingyi): fix reserving 2x memory for dq, dk, dv
+  // save dq, dk, dv from at::Tensor to memory buffer
+
+  // end step 2
+  // ================================================================
+}
 }
 } // namespace IncMultiHeadAttention
 } // namespace Kernels
@@ -2608,12 +2867,11 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
         BatchConfig::max_sequence_length() * num_q_heads * size_of_dt);
     // alibi_slopes_ptr = gpu_mem_allocator.allocate_instance_untyped(
     //     num_q_heads * sizeof(float));
-    
+
     // todo(gabriele): review flash-attn metadara
     flash_attn_p_dropout = 0.0f;
     flash_attn_is_causal = true;
     flash_attn_return_softmax = false;
-    flash_attn_deterministic = false;
     flash_attn_softcap = 0.0f;
     flash_attn_rng_state_0 = 0;
     flash_attn_rng_state_1 = 0;
