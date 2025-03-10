@@ -1545,6 +1545,9 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   checkCUDA(status);
 }
 
+// TODO(yingyi): replace with flash-attn
+// qkv_ptr: Q, K, V
+// output_ptr: O
 template <typename DT>
 void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                       BatchConfig const *bc,
@@ -1573,6 +1576,7 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                 fpath.c_str());
   }
 
+  // TODO(yingyi): take care of the shape?
   // phase 1: Implement kernel to apply rotary embedding and scaling
   apply_scaling_and_rotary(
       m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), inf_stream);
@@ -1724,6 +1728,7 @@ void transposeAdd<half>(half *out,
       out, in, width, height, __float2half(alpha), __float2half(beta));
 }
 
+// TODO(yingyi): add flash-attn support to peft_bwd_kernel
 template <typename DT>
 void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                      BatchConfig const *bc,
@@ -2165,6 +2170,14 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   }
 }
 
+// todo(yingyi): replace with flash-attn
+void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
+                           BatchConfig const *bc,
+                           int shard_id,
+                           DT *input_grad_ptr,
+                           DT const *output_grad_ptr,
+                           cudaStream_t peft_stream) {
+}
 } // namespace IncMultiHeadAttention
 } // namespace Kernels
 
@@ -2243,20 +2256,30 @@ void IncMultiHeadSelfAttention::peft_bwd_kernel_wrapper(
 
   if (input_grad.data_type == DT_HALF) {
     assert(!m->offload);
+#if USE_FLASH_ATTENTION
+    Kernels::IncMultiHeadAttention::flash_peft_bwd_kernel(
+        m, bc, shard_id, input_grad, output_grad, stream);
+#else
     Kernels::IncMultiHeadAttention::peft_bwd_kernel(m,
                                                     bc,
                                                     shard_id,
                                                     input_grad.get_half_ptr(),
                                                     output_grad.get_half_ptr(),
                                                     stream);
+#endif
   } else if (input_grad.data_type == DT_FLOAT) {
     assert(!m->offload);
+#if USE_FLASH_ATTENTION
+    Kernels::IncMultiHeadAttention::flash_peft_bwd_kernel(
+        m, bc, shard_id, input_grad, output_grad, stream);
+#else
     Kernels::IncMultiHeadAttention::peft_bwd_kernel(m,
                                                     bc,
                                                     shard_id,
                                                     input_grad.get_float_ptr(),
                                                     output_grad.get_float_ptr(),
                                                     stream);
+#endif
   } else {
     assert(false && "Unspported data type");
   }
