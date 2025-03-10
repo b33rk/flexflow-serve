@@ -19,7 +19,7 @@ if [[ "$HUGGINGFACE_TOKEN" != "none" ]]; then
 fi
 
 cleanup() {
-    eval rm -rf "${CACHE_PATH}/debug" ./fine_grained_alignment_config.json ./inference/output/fine_grained_alignment_test_ff.txt ./inference/output/fine_grained_alignment_test_hf.txt
+    eval rm -rf "${CACHE_PATH}/debug" /tmp/fine_grained_alignment_config.json ./inference/output/fine_grained_alignment_test_ff.txt ./inference/output/fine_grained_alignment_test_hf.txt
 }
 
 # Cd into directory holding this script
@@ -88,9 +88,9 @@ json_config=$(cat <<-END
     }
 END
 )
-echo "$json_config" > ./fine_grained_alignment_config.json
+echo "$json_config" > /tmp/fine_grained_alignment_config.json
 
-python ./inference/python/incr_decoding.py -config-file ./fine_grained_alignment_config.json
+python ./inference/python/incr_decoding.py -config-file /tmp/fine_grained_alignment_config.json
 
 # C++ test
 echo "C++ test"

@@ -1952,7 +1952,9 @@ void IncMultiHeadSelfAttention::peft_bwd_kernel_wrapper(
 IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     FFHandler handler,
     IncMultiHeadSelfAttention const *attn,
-    MemoryAllocator &gpu_mem_allocator,
+    MemoryAllocator &inf_mem_allocator,
+    MemoryAllocator &kv_cache_mem_allocator,
+    MemoryAllocator &peft_mem_allocator,
     int _num_q_heads,
     int _num_kv_heads)
     : IncMultiHeadSelfAttentionMeta(handler,
@@ -1967,7 +1969,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                     attn->qk_prod_scaling,
                                     attn->position_bias,
                                     attn->scaling_factor,
-                                    gpu_mem_allocator,
+                                    inf_mem_allocator,
+                                    kv_cache_mem_allocator,
+                                    peft_mem_allocator,
                                     attn->num_q_heads,
                                     attn->num_kv_heads,
                                     _num_q_heads,
@@ -1989,7 +1993,9 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     bool _qk_prod_scaling,
     bool _position_bias,
     float _scaling_factor,
-    MemoryAllocator &gpu_mem_allocator,
+    MemoryAllocator &inf_mem_allocator,
+    MemoryAllocator &kv_cache_mem_allocator,
+    MemoryAllocator &peft_mem_allocator,
     int _global_num_q_heads,
     int _global_num_kv_heads,
     int _num_q_heads,
@@ -2005,9 +2011,10 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   // assume dimensions match for now
   qProjSize = _qProjSize;
   kProjSize = _kProjSize;
-  assert(qProjSize == kProjSize); // required for attention QK.T matmul
   vProjSize = _vProjSize;
   oProjSize = _oProjSize;
+  assert(qProjSize == kProjSize &&
+         kProjSize == vProjSize); // required for attention QK.T matmul
   size_t size_of_dt = data_type_size(attn->data_type);
   quantization_type = _quantization_type;
   offload = _offload;
@@ -2128,55 +2135,55 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                     (query_tmp_size + key_cache_size + value_cache_size) *
                         size_of_dt;
 
-      size_t instance_size =
+      size_t inf_instance_size =
           size_of_dt *
           (infer_mode == TREE_VERIFY_MODE
                ? query_tmp_size + key_cache_size + value_cache_size +
                      qkv_max_proj_size
                : query_tmp_size + key_cache_size + value_cache_size);
 
-      assert(gpu_mem_allocator.reserved_total_size -
-                 gpu_mem_allocator.reserved_allocated_size >=
+      assert(inf_mem_allocator.reserved_total_size -
+                 inf_mem_allocator.reserved_allocated_size >=
              totalSharedSize);
-      gpu_mem_allocator.create_legion_instance(
-          reserveInst, instance_size, "IncMultiHeadSelfAttentionMeta");
+      inf_mem_allocator.create_legion_instance(
+          inf_instance, inf_instance_size, "IncMultiHeadSelfAttentionMeta");
     } else {
-      gpu_mem_allocator.create_legion_instance(
-          reserveInst, totalSize, "IncMultiHeadSelfAttentionMeta");
+      inf_mem_allocator.create_legion_instance(
+          inf_instance, totalSize, "IncMultiHeadSelfAttentionMeta");
     }
 
     // in tree_verify, enable devQKVProjArray;
     if (!offload || infer_mode == TREE_VERIFY_MODE) {
-      devQKVProjArray = gpu_mem_allocator.allocate_instance_untyped(
+      devQKVProjArray = inf_mem_allocator.allocate_instance_untyped(
           qkv_max_proj_size * size_of_dt);
     } else {
-      devQKVProjArray = gpu_mem_allocator.allocate_reserved_untyped(
+      devQKVProjArray = inf_mem_allocator.allocate_reserved_untyped(
           qkv_max_proj_size * size_of_dt);
       // offset += qkv_max_proj_size * size_of_dt;
     }
 
     // use key value cache in all mode.
-    keyCache = gpu_mem_allocator.allocate_instance_untyped(key_cache_size *
+    keyCache = inf_mem_allocator.allocate_instance_untyped(key_cache_size *
                                                            size_of_dt);
-    valueCache = gpu_mem_allocator.allocate_instance_untyped(value_cache_size *
+    valueCache = inf_mem_allocator.allocate_instance_untyped(value_cache_size *
                                                              size_of_dt);
 
     // gqa pointers
     if (num_q_heads > num_kv_heads) {
       assert(num_q_heads % num_kv_heads == 0 &&
              "Num Q heads must be a multiple of num KV heads");
-      d_A_array = (void **)gpu_mem_allocator.allocate_instance_untyped(
+      d_A_array = (void **)inf_mem_allocator.allocate_instance_untyped(
           gqa_ptr_array_size);
-      d_B_array = (void **)gpu_mem_allocator.allocate_instance_untyped(
+      d_B_array = (void **)inf_mem_allocator.allocate_instance_untyped(
           gqa_ptr_array_size);
-      d_C_array = (void **)gpu_mem_allocator.allocate_instance_untyped(
+      d_C_array = (void **)inf_mem_allocator.allocate_instance_untyped(
           gqa_ptr_array_size);
       if (enable_peft_finetuning) {
-        d_A_array2 = (void **)gpu_mem_allocator.allocate_instance_untyped(
+        d_A_array2 = (void **)inf_mem_allocator.allocate_instance_untyped(
             gqa_ptr_array_size);
-        d_B_array2 = (void **)gpu_mem_allocator.allocate_instance_untyped(
+        d_B_array2 = (void **)inf_mem_allocator.allocate_instance_untyped(
             gqa_ptr_array_size);
-        d_C_array2 = (void **)gpu_mem_allocator.allocate_instance_untyped(
+        d_C_array2 = (void **)inf_mem_allocator.allocate_instance_untyped(
             gqa_ptr_array_size);
       }
     }
@@ -2187,34 +2194,34 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
         handler.batch_config_metadata->requestsInfo);
 
     if (offload) {
-      qk_prods = gpu_mem_allocator.allocate_reserved_untyped(qk_prod_size *
+      qk_prods = inf_mem_allocator.allocate_reserved_untyped(qk_prod_size *
                                                              size_of_dt);
-      qk_prods_softmax = gpu_mem_allocator.allocate_reserved_untyped(
+      qk_prods_softmax = inf_mem_allocator.allocate_reserved_untyped(
           qk_prod_size * size_of_dt);
       // attn_heads =
-      // gpu_mem_allocator.allocate_reserved_untyped(attn_heads_size *
+      // inf_mem_allocator.allocate_reserved_untyped(attn_heads_size *
       //                                                          size_of_dt);
       complex_input =
-          gpu_mem_allocator.allocate_reserved<hipFloatComplex>(complex_size);
+          inf_mem_allocator.allocate_reserved<hipFloatComplex>(complex_size);
     } else {
-      qk_prods = gpu_mem_allocator.allocate_instance_untyped(qk_prod_size *
+      qk_prods = inf_mem_allocator.allocate_instance_untyped(qk_prod_size *
                                                              size_of_dt);
-      qk_prods_softmax = gpu_mem_allocator.allocate_instance_untyped(
+      qk_prods_softmax = inf_mem_allocator.allocate_instance_untyped(
           qk_prod_size * size_of_dt);
       // attn_heads =
-      // gpu_mem_allocator.allocate_instance_untyped(attn_heads_size *
+      // inf_mem_allocator.allocate_instance_untyped(attn_heads_size *
       //                                                          size_of_dt);
       complex_input =
-          gpu_mem_allocator.allocate_instance<hipFloatComplex>(complex_size);
+          inf_mem_allocator.allocate_instance<hipFloatComplex>(complex_size);
     }
 
     if (enable_peft_finetuning) {
-      query_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
+      query_activation_buffer = inf_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size1);
-      softmax_activation_buffer = gpu_mem_allocator.allocate_instance_untyped(
+      softmax_activation_buffer = inf_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size2);
       peft_token_infos_device = (BatchConfig::PerTokenInfo *)
-                                    gpu_mem_allocator.allocate_instance_untyped(
+                                    inf_mem_allocator.allocate_instance_untyped(
                                         peft_token_infos_size);
     }
 
@@ -2223,8 +2230,8 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       assert(offload);
     }
     if (!offload) {
-      assert(gpu_mem_allocator.reserved_total_size ==
-             gpu_mem_allocator.reserved_allocated_size);
+      assert(inf_mem_allocator.reserved_total_size ==
+             inf_mem_allocator.reserved_allocated_size);
     }
   }
 
@@ -2232,8 +2239,8 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
 }
 
 IncMultiHeadSelfAttentionMeta::~IncMultiHeadSelfAttentionMeta(void) {
-  if (reserveInst != Realm::RegionInstance::NO_INST) {
-    reserveInst.destroy();
+  if (inf_instance != Realm::RegionInstance::NO_INST) {
+    inf_instance.destroy();
   }
 }
 

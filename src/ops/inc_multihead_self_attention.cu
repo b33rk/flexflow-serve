@@ -2023,7 +2023,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       } else if (enable_peft_finetuning) {
         inf_instance_size += 3 * gqa_ptr_array_size;  // fwd
         peft_instance_size += 3 * gqa_ptr_array_size; // bwd
-        printf("3 * gqa_ptr_array_size=%lu\n", 3 * gqa_ptr_array_size);
       }
     }
 
@@ -2044,8 +2043,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       // add kv cache for single sequence
       peft_key_cache_size = peft_value_cache_size =
           num_kv_heads * kProjSize * BatchConfig::max_sequence_length();
-      printf("(peft_key_cache_size + peft_value_cache_size) * size_of_dt=%lu\n",
-             (peft_key_cache_size + peft_value_cache_size) * size_of_dt);
       peft_instance_size +=
           (peft_key_cache_size + peft_value_cache_size) * size_of_dt;
     }
@@ -2061,8 +2058,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     if (enable_peft_finetuning) {
       qkv_max_proj_size_bwd =
           qProjSize * tot_num_heads * BatchConfig::max_sequence_length();
-      printf("qkv_max_proj_size_bwd * size_of_dt=%lu\n",
-             qkv_max_proj_size_bwd * size_of_dt);
 
       peft_instance_size += qkv_max_proj_size_bwd * size_of_dt;
     }
@@ -2080,8 +2075,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       complex_size_bwd = BatchConfig::max_sequence_length() * qProjSize *
                          (num_q_heads + num_kv_heads) /
                          2; // only used for Q and K, not V
-      printf("complex_size_bwd * sizeof(cuFloatComplex)=%lu\n",
-             complex_size_bwd * sizeof(cuFloatComplex));
       peft_instance_size += complex_size_bwd * sizeof(cuFloatComplex);
     }
     // QK prods and QK prods (softmax)
@@ -2094,7 +2087,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       // they never run concurrently
       qk_prod_size = BatchConfig::max_sequence_length() *
                      BatchConfig::max_sequence_length() * num_q_heads;
-      printf("qk_prod_size * size_of_dt=%lu\n", qk_prod_size * size_of_dt);
       peft_instance_size += qk_prod_size * size_of_dt;
     }
     // PEFT partial results buffers
@@ -2112,9 +2104,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                               BatchConfig::max_sequence_length();
       peft_instance_size +=
           allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
-      printf("allocated_peft_buffer_size1=%lu\n", allocated_peft_buffer_size1);
-      printf("allocated_peft_buffer_size2=%lu\n", allocated_peft_buffer_size2);
-      printf("peft_token_infos_size=%lu\n", peft_token_infos_size);
       peft_instance_size += peft_token_infos_size;
     }
 
@@ -2202,6 +2191,8 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     if (infer_mode == BEAM_SEARCH_MODE) {
       qk_prods = inf_mem_allocator.allocate_instance_untyped(qk_prod_size *
                                                              size_of_dt);
+      qk_prods_softmax = inf_mem_allocator.allocate_instance_untyped(
+          qk_prod_size * size_of_dt);
     }
     if (enable_peft_finetuning) {
       qk_prods_softmax = peft_mem_allocator.allocate_instance_untyped(

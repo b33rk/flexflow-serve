@@ -56,7 +56,7 @@ def get_configs():
             "use_8bit_quantization": False,
             "enable_peft": True,
             "profiling": False,
-            "inference_debugging": True,
+            "inference_debugging": False,
             "fusion": False,
         }
         model_configs = {
