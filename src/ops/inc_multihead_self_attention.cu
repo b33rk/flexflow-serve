@@ -771,17 +771,17 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   // todo(gabriele): check if alibi_slopes_ generation is correct
   // Initialize alibi_slopes tensor for ALiBi position bias
   // The slopes should be consistent with `apply_position_bias_qkprd kernel`
-  std::optional<at::Tensor> alibi_slopes;
+  std::optional<at::Tensor> alibi_slopes_ = std::nullopt;
   if (*m->position_bias) {
-    alibi_slopes = at::empty({m->num_q_heads}, at::kFloat);
+    at::Tensor alibi_slopes = at::empty({m->num_q_heads}, at::kFloat);
     float *slopes_ptr = alibi_slopes.value().data_ptr<float>();
     for (int head_idx = 0; head_idx < m->num_q_heads; head_idx++) {
       int global_head_idx = head_idx + (m->num_q_heads * shard_id);
       float base = (float)(global_head_idx + 1) * 8.0f / m->global_num_q_heads;
       slopes_ptr[head_idx] = 1.0f / std::pow(2.0f, base);
     }
+    alibi_slopes_ = alibi_slopes;
   }
-  alibi_slopes_ = alibi_slopes;
 
   size_t batch_size = 1;
   size_t seqlen_q = num_new_tokens;
@@ -791,12 +791,17 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   size_t head_size = m->qProjSize;
   float softmax_scale =
       (*m->qk_prod_scaling) ? (1.0f / sqrt(m->kProjSize)) : 1.0f;
-  float dropout = 0.0f;
+  float p_dropout = 0.0f;
   int window_size_left = -1;
   int window_size_right = -1;
   float softcap = 0.0f;
   bool is_causal = true, return_softmax = false;
   std::optional<at::Generator> gen_ = std::nullopt;
+
+  // only support head_size aligned with 8 for now
+  // todo(yingyi): remove this constraint by padding (refer to
+  // flash_attn_interface.py)
+  assert(head_size % 8 == 0);
 
   // Get raw pointer of the output tensor [vProjSize, num_q_heads,
   // num_new_tokens] which is (head_size, num_q_heads, num_new_tokens)
@@ -1024,10 +1029,18 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     out_file.close();
     softmax_lse_file.close();
   }
-  // todo(gabriele): alternatively we pass an output tensor to the fwd kernel and copy
-  // data back to meta buffer
+  // save rng_state for backward context
+  m->rng_state_0 = rng_state[0];
+  m->rng_state_1 = rng_state[1];
 
-  // todo(gabriele): alternatively we reorganzie the data layout of output in meta buffer
+  // out is saved in the data_ptr of out tensor
+  // softmax_lse is saved in the data_ptr of softmax_lse tensor
+
+  // todo(gabriele): alternatively we pass an output tensor to the fwd kernel
+  // and copy data back to meta buffer
+
+  // todo(gabriele): alternatively we reorganzie the data layout of output in
+  // meta buffer
 
   // todo(gabriele): handle output tensor here for these two options
 
