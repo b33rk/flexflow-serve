@@ -668,25 +668,31 @@ torch::Dtype getTorchDtype() {
   }
 }
 
+// TODO(yingyi): move to utils??
+// helper: create torch tensor from cuda data
+// only used in flash_compute_attention_kernel_peft & flash_peft_bwd_kernel
 template <typename DT>
-torch::Tensor createTorchTensorFromCuda(void* cudaData, const std::vector<int64_t>& dims) {
-    // Compute column-major strides:
-    // For a tensor with dims = {d0, d1, ..., d_{n-1}},
-    // the strides are: {1, d0, d0*d1, ...}
-    std::vector<int64_t> strides(dims.size());
-    if (!dims.empty()) {
-        strides[0] = 1;
-        for (size_t i = 1; i < dims.size(); ++i) {
-            strides[i] = strides[i - 1] * dims[i - 1];
-        }
+torch::Tensor createTorchTensorFromCuda(void *cudaData,
+                                        std::vector<int64_t> const &dims) {
+  // Compute column-major strides:
+  // For a tensor with dims = {d0, d1, ..., d_{n-1}},
+  // the strides are: {1, d0, d0*d1, ...}
+  std::vector<int64_t> strides(dims.size());
+  if (!dims.empty()) {
+    strides[0] = 1;
+    for (size_t i = 1; i < dims.size(); ++i) {
+      strides[i] = strides[i - 1] * dims[i - 1];
     }
+  }
 
-    // Set tensor options to use CUDA and the appropriate data type.
-    auto options = torch::TensorOptions().dtype(getTorchDtype<DT>()).device(torch::kCUDA);
+  // Set tensor options to use CUDA and the appropriate data type.
+  auto options =
+      torch::TensorOptions().dtype(getTorchDtype<DT>()).device(torch::kCUDA);
 
-    // Create the tensor. 
-    // The deleter is a no-op since we assume external management of the memory.
-    return torch::from_blob(cudaData, dims, strides, /*deleter=*/[](void*){}, options);
+  // Create the tensor.
+  // The deleter is a no-op since we assume external management of the memory.
+  return torch::from_blob(
+      cudaData, dims, strides, /*deleter=*/[](void *) {}, options);
 }
 
 // TODO(yingyi): fwd implementation of flash-attn
@@ -794,10 +800,12 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
 
   // Get raw pointer of the output tensor [vProjSize, num_q_heads,
   // num_new_tokens] which is (head_size, num_q_heads, num_new_tokens)
-  DT *out_ptr = static_cast<DT *>(attn_heads) + tokens_previous_requests * m->num_q_heads * m->vProjSize;
+  DT *out_ptr = static_cast<DT *>(attn_heads) +
+                tokens_previous_requests * m->num_q_heads * m->vProjSize;
   // Store the output tensor to the result attn heads
   // out size: (batch_size, seqlen_q, num_heads, head_size)
-  at::Tensor out = createTorchTensorFromCuda(out_ptr, {head_size, num_heads, seqlen_q});
+  at::Tensor out =
+      createTorchTensorFromCuda(out_ptr, {head_size, num_heads, seqlen_q});
   out = out.permute({2, 1, 0}).unsqueeze(0);
 
   // cuda layout: [qProjSize, num_q_heads, num_new_tokens]
@@ -810,20 +818,36 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
 
   // re-organize q, k, v tensor to match the layout of flash-attn
   // q size: (batch_size, seqlen_q, num_heads, head_size)
-  at::Tensor q = createTorchTensorFromCuda(q_ptr, {head_size, num_heads, seqlen_q});
+  at::Tensor q =
+      createTorchTensorFromCuda(q_ptr, {head_size, num_heads, seqlen_q});
   q = q.permute({2, 1, 0}).unsqueeze(0);
   // k size: (batch_size, seqlen_k, num_heads_k, head_size)
-  at::Tensor k = createTorchTensorFromCuda(q_ptr, {head_size, num_heads_k, seqlen_k});
+  at::Tensor k =
+      createTorchTensorFromCuda(q_ptr, {head_size, num_heads_k, seqlen_k});
   k = k.permute({2, 1, 0}).unsqueeze(0);
   // v size: (batch_size, seqlen_k, num_heads_k, head_size)
-  at::Tensor v = createTorchTensorFromCuda(q_ptr, {head_size, num_heads_k, seqlen_k});
+  at::Tensor v =
+      createTorchTensorFromCuda(q_ptr, {head_size, num_heads_k, seqlen_k});
   v = v.permute({2, 1, 0}).unsqueeze(0);
 
   auto const sizes = q.sizes();
   if (m->inference_debugging) {
-    std::cout << "Q Tensor Shape: " << q.sizes() << std::endl;
-    std::cout << "K Tensor Shape: " << k.sizes() << std::endl;
-    std::cout << "V Tensor Shape: " << v.sizes() << std::endl;
+    // std::cout << "Q Tensor Shape: " << q.sizes() << std::endl;
+    // std::cout << "K Tensor Shape: " << k.sizes() << std::endl;
+    // std::cout << "V Tensor Shape: " << v.sizes() << std::endl;
+    std::string q_fpath = get_peft_dbg_folder(m, shard_id) + ".q.txt";
+    std::string k_fpath = get_peft_dbg_folder(m, shard_id) + ".k.txt";
+    std::string v_fpath = get_peft_dbg_folder(m, shard_id) + ".v.txt";
+    // print the values of q, k, v to file
+    std::ofstream q_file(q_fpath);
+    std::ofstream k_file(k_fpath);
+    std::ofstream v_file(v_fpath);
+    q_file << q << std::endl;
+    k_file << k << std::endl;
+    v_file << v << std::endl;
+    q_file.close();
+    k_file.close();
+    v_file.close();
   }
 
   if (window_size_left >= seqlen_k) {
@@ -881,14 +905,17 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   int const seqlen_k_rounded = round_multiple(seqlen_k, 128);
 
   auto opts = q.options();
-  
-  // softmax_lse is serialized in torch format (i.e. row major order). 
+
+  // softmax_lse is serialized in torch format (i.e. row major order).
   // full shape: [bz, num_q_heads, max sequence length]
-  // chunk modified in this function: [bz, num_q_heads, tokens_previous_steps : tokens_previous_steps + num_new_tokens]
-  at::Tensor softmax_lse = torch::from_blob(static_cast<float *>(m->softmax_lse),
-                                          {1, num_heads, bc->requestsInfo[i].max_length},
-                                          opts.dtype(at::kFloat));
-  softmax_lse = softmax_lse.slice(2, tokens_previous_steps, tokens_previous_steps+seqlen_q);
+  // chunk modified in this function: [bz, num_q_heads, tokens_previous_steps :
+  // tokens_previous_steps + num_new_tokens]
+  at::Tensor softmax_lse =
+      torch::from_blob(static_cast<float *>(m->softmax_lse),
+                       {1, num_heads, bc->requestsInfo[i].max_length},
+                       opts.dtype(at::kFloat));
+  softmax_lse = softmax_lse.slice(
+      2, tokens_previous_steps, tokens_previous_steps + seqlen_q);
 
   at::Tensor p;
   // Only return softmax if there's dropout to reduce compilation time
@@ -982,11 +1009,20 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   // Step 2: Handle the output tensor and cache softmax_lse for BWD
   // print out the shapes and values of the tensors
   if (m->inference_debugging) {
-    std::cout << "Output Tensor Shape: " << out.sizes() << std::endl;
-    std::cout << "out: " << out << std::endl;
+    // std::cout << "Output Tensor Shape: " << out.sizes() << std::endl;
+    // std::cout << "out: " << out << std::endl;
 
-    std::cout << "Softmax LSE Shape: " << softmax_lse.sizes() << std::endl;
-    std::cout << "softmax_lse: " << softmax_lse << std::endl;
+    // std::cout << "Softmax LSE Shape: " << softmax_lse.sizes() << std::endl;
+    // std::cout << "softmax_lse: " << softmax_lse << std::endl;
+    std::string out_fpath = get_peft_dbg_folder(m, shard_id) + ".out.txt";
+    std::string softmax_lse_fpath =
+        get_peft_dbg_folder(m, shard_id) + ".softmax_lse.txt";
+    std::ofstream out_file(out_fpath);
+    std::ofstream softmax_lse_file(softmax_lse_fpath);
+    out_file << out << std::endl;
+    softmax_lse_file << softmax_lse << std::endl;
+    out_file.close();
+    softmax_lse_file.close();
   }
   // todo(gabriele): alternatively we pass an output tensor to the fwd kernel and copy
   // data back to meta buffer
@@ -2554,8 +2590,8 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
 
     // todo(gabriele): review the allocation and caching of softmax_lse
     // flash-attn softmax_lse
-    softmax_lse = gpu_mem_allocator.allocate_instance_untyped(BatchConfig::max_sequence_length() *
-        num_q_heads * size_of_dt);
+    softmax_lse = gpu_mem_allocator.allocate_instance_untyped(
+        BatchConfig::max_sequence_length() * num_q_heads * size_of_dt);
 
     // intermediate buffers
     // devQKVProjArray: used to store QKV proj so that we can modify them (apply
@@ -2740,5 +2776,5 @@ template __global__ void
         int num_heads,
         int global_num_q_heads,
         int shard_id);
-
-}; // namespace FlexFlow
+}
+; // namespace FlexFlow
