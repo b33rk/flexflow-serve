@@ -14,6 +14,8 @@
 #define CHECK_SHAPE(x, ...) TORCH_CHECK(x.sizes() == torch::IntArrayRef({__VA_ARGS__}), #x " must have shape (" #__VA_ARGS__ ")")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 
+// The flash-attn API should be under flash namespace for flash-attn >= 2.7.4
+namespace flash {       
 // API-0: mha_fwd in `3rd_party/flash-attention/csrc/flash_attn/flash_api.cpp`
 // do not use this to get rid of at interface
 // ERROR: `mha_fwd` symbol not found
@@ -410,3 +412,4 @@ inline int get_num_sm(int device)
         CHECK_CUDA(cudaDeviceGetAttribute(&multiprocessor_count, cudaDevAttrMultiProcessorCount, device));
         return multiprocessor_count;
 }
+}; // namespace flash

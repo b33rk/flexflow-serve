@@ -28,7 +28,7 @@
 #include "flexflow/page_manager.h"
 
 // flash-attn
-#include "flash_api.h"
+#include "flexflow/flash_api.h"
 #include <ATen/cuda/CUDAGeneratorImpl.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
@@ -944,8 +944,8 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     p = torch::empty({0}, opts);
   }
 
-  Flash_fwd_params fwd_params;
-  set_params_fprop(fwd_params,
+  flash::Flash_fwd_params fwd_params;
+  flash::set_params_fprop(fwd_params,
                    batch_size,
                    seqlen_q,
                    seqlen_k,
@@ -973,7 +973,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   // Keep references to these tensors to extend their lifetime
   at::Tensor softmax_lse_accum, out_accum;
   std::tie(softmax_lse_accum, out_accum) =
-      set_params_splitkv(fwd_params,
+      flash::set_params_splitkv(fwd_params,
                          batch_size,
                          num_heads,
                          head_size,
@@ -982,7 +982,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                          head_size_rounded,
                          p_dropout,
                          /*num_splits*/ 0,
-                         get_num_sm(get_current_device()),
+                         flash::get_num_sm(flash::get_current_device()),
                          opts);
 
   // number of times random will be generated per thread, to offset philox
@@ -1006,7 +1006,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   set_params_alibi(fwd_params, alibi_slopes_, batch_size, num_heads);
 
   if (seqlen_k > 0) {
-    run_mha_fwd(fwd_params, peft_stream);
+    flash::run_mha_fwd(fwd_params, peft_stream);
   } else {
     // If seqlen_k == 0, then we have an empty tensor. We need to set the output
     // to 0.
@@ -2355,7 +2355,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
           opts.dtype(at::kFloat));
     } else {
       int const nsplits =
-          (get_num_sm(get_current_device()) + batch_size * num_heads - 1) /
+          (flash::get_num_sm(flash::get_current_device()) + batch_size * num_heads - 1) /
           (batch_size * num_heads);
       dq_accum = torch::zeros(
           {nsplits, batch_size, seqlen_q_rounded, num_heads, head_size_rounded},
@@ -2378,9 +2378,9 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     dv_expanded = dv;
   }
 
-  Flash_bwd_params bwd_params;
+  flash::Flash_bwd_params bwd_params;
 
-  set_params_dgrad(bwd_params,
+  flash::set_params_dgrad(bwd_params,
                    batch_size,
                    seqlen_q,
                    seqlen_k,
@@ -2416,7 +2416,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                    /*unpadded_lse*/ false);
   bwd_params.dq_accum_split_stride = !deterministic ? 0 : dq_accum.stride(0);
 
-  auto launch = &run_mha_bwd;
+  auto launch = &flash::run_mha_bwd;
 
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
       gen_, at::cuda::detail::getDefaultCUDAGenerator());
