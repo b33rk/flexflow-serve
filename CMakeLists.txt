@@ -21,22 +21,9 @@ set(CMAKE_HIP_FLAGS "-std=c++17 ${CMAKE_HIP_FLAGS} -fPIC -UNDEBUG")
 #set(CMAKE_CUDA_STANDARD 17)
 
 option(INFERENCE_TESTS "Run inference tests" OFF)
-set(LIBTORCH_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../libtorch" CACHE STRING "LibTorch Path")
-if (INFERENCE_TESTS)
-  find_package(Torch REQUIRED PATHS ${LIBTORCH_PATH} NO_DEFAULT_PATH)
-  set(CMAKE_CXX_FLAGS "-std=c++17 ${CMAKE_CXX_FLAGS} -fPIC ${TORCH_CXX_FLAGS}")
-  message(STATUS "LIBTORCH_PATH: ${LIBTORCH_PATH}")
-  message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
-endif()
 
 # Peft with Flash Attention
-option(USE_FLASH_ATTENTION "Enable Flash Attention implementation" OFF)
-if(USE_FLASH_ATTENTION)
-  # find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
-  find_package(Torch REQUIRED PATHS ${LIBTORCH_PATH} NO_DEFAULT_PATH)
-  message(STATUS "TORCH_INCLUDE_DIRS: ${TORCH_INCLUDE_DIRS}")
-  message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
-endif()
+option(USE_FLASH_ATTENTION "Enable Flash Attention implementation" ON)
 
 # Set a default build type if none was specified
 set(default_build_type "Debug")
@@ -211,11 +198,7 @@ include(optional)
 # list(APPEND FLEXFLOW_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/deps/flashinfer/src)
 include(flashinfer)
 
-# flash attention
-if (USE_FLASH_ATTENTION)
-  list(APPEND FLEXFLOW_INCLUDE_DIRS ${Python3_INCLUDE_DIRS})
-  list(APPEND FLEXFLOW_INCLUDE_DIRS ${TORCH_INCLUDE_DIRS})
-endif()
+include(flash_attn)
 
 if (FF_GPU_BACKEND STREQUAL "cuda")
   list(APPEND FF_CC_FLAGS
@@ -400,19 +383,6 @@ target_include_directories(flexflow PUBLIC ${FLEXFLOW_INCLUDE_DIRS})
 # to link FlexFlow to ${LEGION_LIBRARY}
 target_link_libraries(flexflow ${LEGION_LIBRARY} ${FLEXFLOW_EXT_LIBRARIES} nlohmann_json::nlohmann_json mpark_variant optional)
 
-if (USE_FLASH_ATTENTION)
-  file(GLOB FLASH_ATTN_LIB "${Python_SITELIB}/flash_attn*.so")
-  get_filename_component(FLASH_ATTN_SO ${FLASH_ATTN_LIB} NAME)
-  message("FLASH_ATTN_SO: ${FLASH_ATTN_SO}")
-  target_link_directories(flexflow PRIVATE ${Python_SITELIB}) # add the site-packages directory to the link directories
-  target_link_libraries(${TEST_EXECUTABLE} PRIVATE
-        ${TORCH_LIBRARIES}  # Link against PyTorch
-        ${Python3_LIBRARIES}  # Link against Python
-        "-Wl,-Bsymbolic -Wl,-Bsymbolic-functions"
-        ":${FLASH_ATTN_SO}"
-    )
-endif()
-
 #library api version, bump from time to time
 set(SOVERSION 1)
 
@@ -451,12 +421,6 @@ if (NOT FF_BUILD_FROM_PYPI)
     COMMENT "Creating set_python_envs.sh interpreter..."
   )
 endif()
-
-if (INFERENCE_TESTS)
-  target_link_libraries(flexflow "${TORCH_LIBRARIES}")
-  set_property(TARGET flexflow PROPERTY CXX_STANDARD 14)
-endif()
-
 
 # Ensure Rust is installed
 execute_process(COMMAND rustc --version

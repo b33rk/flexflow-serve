@@ -10,6 +10,13 @@
 
 #include <ATen/cuda/CUDAGraphsUtils.cuh> // For at::cuda::philox::unpack
 
+#include <c10/cuda/CUDAGuard.h>
+#include <c10/cuda/CUDAStream.h>
+#include <cuda_runtime.h>
+#include <torch/extension.h>
+#include <torch/torch.h>
+#include <type_traits>
+
 #define CHECK_DEVICE(x) TORCH_CHECK(x.is_cuda(), #x " must be on CUDA")
 #define CHECK_SHAPE(x, ...) TORCH_CHECK(x.sizes() == torch::IntArrayRef({__VA_ARGS__}), #x " must have shape (" #__VA_ARGS__ ")")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")

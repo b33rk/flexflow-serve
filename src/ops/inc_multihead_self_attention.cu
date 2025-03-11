@@ -27,15 +27,8 @@
 #include "flashinfer_ops.cuh"
 #include "flexflow/page_manager.h"
 
-// flash-attn
 #include "flexflow/flash_api.h"
-#include <ATen/cuda/CUDAGeneratorImpl.h>
-#include <c10/cuda/CUDAGuard.h>
-#include <c10/cuda/CUDAStream.h>
-#include <cuda_runtime.h>
-#include <torch/extension.h>
-#include <torch/torch.h>
-#include <type_traits>
+
 
 namespace FlexFlow {
 
@@ -801,7 +794,8 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   size_t head_size = m->qProjSize;
   float softmax_scale =
       (*m->qk_prod_scaling) ? (1.0f / sqrt(m->kProjSize)) : 1.0f;
-  float p_dropout = m->flash_attn_p_dropout;
+  // float p_dropout = m->flash_attn_p_dropout;
+  float p_dropout = 0.0f;
   int window_size_left = m->flash_attn_window_size_left;
   int window_size_right = m->flash_attn_window_size_right;
   float softcap = m->flash_attn_softcap;
@@ -924,8 +918,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
 
   // softmax_lse is serialized in torch format (i.e. row major order).
   // full shape: [bz, num_q_heads, max sequence length]
-  // chunk modified in this function: [bz, num_q_heads, tokens_previous_steps :
-  // tokens_previous_steps + num_new_tokens]
+  // chunk modified in this function: [bz, num_q_heads, tokens_previous_steps : tokens_previous_steps + num_new_tokens]
   at::Tensor softmax_lse =
       torch::from_blob(static_cast<float *>(m->softmax_lse),
                        {1, num_heads, bc->requestsInfo[i].max_length},
