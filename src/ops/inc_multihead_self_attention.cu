@@ -29,7 +29,6 @@
 
 #include "flexflow/flash_api.h"
 
-
 namespace FlexFlow {
 
 // declare Legion names
@@ -59,6 +58,21 @@ std::string get_fwd_dbg_folder(IncMultiHeadSelfAttentionMeta const *m,
   std::string op_name_without_uid =
       IncMultiHeadSelfAttention::get_op_name_without_uid(m);
   fs::path dst_filepath = get_dst_folder("fwd", m->decoding_step, shard_id);
+  if (m->layer_guid.model_id > 0) {
+    assert(false && "Model ID > 0 not supported yet");
+  }
+  std::string layername = "layers." +
+                          std::to_string(m->layer_guid.transformer_layer_id) +
+                          "." + op_name_without_uid;
+  dst_filepath /= layername;
+  return dst_filepath.string();
+}
+
+std::string get_peft_dbg_folder(IncMultiHeadSelfAttentionMeta const *m,
+                                int shard_id) {
+  std::string op_name_without_uid =
+      IncMultiHeadSelfAttention::get_op_name_without_uid(m);
+  fs::path dst_filepath = get_dst_folder("bwd", m->bwd_step, shard_id);
   if (m->layer_guid.model_id > 0) {
     assert(false && "Model ID > 0 not supported yet");
   }
@@ -654,10 +668,14 @@ torch::Dtype getTorchDtype() {
     return torch::kFloat16;
   } else if constexpr (std::is_same_v<DT, at::BFloat16>) {
     return torch::kBFloat16;
+  } else if constexpr (std::is_same_v<DT, half>) { // Handle CUDA's __half
+    return torch::kFloat16;
+  } else if constexpr (std::is_same_v<DT, float>) { // Handle float
+    return torch::kFloat32;
   } else {
     static_assert(!std::is_same_v<DT, DT>,
-                  "Unsupported datatype. Only fp16 (torch::Half) and bf16 "
-                  "(torch::BFloat16) are supported.");
+                  "Unsupported datatype. Only fp16 (torch::Half), bf16 "
+                  "(torch::BFloat16), CUDA half, and float are supported.");
   }
 }
 
@@ -692,10 +710,13 @@ torch::Tensor createTorchTensorFromCuda(void *cudaData,
 template <typename DT>
 void restoreTorchTensorToCuda(torch::Tensor &torch_tensor, DT *data_ptr) {
   // Get the raw pointer of the tensor
-  DT *data_ptr = torch_tensor.data_ptr<DT>();
+  DT *tensor_data_ptr = torch_tensor.data_ptr<DT>();
 
-  // Copy the data from the tensor to the CUDA memory
-  cudaMemcpy(cuda_data, data_ptr, torch_tensor.numel() * sizeof(DT), cudaMemcpyDeviceToDevice);
+  // Copy the data from the tensor_data_ptr to the data_ptr
+  cudaMemcpy(data_ptr,
+             tensor_data_ptr,
+             torch_tensor.numel() * sizeof(DT),
+             cudaMemcpyDeviceToDevice);
 }
 
 // TODO(yingyi): fwd implementation of flash-attn
@@ -717,10 +738,10 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   cudaDataType_t cublas_data_type = ff_to_cuda_datatype(m->output_type[0]);
   cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
   assert(data_type_size(m->output_type[0]) == sizeof(DT));
-  cudaDataType_t compute_type = cublas_data_type;
+  // cudaDataType_t compute_type = cublas_data_type;
 
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
-  int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
+  // int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
 
   assert(bc->num_finetuning_fwd_tokens() > 0);
   int req_idx = bc->finetuning_request_index();
@@ -777,7 +798,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   std::optional<at::Tensor> alibi_slopes_ = std::nullopt;
   if (*m->position_bias) {
     at::Tensor alibi_slopes = at::empty({m->num_q_heads}, at::kFloat);
-    float *slopes_ptr = alibi_slopes.value().data_ptr<float>();
+    float *slopes_ptr = alibi_slopes.data_ptr<float>();
     for (int head_idx = 0; head_idx < m->num_q_heads; head_idx++) {
       int global_head_idx = head_idx + (m->num_q_heads * shard_id);
       float base = (float)(global_head_idx + 1) * 8.0f / m->global_num_q_heads;
@@ -786,12 +807,12 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     alibi_slopes_ = alibi_slopes;
   }
 
-  size_t batch_size = 1;
-  size_t seqlen_q = num_new_tokens;
-  size_t seqlen_k = total_tokens;
-  size_t num_heads = m->num_q_heads;
-  size_t num_heads_k = m->num_kv_heads;
-  size_t head_size = m->qProjSize;
+  signed long batch_size = 1;
+  signed long seqlen_q = num_new_tokens;
+  signed long seqlen_k = total_tokens;
+  signed long num_heads = m->num_q_heads;
+  signed long num_heads_k = m->num_kv_heads;
+  signed long head_size = m->qProjSize;
   float softmax_scale =
       (*m->qk_prod_scaling) ? (1.0f / sqrt(m->kProjSize)) : 1.0f;
   // float p_dropout = m->flash_attn_p_dropout;
@@ -815,7 +836,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   // Store the output tensor to the result attn heads
   // out size: (batch_size, seqlen_q, num_heads, head_size)
   at::Tensor out =
-      createTorchTensorFromCuda(out_ptr, {head_size, num_heads, seqlen_q});
+      createTorchTensorFromCuda<DT>(out_ptr, {head_size, num_heads, seqlen_q});
   out = out.permute({2, 1, 0}).unsqueeze(0);
 
   // cuda layout: [qProjSize, num_q_heads, num_new_tokens]
@@ -829,15 +850,15 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   // re-organize q, k, v tensor to match the layout of flash-attn
   // q size: (batch_size, seqlen_q, num_heads, head_size)
   at::Tensor q =
-      createTorchTensorFromCuda(q_ptr, {head_size, num_heads, seqlen_q});
+      createTorchTensorFromCuda<DT>(q_ptr, {head_size, num_heads, seqlen_q});
   q = q.permute({2, 1, 0}).unsqueeze(0);
   // k size: (batch_size, seqlen_k, num_heads_k, head_size)
   at::Tensor k =
-      createTorchTensorFromCuda(q_ptr, {head_size, num_heads_k, seqlen_k});
+      createTorchTensorFromCuda<DT>(k_ptr, {head_size, num_heads_k, seqlen_k});
   k = k.permute({2, 1, 0}).unsqueeze(0);
   // v size: (batch_size, seqlen_k, num_heads_k, head_size)
   at::Tensor v =
-      createTorchTensorFromCuda(q_ptr, {head_size, num_heads_k, seqlen_k});
+      createTorchTensorFromCuda<DT>(v_ptr, {head_size, num_heads_k, seqlen_k});
   v = v.permute({2, 1, 0}).unsqueeze(0);
 
   auto const sizes = q.sizes();
@@ -918,10 +939,11 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
 
   // softmax_lse is serialized in torch format (i.e. row major order).
   // full shape: [bz, num_q_heads, max sequence length]
-  // chunk modified in this function: [bz, num_q_heads, tokens_previous_steps : tokens_previous_steps + num_new_tokens]
+  // chunk modified in this function: [bz, num_q_heads, tokens_previous_steps :
+  // tokens_previous_steps + num_new_tokens]
   at::Tensor softmax_lse =
-      torch::from_blob(static_cast<float *>(m->softmax_lse),
-                       {1, num_heads, bc->requestsInfo[i].max_length},
+      torch::from_blob(static_cast<float *>(m->flash_attn_softmax_lse),
+                       {1, num_heads, bc->requestsInfo[req_idx].max_length},
                        opts.dtype(at::kFloat));
   softmax_lse = softmax_lse.slice(
       2, tokens_previous_steps, tokens_previous_steps + seqlen_q);
@@ -939,44 +961,44 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
 
   flash::Flash_fwd_params fwd_params;
   flash::set_params_fprop(fwd_params,
-                   batch_size,
-                   seqlen_q,
-                   seqlen_k,
-                   seqlen_q_rounded,
-                   seqlen_k_rounded,
-                   num_heads,
-                   num_heads_k,
-                   head_size,
-                   head_size_rounded,
-                   q,
-                   k,
-                   v,
-                   out,
-                   /*cu_seqlens_q_d=*/nullptr,
-                   /*cu_seqlens_k_d=*/nullptr,
-                   /*seqused_k=*/nullptr,
-                   return_softmax ? p.data_ptr() : nullptr,
-                   softmax_lse.data_ptr(),
-                   p_dropout,
-                   softmax_scale,
-                   window_size_left,
-                   window_size_right,
-                   softcap);
+                          batch_size,
+                          seqlen_q,
+                          seqlen_k,
+                          seqlen_q_rounded,
+                          seqlen_k_rounded,
+                          num_heads,
+                          num_heads_k,
+                          head_size,
+                          head_size_rounded,
+                          q,
+                          k,
+                          v,
+                          out,
+                          /*cu_seqlens_q_d=*/nullptr,
+                          /*cu_seqlens_k_d=*/nullptr,
+                          /*seqused_k=*/nullptr,
+                          return_softmax ? p.data_ptr() : nullptr,
+                          softmax_lse.data_ptr(),
+                          p_dropout,
+                          softmax_scale,
+                          window_size_left,
+                          window_size_right,
+                          softcap);
 
   // Keep references to these tensors to extend their lifetime
   at::Tensor softmax_lse_accum, out_accum;
   std::tie(softmax_lse_accum, out_accum) =
       flash::set_params_splitkv(fwd_params,
-                         batch_size,
-                         num_heads,
-                         head_size,
-                         seqlen_k,
-                         seqlen_q,
-                         head_size_rounded,
-                         p_dropout,
-                         /*num_splits*/ 0,
-                         flash::get_num_sm(flash::get_current_device()),
-                         opts);
+                                batch_size,
+                                num_heads,
+                                head_size,
+                                seqlen_k,
+                                seqlen_q,
+                                head_size_rounded,
+                                p_dropout,
+                                /*num_splits*/ 0,
+                                flash::get_num_sm(flash::get_current_device()),
+                                opts);
 
   // number of times random will be generated per thread, to offset philox
   // counter in thc random state We use a custom RNG that increases the offset
@@ -1009,7 +1031,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
 
   if (seqlenq_ngroups_swapped) {
     out = out.transpose(1, 2).reshape(
-        {batch_size, 1, num_heads_k * seqlen_q, head_size});
+        {batch_size, num_heads_k * seqlen_q, head_size});
     // q = q.transpose(1, 2).reshape(
     //     {batch_size, 1, num_heads_k * seqlen_q, head_size});
     softmax_lse = softmax_lse.reshape({batch_size, num_heads_k * seqlen_q, 1});
@@ -1034,21 +1056,14 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     softmax_lse_file.close();
   }
   // save rng_state for backward context
-  m->flash_attn_rng_state_0 = rng_state[0];
-  m->flash_attn_rng_state_1 = rng_state[1];
+  m->flash_attn_rng_state_0 = rng_state[0].item<int64_t>();
+  m->flash_attn_rng_state_1 = rng_state[1].item<int64_t>();
 
-  // out is saved in the data_ptr of out tensor
+  // copy out to flash_attn_out for bwd
+  // todo(gabriele): review the layout of flash_attn_out
+  // same layout as out tensor (head_size, num_q_heads, num_new_tokens)
+  memcpy(m->flash_attn_out, out.data_ptr(), out.numel() * sizeof(DT));
   // softmax_lse is saved in the data_ptr of softmax_lse tensor
-
-  // todo(gabriele): alternatively we pass an output tensor to the fwd kernel
-  // and copy data back to meta buffer
-
-  // todo(gabriele): alternatively we reorganzie the data layout of output in
-  // meta buffer
-
-  // todo(gabriele): handle output tensor here for these two options
-
-  // todo(gabriele): handle softmax_lse if copying
 }
 
 // only used by MPT model. https://arxiv.org/abs/2108.12409
@@ -1703,21 +1718,6 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   // }
 }
 
-std::string get_peft_dbg_folder(IncMultiHeadSelfAttentionMeta const *m,
-                                int shard_id) {
-  std::string op_name_without_uid =
-      IncMultiHeadSelfAttention::get_op_name_without_uid(m);
-  fs::path dst_filepath = get_dst_folder("bwd", m->bwd_step, shard_id);
-  if (m->layer_guid.model_id > 0) {
-    assert(false && "Model ID > 0 not supported yet");
-  }
-  std::string layername = "layers." +
-                          std::to_string(m->layer_guid.transformer_layer_id) +
-                          "." + op_name_without_uid;
-  dst_filepath /= layername;
-  return dst_filepath.string();
-}
-
 __global__ void transposeAdd_half_kernel(
     half *out, half const *in, int width, int height, half alpha, half beta) {
   int t_id = blockIdx.x * blockDim.x + threadIdx.x;
@@ -2224,6 +2224,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
 }
 
 // todo(yingyi): replace with flash-attn
+template <typename DT>
 void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                            BatchConfig const *bc,
                            int shard_id,
@@ -2238,7 +2239,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   cudaDataType_t cublas_data_type = ff_to_cuda_datatype(m->output_type[0]);
   cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
   assert(data_type_size(m->output_type[0]) == sizeof(DT));
-  cudaDataType_t compute_type = cublas_data_type;
+  // cudaDataType_t compute_type = cublas_data_type;
 
   assert(
       bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id));
@@ -2267,24 +2268,30 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   // step 1: compute gradients w.r.t. QKV
   // ================================================================
   // same parameters as in flash_compute_attention_kernel_peft
-  size_t batch_size = 1;
-  size_t seqlen_q = num_tokens;
-  size_t seqlen_k = num_total_tokens;
-  size_t num_heads = m->num_q_heads;
-  size_t num_heads_k = m->num_kv_heads;
-  size_t head_size = m->qProjSize;
+  signed long batch_size = 1;
+  signed long seqlen_q = num_tokens;
+  signed long seqlen_k = num_total_tokens;
+  signed long num_heads = m->num_q_heads;
+  signed long num_heads_k = m->num_kv_heads;
+  signed long head_size = m->qProjSize;
+  auto round_multiple = [](int x, int m) { return (x + m - 1) / m * m; };
+  int const head_size_rounded =
+      head_size <= 192 ? round_multiple(head_size, 32) : 256;
+  int const seqlen_q_rounded = round_multiple(seqlen_q, 128);
+  int const seqlen_k_rounded = round_multiple(seqlen_k, 128);
   float softmax_scale =
       (*m->qk_prod_scaling) ? (1.0f / sqrt(m->kProjSize)) : 1.0f;
   float p_dropout = m->flash_attn_p_dropout;
   int window_size_left = m->flash_attn_window_size_left;
   int window_size_right = m->flash_attn_window_size_right;
   float softcap = m->flash_attn_softcap;
+  std::optional<at::Generator> gen_ = std::nullopt;
 
   // recompute alibi slopes (should be the same as in flash_peft_bwd_kernel)
   std::optional<at::Tensor> alibi_slopes_ = std::nullopt;
   if (*m->position_bias) {
     at::Tensor alibi_slopes = at::empty({m->num_q_heads}, at::kFloat);
-    float *slopes_ptr = alibi_slopes.value().data_ptr<float>();
+    float *slopes_ptr = alibi_slopes.data_ptr<float>();
     for (int head_idx = 0; head_idx < m->num_q_heads; head_idx++) {
       int global_head_idx = head_idx + (m->num_q_heads * shard_id);
       float base = (float)(global_head_idx + 1) * 8.0f / m->global_num_q_heads;
@@ -2297,8 +2304,9 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   // dout should have the same shape as out
   // (batch_size, seqlen_q, num_heads, head_size)
   // convert output_grad_ptr to at::Tensor dout
-  at::Tensor dout =
-      createTorchTensorFromCuda(output_grad_ptr, {head_size, num_heads, seqlen_q});
+  at::Tensor dout = createTorchTensorFromCuda<DT>(
+      static_cast<void *>(const_cast<DT *>(output_grad_ptr)),
+      {head_size, num_heads, seqlen_q});
   dout = dout.permute({2, 1, 0}).unsqueeze(0);
 
   at::Tensor dq, dk, dv; // should be empty tensors for regular attention
@@ -2306,6 +2314,51 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   std::optional<at::Tensor> dk_ = std::nullopt;
   std::optional<at::Tensor> dv_ = std::nullopt;
   bool deterministic = m->inference_debugging; // only for debugging
+
+  // todo(gabriele): check if the data is correct
+  // copy from flash_compute_attention_kernel_peft
+  // Should they be the same as in forward?
+  int num_new_tokens = bc->requestsInfo[i].num_tokens_in_batch;
+  int total_tokens = bc->requestsInfo[i].first_token_depth_in_request +
+                     bc->requestsInfo[i].num_tokens_in_batch;
+  int tokens_previous_steps = total_tokens - num_new_tokens;
+  int tokens_previous_requests =
+      bc->requestsInfo[i].first_token_offset_in_batch;
+  // Construct q, k, v, out tensor
+  // cuda layout: [m->qProjSize * num_q_heads, num_new_tokens] (num_new_tokens =
+  // num_tokens)
+  auto q_ptr = static_cast<DT *>(m->query_activation_buffer);
+  // cuda layout: [vProjSize * num_kv_heads, max_num_tokens, num_req]
+  auto k_ptr = static_cast<DT *>(m->keyCachePeft);
+  // cuda layout: [vProjSize * num_kv_heads, max_num_tokens, 1]
+  auto v_ptr = static_cast<DT *>(m->valueCachePeft);
+  auto out_ptr = static_cast<DT *>(m->flash_attn_out) +
+                 tokens_previous_requests * m->num_q_heads * m->vProjSize;
+
+  // re-organize q, k, v tensor to match the layout of flash-attn
+  // q size: (batch_size, seqlen_q, num_heads, head_size)
+  at::Tensor q =
+      createTorchTensorFromCuda<DT>(q_ptr, {head_size, num_heads, seqlen_q});
+  q = q.permute({2, 1, 0}).unsqueeze(0);
+  // k size: (batch_size, seqlen_k, num_heads_k, head_size)
+  at::Tensor k =
+      createTorchTensorFromCuda<DT>(k_ptr, {head_size, num_heads_k, seqlen_k});
+  k = k.permute({2, 1, 0}).unsqueeze(0);
+  // v size: (batch_size, seqlen_k, num_heads_k, head_size)
+  at::Tensor v =
+      createTorchTensorFromCuda<DT>(v_ptr, {head_size, num_heads_k, seqlen_k});
+  v = v.permute({2, 1, 0}).unsqueeze(0);
+  at::Tensor out =
+      createTorchTensorFromCuda<DT>(out_ptr, {head_size, num_heads, seqlen_q});
+  out = out.permute({2, 1, 0}).unsqueeze(0);
+
+  auto opts = q.options();
+  at::Tensor softmax_lse =
+      torch::from_blob(static_cast<float *>(m->flash_attn_softmax_lse),
+                       {1, num_heads, bc->requestsInfo[i].max_length},
+                       opts.dtype(at::kFloat));
+  softmax_lse = softmax_lse.slice(
+      2, tokens_previous_steps, tokens_previous_steps + seqlen_q);
 
   if (dq_.has_value()) {
     dq = dq_.value();
@@ -2347,9 +2400,9 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
           {batch_size, seqlen_q_rounded, num_heads, head_size_rounded},
           opts.dtype(at::kFloat));
     } else {
-      int const nsplits =
-          (flash::get_num_sm(flash::get_current_device()) + batch_size * num_heads - 1) /
-          (batch_size * num_heads);
+      int const nsplits = (flash::get_num_sm(flash::get_current_device()) +
+                           batch_size * num_heads - 1) /
+                          (batch_size * num_heads);
       dq_accum = torch::zeros(
           {nsplits, batch_size, seqlen_q_rounded, num_heads, head_size_rounded},
           bwd_opts.dtype(at::kFloat));
@@ -2374,39 +2427,39 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   flash::Flash_bwd_params bwd_params;
 
   flash::set_params_dgrad(bwd_params,
-                   batch_size,
-                   seqlen_q,
-                   seqlen_k,
-                   seqlen_q_rounded,
-                   seqlen_k_rounded,
-                   num_heads,
-                   num_heads_k,
-                   head_size,
-                   head_size_rounded,
-                   q,
-                   k,
-                   v,
-                   out,
-                   dout,
-                   dq,
-                   dk_expanded,
-                   dv_expanded,
-                   nullptr,
-                   nullptr,
-                   loop ? dq_accum.data_ptr() : nullptr,
-                   // loop ? dk_accum.data_ptr() : nullptr,
-                   // loop ? dv_accum.data_ptr() : nullptr,
-                   nullptr,
-                   nullptr,
-                   softmax_lse.data_ptr(),
-                   softmax_d.data_ptr(),
-                   p_dropout,
-                   softmax_scale,
-                   window_size_left,
-                   window_size_right,
-                   softcap,
-                   deterministic,
-                   /*unpadded_lse*/ false);
+                          batch_size,
+                          seqlen_q,
+                          seqlen_k,
+                          seqlen_q_rounded,
+                          seqlen_k_rounded,
+                          num_heads,
+                          num_heads_k,
+                          head_size,
+                          head_size_rounded,
+                          q,
+                          k,
+                          v,
+                          out,
+                          dout,
+                          dq,
+                          dk_expanded,
+                          dv_expanded,
+                          nullptr,
+                          nullptr,
+                          loop ? dq_accum.data_ptr() : nullptr,
+                          // loop ? dk_accum.data_ptr() : nullptr,
+                          // loop ? dv_accum.data_ptr() : nullptr,
+                          nullptr,
+                          nullptr,
+                          softmax_lse.data_ptr(),
+                          softmax_d.data_ptr(),
+                          p_dropout,
+                          softmax_scale,
+                          window_size_left,
+                          window_size_right,
+                          softcap,
+                          deterministic,
+                          /*unpadded_lse*/ false);
   bwd_params.dq_accum_split_stride = !deterministic ? 0 : dq_accum.stride(0);
 
   auto launch = &flash::run_mha_bwd;
@@ -2415,7 +2468,14 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
       gen_, at::cuda::detail::getDefaultCUDAGenerator());
 
   // We use a custom RNG that increases the offset by batch_size * nheads * 32.
-  int64_t bwd_counter_offset = bwd_params.b * bwd_params.h * 32;
+  // int64_t bwd_counter_offset = bwd_params.b * bwd_params.h * 32;
+
+  // create rng_state tensor
+  auto options =
+      torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+  auto rng_state = torch::zeros({2}, options.dtype(torch::kInt64));
+  rng_state.data_ptr<int64_t>()[0] = m->flash_attn_rng_state_0;
+  rng_state.data_ptr<int64_t>()[1] = m->flash_attn_rng_state_1;
 
   // todo(yingyi): comment out the branch for easier compilation
   // if (rng_state.has_value()) {
@@ -2520,7 +2580,6 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   // end step 2
   // ================================================================
 }
-}
 } // namespace IncMultiHeadAttention
 } // namespace Kernels
 
@@ -2601,7 +2660,12 @@ void IncMultiHeadSelfAttention::peft_bwd_kernel_wrapper(
     assert(!m->offload);
 #if USE_FLASH_ATTENTION
     Kernels::IncMultiHeadAttention::flash_peft_bwd_kernel(
-        m, bc, shard_id, input_grad, output_grad, stream);
+        m,
+        bc,
+        shard_id,
+        input_grad.get_half_ptr(),
+        output_grad.get_half_ptr(),
+        stream);
 #else
     Kernels::IncMultiHeadAttention::peft_bwd_kernel(m,
                                                     bc,
@@ -2614,7 +2678,12 @@ void IncMultiHeadSelfAttention::peft_bwd_kernel_wrapper(
     assert(!m->offload);
 #if USE_FLASH_ATTENTION
     Kernels::IncMultiHeadAttention::flash_peft_bwd_kernel(
-        m, bc, shard_id, input_grad, output_grad, stream);
+        m,
+        bc,
+        shard_id,
+        input_grad.get_float_ptr(),
+        output_grad.get_float_ptr(),
+        stream);
 #else
     Kernels::IncMultiHeadAttention::peft_bwd_kernel(m,
                                                     bc,
@@ -2891,27 +2960,30 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
           peft_key_cache_size * size_of_dt);
       valueCachePeft = peft_mem_allocator.allocate_instance_untyped(
           peft_value_cache_size * size_of_dt);
+
+      // #if USE_FLASH_ATTENTION
+      // todo(gabriele): review the allocation of flash-attn bwd context
+      // flash-attn out: (head_size, num_q_heads, num_new_tokens)
+      flash_attn_out = peft_mem_allocator.allocate_instance_untyped(
+          qProjSize * num_q_heads * BatchConfig::max_sequence_length() *
+          size_of_dt);
+      // flash-attn softmax_lse
+      flash_attn_softmax_lse = peft_mem_allocator.allocate_instance_untyped(
+          BatchConfig::max_sequence_length() * num_q_heads * size_of_dt);
+
+      // todo(gabriele): review flash-attn metadara
+      flash_attn_p_dropout = 0.0f;
+      flash_attn_is_causal = true;
+      flash_attn_return_softmax = false;
+      flash_attn_softcap = 0.0f;
+      flash_attn_rng_state_0 = 0;
+      flash_attn_rng_state_1 = 0;
+      flash_attn_window_size_left = -1;
+      flash_attn_window_size_right = -1;
+      // #endif
     } else {
       keyCachePeft = valueCachePeft = nullptr;
     }
-#if USE_FLASH_ATTENTION
-    // todo(gabriele): review the allocation of flash-attn bwd context
-    // flash-attn softmax_lse
-    softmax_lse = gpu_mem_allocator.allocate_instance_untyped(
-        BatchConfig::max_sequence_length() * num_q_heads * size_of_dt);
-    // alibi_slopes_ptr = gpu_mem_allocator.allocate_instance_untyped(
-    //     num_q_heads * sizeof(float));
-
-    // todo(gabriele): review flash-attn metadara
-    flash_attn_p_dropout = 0.0f;
-    flash_attn_is_causal = true;
-    flash_attn_return_softmax = false;
-    flash_attn_softcap = 0.0f;
-    flash_attn_rng_state_0 = 0;
-    flash_attn_rng_state_1 = 0;
-    flash_attn_window_size_left = -1;
-    flash_attn_window_size_right = -1;
-#endif
     // intermediate buffers
     // devQKVProjArray: used to store QKV proj so that we can modify them (apply
     // rope, etc)
@@ -3095,5 +3167,4 @@ template __global__ void
         int num_heads,
         int global_num_q_heads,
         int shard_id);
-}
-; // namespace FlexFlow
+}; // namespace FlexFlow

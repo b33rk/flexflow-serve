@@ -114,10 +114,11 @@ RUN pip3 install tensorflow notebook
 RUN pip3 install scipy bitsandbytes datasets accelerate loralib triton peft pytest streamlit
 
 # Install Rust
-RUN rm -rf /root/.cargo /root/.rustup && \
-    mkdir -p /root/.cargo /root/.rustup && \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable && \
-    chmod -R a+w /root/.rustup /root/.cargo
+# RUN rm -rf /root/.cargo /root/.rustup && \
+#     mkdir -p /root/.cargo /root/.rustup && \
+#     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable && \
+#     chmod -R a+w /root/.rustup /root/.cargo
+
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV RUSTUP_HOME="/root/.rustup"
@@ -157,5 +158,17 @@ RUN python -c "import torch; print(f'PyTorch Version: {torch.__version__}')" && 
     curl -fsSL -o /tmp/${FLASH_ATTN_WHL} --write-out "%{http_code}" ${FLASH_ATTN_URL} | tee /dev/stderr | grep -q "200" && \
     pip install /tmp/${FLASH_ATTN_WHL} --no-build-isolation && \
     rm -rf /tmp/${FLASH_ATTN_WHL}
+
+# Install Rust
+ENV CARGO_HOME=/opt/rust/cargo
+ENV RUSTUP_HOME=/opt/rust/rustup
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path --default-toolchain stable --profile minimal && \
+    chmod -R a+w /opt/rust/cargo /opt/rust/rustup
+ENV PATH="/opt/rust/cargo/bin:${PATH}"
+
+# Install flexflow dependencies under requirements.txt
+COPY requirements.txt /usr/local/bin/requirements.txt
+RUN pip install -r /usr/local/bin/requirements.txt
+RUN rm /usr/local/bin/requirements.txt
 
 ENTRYPOINT ["/bin/bash"]

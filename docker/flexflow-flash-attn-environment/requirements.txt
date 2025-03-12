@@ -1,0 +1,21 @@
+cffi
+numpy
+cmake-build-extension
+ninja
+requests
+regex
+torch
+torchaudio
+torchvision
+transformers>=4.47.1
+sentencepiece
+einops
+pip
+# peft-related
+scipy
+bitsandbytes 
+datasets 
+accelerate 
+loralib
+triton
+peft
