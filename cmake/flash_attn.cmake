@@ -73,7 +73,11 @@ message(STATUS "Detected FlashAttn installation path: ${FlashAttn_INSTALL_PATH}"
 file(GLOB FLASH_ATTN_LIB "${FlashAttn_INSTALL_PATH}/flash_attn*.so")
 get_filename_component(FLASH_ATTN_SO ${FLASH_ATTN_LIB} NAME)
 message("FLASH_ATTN_SO: ${FLASH_ATTN_SO}")
+set(FLASH_ATTN_PATH "${FlashAttn_INSTALL_PATH}/${FLASH_ATTN_SO}")
+message("FLASH_ATTN_PATH: ${FLASH_ATTN_PATH}")
 
-list(APPEND FLEXFLOW_EXT_LIBRARIES "${FlashAttn_INSTALL_PATH}/${FLASH_ATTN_SO}")
+add_library(flash_attn_cuda SHARED IMPORTED)
+set_target_properties(flash_attn_cuda PROPERTIES IMPORTED_LOCATION ${FLASH_ATTN_PATH})
+
+list(APPEND FLEXFLOW_EXT_LIBRARIES flash_attn_cuda)
 message("FLEXFLOW_EXT_LIBRARIES: " ${FLEXFLOW_EXT_LIBRARIES})
-message("FLASH_ATTN_PATH: ${FlashAttn_INSTALL_PATH}/${FLASH_ATTN_SO}")
