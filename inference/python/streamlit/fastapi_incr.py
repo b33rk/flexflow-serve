@@ -23,15 +23,19 @@ Running Instructions:
 """
 
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 import flexflow.serve as ff
+from flexflow.core import *
+from flexflow.type import (
+    OptimizerType
+)
 import uvicorn
 import json, os, argparse
 from types import SimpleNamespace
-from typing import Optional, List
+from typing import Optional, List, Dict
 import time
-
+from huggingface_hub import hf_hub_download
 
 # Initialize FastAPI application
 app = FastAPI()
@@ -56,13 +60,39 @@ class Message(BaseModel):
 class ChatCompletionRequest(BaseModel):
     max_new_tokens: Optional[int] = 1024
     messages: List[Message]
+    peft_model_id: Optional[str] = None  # Add optional PEFT model ID for adapter
+
+# For finetuning request
+class FinetuneRequest(BaseModel):
+    token: str
+    peft_model_id: str
+    dataset_option: str
+    dataset: Optional[List[str]] = None
+    dataset_name: Optional[str] = None
+    file_name: Optional[str] = None
+    lora_rank: int = 16
+    lora_alpha: int = 16
+    target_modules: Optional[List[str]] = ["down_proj"]
+    learning_rate: float = 1e-5
+    optimizer_type: str
+    momentum: float
+    weight_decay: float
+    nesterov: bool = False
+    max_steps: int = 10000
 
 # Global variable to store the LLM model
 llm = None
 
+OPTIMIZER_TYPE_MAP = {
+    "SGD": OptimizerType.OPTIMIZER_TYPE_SGD,
+    "Adam": OptimizerType.OPTIMIZER_TYPE_ADAM,
+}
+
+# Registry to store CFFI objects mapped to string IDs
+adapter_registry = {}
 
 def get_configs():
-    
+
     # Fetch configuration file path from environment variable
     config_file = os.getenv("CONFIG_FILE", "")
 
@@ -80,8 +110,8 @@ def get_configs():
         # Define sample configs
         ff_init_configs = {
             # required parameters
-            "num_gpus": 8,
-            "memory_per_gpu": 20000,
+            "num_gpus": 4,
+	        "memory_per_gpu": 20000,
             "zero_copy_memory_per_node": 40000,
             # optional parameters
             "num_cpus": 4,
@@ -93,7 +123,7 @@ def get_configs():
             "offload_reserve_space_size": 8 * 1024, # 8GB
             "use_4bit_quantization": False,
             "use_8bit_quantization": False,
-            "enable_peft": False,
+            "enable_peft": True,
             "peft_activation_reserve_space_size": 1024, # 1GB
             "profiling": False,
             "benchmarking": False,
@@ -102,7 +132,7 @@ def get_configs():
         }
         llm_configs = {
             # required parameters
-            "llm_model": "meta-llama/Llama-3.1-8B-Instruct",
+            "llm_model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
             # optional parameters
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,
@@ -142,52 +172,175 @@ async def startup_event():
     llm.compile(
         generation_config,
         max_requests_per_batch=16,
-        max_seq_length=2048,
+        # max_seq_length=2048 will cause memory allocation error
+        max_seq_length=256,
         max_tokens_per_batch=1024,
+        enable_peft_finetuning=True,
     )
     llm.start_server()
 
-# API endpoint to generate response
-@app.post("/generate/")
-async def generate(prompt_request: PromptRequest):
-    if llm is None:
-        raise HTTPException(status_code=503, detail="LLM model is not initialized.")
-    
-    # Call the model to generate a response
-    full_output = llm.generate([prompt_request.prompt])[0].output_text.decode('utf-8')
-    
-    # Separate the prompt and response
-    split_output = full_output.split('\n', 1)
-    if len(split_output) > 1:
-        response_text = split_output[1] 
-    else:
-        response_text = "" 
-        
-    # Return the prompt and the response in JSON format
-    return {
-        "prompt": prompt_request.prompt,
-        "response": response_text
-    }
 
-@app.post("/chat/completions")
+# API endpoint to register the lora adapter
+@app.post("/register_adapter/")
+async def register_adapter(peft_model_name: str = Query(..., description="PEFT model name")):
+    """
+    Attempt to register a LoRA adapter for inference.
+    Download weights and validate the base model if not already done.
+    """
+    try:
+        if llm is None:
+            raise HTTPException(status_code=503, detail="LLM model is not initialized.")
+
+        if not peft_model_name:
+            raise ValueError("PEFT model name is required.")
+
+        # Validate and download the LoRA adapter weights if needed
+        llm.download_peft_adapter_if_needed(peft_model_name)
+
+        lora_inference_config = ff.LoraLinearConfig(
+            llm.cache_path,
+            peft_model_name.lower(), # convert the peft_model_name to lowercase 
+            base_model_name_or_path=llm.model_name,
+        )
+
+        # Try to get the peft model id
+        try:
+            # If the adapter is already registered, retrieve its ID
+            peft_model_id = llm.get_ff_peft_id(lora_inference_config)
+            print(f"Adapter {peft_model_name} already registered with ID {peft_model_id}.")
+
+        except ValueError as e:
+            # If the adapter is not registered, register it and then retrieve its ID
+            print(f"Adapter {peft_model_name} not registered. Registering now...")
+            llm.register_peft_adapter(lora_inference_config)
+            peft_model_id = llm.get_ff_peft_id(lora_inference_config)
+
+        # Save the mapping of PEFT model name to CFFI object
+        adapter_registry[peft_model_name] = peft_model_id
+
+        return {"peft_model_id": str(peft_model_id), "status": "success"}
+
+    except Exception as e:
+        error_message = f"Error during adapter registration: {str(e)}"
+        raise HTTPException(status_code=500, detail=error_message)
+
+
+# API endpoint to register the lora adapter
+@app.post("/chat/completions/")
 async def chat_completions(request: ChatCompletionRequest):
+    """
+    Generate a response, optionally using a registered LoRA adapter.
+    """
+    try:
+        if llm is None:
+            raise HTTPException(status_code=503, detail="LLM model is not initialized.")
 
-    if llm is None:
-        raise HTTPException(status_code=503, detail="LLM model is not initialized.")
-    
-    print("received request:", request)
-    result = llm.generate([message.dict() for message in request.messages], max_new_tokens=request.max_new_tokens)[0].output_text.decode('utf-8')
-    print("returning response:", result)
-    return {
-        "response": result
-    }
-    return {
-        "id": "1337",
-        "object": "chat.completion",
-        "created": time.time(),
-        "model": request.model,
-        "choices": [{"message": Message(role="assistant", content=resp_content)}],
-    }
+        print("received request:", request)
+
+        # Use the PEFT adapter if specified
+        if request.peft_model_id:
+            # Retrieve the CFFI object using the PEFT model name
+            peft_model_cffi = adapter_registry.get(request.peft_model_id)
+            prompt = llm._LLM__chat2prompt([message.dict() for message in request.messages])
+
+            request = Request(
+                ff.RequestType.REQ_INFERENCE,
+                prompt=prompt,
+                max_new_tokens=request.max_new_tokens,
+                peft_model_id=peft_model_cffi,
+            )
+            result = llm.generate(request)[0].output_text.decode("utf-8")
+        else:
+            result = llm.generate(
+                [message.dict() for message in request.messages],
+                max_new_tokens=request.max_new_tokens,
+            )[0].output_text.decode("utf-8")
+
+        print("Returning response:", result)
+        return {"response": result, "status": "success"}
+
+    except Exception as e:
+        error_message = f"Failed to generate response: {str(e)}"
+        raise HTTPException(status_code=500, detail=error_message)
+
+
+# API endpoint for finetuning request
+@app.post("/finetuning/")
+async def finetune(request: FinetuneRequest):
+    """
+    Endpoint to start LoRA finetuning based on the provided parameters.
+    """
+    try:
+        if llm is None:
+            raise HTTPException(status_code=503, detail="LLM model is not initialized.")
+
+        print("received request:", request)
+
+        llm.download_peft_adapter_if_needed(request.peft_model_id)
+
+        if request.optimizer_type not in OPTIMIZER_TYPE_MAP:
+            raise ValueError(f"Unsupported optimizer type: {request.optimizer_type}")
+
+        optimizer_type = OPTIMIZER_TYPE_MAP[request.optimizer_type]
+
+        # Prepare LoRA configuration for finetuning
+        lora_finetuning_config = ff.LoraLinearConfig(
+            llm.cache_path,
+            request.peft_model_id.lower(),
+            trainable=True,
+            init_lora_weights=True,
+            base_model_name_or_path=llm.model_name,
+            optimizer_type=optimizer_type,
+            target_modules=request.target_modules,
+            optimizer_kwargs={
+                "learning_rate": request.learning_rate,
+                "momentum": request.momentum,
+                "weight_decay": request.weight_decay,
+                "nesterov": request.nesterov,
+            },
+        )
+
+        llm.register_peft_adapter(lora_finetuning_config)
+        # Load the dataset
+        file_path = None
+        if request.dataset_option == "Upload JSON":
+            dataset_dir = os.path.join(os.path.expanduser(llm.cache_path), "datasets", "uploaded")
+            os.makedirs(dataset_dir, exist_ok=True)
+
+            file_path = os.path.join(dataset_dir, "dataset.json")
+            with open(file_path, "w") as f:
+                json.dump(request.dataset, f)
+        elif request.dataset_option == "Hugging Face Dataset":
+            dataset_dir = os.path.join(os.path.expanduser(llm.cache_path), "datasets", "huggingface")
+            os.makedirs(dataset_dir, exist_ok=True)
+            
+            print(f"Attempting to load dataset: {request.dataset_name}/{request.file_name}")
+
+            file_path = hf_hub_download(
+                repo_id=request.dataset_name,
+                filename=request.file_name,
+                repo_type="dataset",
+                local_dir=dataset_dir,
+            )
+            
+        print(f"Dataset saved to {file_path}")
+
+        # Create finetuning request
+        finetuning_request = ff.Request(
+            ff.RequestType.REQ_FINETUNING,
+            peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
+            dataset_filepath=file_path,
+            # max_training_steps=request.max_steps,
+            max_training_steps=5,
+        )
+
+        results = llm.generate(finetuning_request)
+        return {"results": results, "status": "success"}
+
+    except Exception as e:
+        error_message = f"Error during finetuning: {str(e)}"
+        raise HTTPException(status_code=500, detail=error_message)
+
 
 # Shutdown event to stop the model server
 @app.on_event("shutdown")
