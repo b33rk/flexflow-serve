@@ -1,3 +1,4 @@
+#! /usr/bin/env bash
 set -x
 set -e
 
@@ -33,33 +34,32 @@ max_tree_depth=64
 # ZSIZE=22000
 # CSIZE=100000
 matching_strategies=(
-    dynamic_token_tree
     linear_token_path
+    dynamic_token_tree
 )
 online_tree_update=(
-    true
+    # true
     false
 )
 
 ##################### Dataset parameters #####################
 traces=(
-    # cortex
-    # spider
-    # magicoder
+    cortex
+    spider
+    magicoder
     wildchat
 )
 trace_files=(
-    # ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/cortex-flexflow.json
-    # ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/spider-flexflow.json
-    # ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/magicoder25k-flexflow.json
-    # ${SUFFIX_DECODING_TRACES_FOLDER}/llama70b/wildchat25k-llama3.1-70b
-    /home/yak/goliaro/suffix-tree-decoding/trace/llama70b/wildchat25k-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/cortex-flexflow.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/spider-flexflow.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/magicoder25k-flexflow.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/flexflow/wildchat25k-flexflow.json
 )
 max_spec_factors=(
+    4.0
+    2.0
     1.0
-    # 2.0
-    # 1.0
-    # 1.0
+    1.0
 )
 
 
