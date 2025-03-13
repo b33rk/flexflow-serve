@@ -19,7 +19,7 @@
 #include "flexflow/inference.h"
 #include "flexflow/model.h"
 #include "flexflow/utils/file_loader.h"
-#include "suffix_tree_v2.h"
+#include "suffix_tree.h"
 #include <condition_variable>
 #include <future>
 #include <mutex>
@@ -150,7 +150,13 @@ struct Request {
   std::vector<BatchConfig::TokenId> tokens;
 
   // TokenTree speculative_token_tree;
+#if defined(SUFFIX_DECODING_V3_UKKONEN)
+  SuffixTree<int> *prompt_tree = nullptr;
+#elif defined(SUFFIX_DECODING_V4)
   SuffixTree *prompt_tree = nullptr;
+#else
+#error "Suffix Decoding version not implemented"
+#endif
   std::vector<int> suffix_decoding_best_token_ids;
   std::vector<int> suffix_decoding_best_parents;
   float suffix_decoding_best_score = 0.0f;
@@ -378,8 +384,10 @@ public:
   void set_suffix_tree_matching_strategy(MatchingStrategy strategy);
   float get_suffix_tree_max_spec_factor();
   void set_suffix_tree_max_spec_factor(float factor);
+#if defined(SUFFIX_DECODING_V4)
   float get_suffix_tree_min_token_prob();
   void set_suffix_tree_min_token_prob(float factor);
+#endif
   bool get_suffix_tree_online_tree_update();
   void set_suffix_tree_online_tree_update(bool online_update);
   void init_suffix_tree(std::string const &trace_filepath,
@@ -532,9 +540,15 @@ private:
   int suffix_tree_max_depth = -1; // max depth of the suffix tree
   MatchingStrategy suffix_tree_matching_strategy;
   float suffix_tree_max_spec_factor = -1.0f;
-  float suffix_tree_min_token_prob = 0.0f;
   bool suffix_tree_online_tree_update = true;
+#if defined(SUFFIX_DECODING_V3_UKKONEN)
+  SuffixTree<int> *suffix_tree = nullptr;
+#elif defined(SUFFIX_DECODING_V4)
   SuffixTree *suffix_tree = nullptr;
+  float suffix_tree_min_token_prob = 0.0f;
+#else
+#error "Suffix Decoding version not implemented"
+#endif
 
   // Background server handler
   Legion::Future background_server_handler;

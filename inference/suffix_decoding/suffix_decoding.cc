@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-#include "suffix_tree_v2.h"
+#include "suffix_tree.h"
 #include "flexflow/inference.h"
 #include "flexflow/request_manager.h"
 #include "models/falcon.h"
@@ -297,7 +297,7 @@ void FlexFlow::top_level_task(Task const *task,
   int max_output_length = 512;
 
   std::string matching_strategy = "linear_token_path";
-  int max_tree_depth = 16;
+  int max_tree_depth = 64;
   float max_spec_factor = 1.0;
   float min_token_prob = 0.1;
   bool online_tree_update = true;
@@ -433,7 +433,9 @@ void FlexFlow::top_level_task(Task const *task,
           : MatchingStrategy::DYNAMIC_TOKEN_TREE);
   rm->set_suffix_tree_max_depth(max_tree_depth);
   rm->set_suffix_tree_max_spec_factor(max_spec_factor);
+#if defined(SUFFIX_DECODING_V4)
   rm->set_suffix_tree_min_token_prob(min_token_prob);
+#endif
   rm->set_suffix_tree_online_tree_update(online_tree_update);
   printf("Initializing suffix tree\n");
   rm->init_suffix_tree(file_paths.trace_file_path, target_partition);

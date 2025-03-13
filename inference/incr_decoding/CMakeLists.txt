@@ -36,3 +36,16 @@ target_link_libraries(${project_target} -Wl,--whole-archive flexflow -Wl,--no-wh
 
 set(BIN_DEST "bin")
 install(TARGETS ${project_target} DESTINATION ${BIN_DEST})
+
+if(SUFFIX_DECODING_VERSION STREQUAL "v1")
+  target_compile_definitions(incr_decoding PRIVATE SUFFIX_DECODING_V1)
+elseif(SUFFIX_DECODING_VERSION STREQUAL "v2")
+  target_compile_definitions(incr_decoding PRIVATE SUFFIX_DECODING_V2)
+elseif(SUFFIX_DECODING_VERSION STREQUAL "v3_ukkonen")
+  # message("SUFFIX_DECODING_VERSION: ${SUFFIX_DECODING_VERSION}")
+  target_compile_definitions(incr_decoding PRIVATE SUFFIX_DECODING_V3_UKKONEN)
+elseif(SUFFIX_DECODING_VERSION STREQUAL "v4")
+  target_compile_definitions(incr_decoding PRIVATE SUFFIX_DECODING_V4)
+else()
+  message(FATAL_ERROR "Unknown SUFFIX_DECODING_VERSION: ${SUFFIX_DECODING_VERSION}")
+endif()
