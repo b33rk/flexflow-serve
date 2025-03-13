@@ -12,16 +12,16 @@ SUFFIX_DECODING_TRACES_FOLDER="${PWD}/../../suffix-tree-decoding/trace/llama70b"
 # model_name=meta-llama/Meta-Llama-3-70B-Instruct
 model_name=meta-llama/Llama-3.1-70B-Instruct
 small_model_names=(
-    # meta-llama/Llama-3.2-1B-Instruct
-    meta-llama/Llama-3.1-8B-Instruct
+    meta-llama/Llama-3.2-1B-Instruct
+    # meta-llama/Llama-3.1-8B-Instruct
 )
 NGPUS=8
 NCPUS=16
 FSIZE=76000
 ZSIZE=200000
 CSIZE=200000
-MAX_SEQ_LEN=8200
-max_output_length=3500
+MAX_SEQ_LEN=16000
+max_output_length=10000
 tokens_per_batch=1024
 batch_size=8
 max_tree_depth=8
@@ -40,21 +40,21 @@ ssm_tp_degrees=(
 
 ##################### Dataset parameters #####################
 traces=(
-    cortex
-    spider
-    magicoder
+    # cortex
+    # spider
+    # magicoder
     wildchat
 )
 trace_files=(
-    ${SUFFIX_DECODING_TRACES_FOLDER}/cortex-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/spider-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/magicoder25k-llama3.1-70b.json
-    ${SUFFIX_DECODING_TRACES_FOLDER}/wildchat25k-llama3.1-70b.json
+    # ${SUFFIX_DECODING_TRACES_FOLDER}/cortex-llama3.1-70b.json
+    # ${SUFFIX_DECODING_TRACES_FOLDER}/spider-llama3.1-70b.json
+    # ${SUFFIX_DECODING_TRACES_FOLDER}/magicoder25k-llama3.1-70b.json
+    ${SUFFIX_DECODING_TRACES_FOLDER}/wildchat-llama3.1-70b.json
 )
 
 ##################### Environment setup #####################
 mkdir -p $OUTPUT_FOLDER
-make -j
+# make -j
 source set_python_envs.sh
 # download all models and small models
 python ../inference/utils/download_hf_model.py --half-precision-only $model_name ${small_model_names[@]}
@@ -96,7 +96,7 @@ for i in "${!traces[@]}"; do
         rm $output_log_file || true
         rm $output_csv_file || true
         
-        time ./inference/suffix_decoding/specinfer \
+        time ./inference/suffix_decoding/convert_trace \
             -ll:gpu $NGPUS -ll:cpu $NCPUS -ll:util $NCPUS \
             -tensor-parallelism-degree $NGPUS -ssm-tp-degree $ssm_tp_degree \
             -ll:fsize $FSIZE -ll:zsize $ZSIZE -ll:csize $CSIZE \
