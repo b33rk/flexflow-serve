@@ -114,7 +114,7 @@ for i in "${!traces[@]}"; do
         rm $output_csv_file || true
 
         otu_arg=""
-        if [ "$otu" = false ]; then
+        if [ "$otu" = true ]; then
             otu_arg="--disable-online-tree-update"
         fi
 

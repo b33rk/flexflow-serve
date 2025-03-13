@@ -120,6 +120,11 @@ set(FF_MAX_DIM "4" CACHE STRING "Maximum dimention of tensors")
 option(FF_USE_EXTERNAL_LEGION "Use pre-installed Legion" OFF)
 set(LEGION_MAX_RETURN_SIZE "32768" CACHE STRING "Maximum Legion return size")
 
+
+# Suffix Decoding
+set(SUFFIX_DECODING_VERSION "v4" CACHE STRING "Suffix Decoding external interface version. Options v1, v2, v3_ukkonen, v4")
+set_property(CACHE SUFFIX_DECODING_VERSION PROPERTY STRINGS v1 v2 v3_ukkonen v4)
+
 set(FLEXFLOW_EXT_LIBRARIES "")
 set(FLEXFLOW_INCLUDE_DIRS "")
 
@@ -292,11 +297,12 @@ if(NOT BUILD_LEGION_ONLY)
   FetchContent_Declare(
     suffix_decoding
     GIT_REPOSITORY https://github.com/Snowflake-Labs/suffix-tree-decoding.git
-    GIT_TAG ukkonen  # or a specific tag/commit hash
+    GIT_TAG main
   )
   FetchContent_MakeAvailable(suffix_decoding)
-  list(APPEND FLEXFLOW_INCLUDE_DIRS ${suffix_decoding_SOURCE_DIR}/src)
-  list(APPEND FLEXFLOW_SRC ${suffix_decoding_SOURCE_DIR}/src/suffix_tree_v2.cc)
+
+  list(APPEND FLEXFLOW_INCLUDE_DIRS ${suffix_decoding_SOURCE_DIR}/src/${SUFFIX_DECODING_VERSION})
+  list(APPEND FLEXFLOW_SRC ${suffix_decoding_SOURCE_DIR}/src/${SUFFIX_DECODING_VERSION}/suffix_tree.cc)
 
   set(FLEXFLOW_CPP_DRV_SRC
     ${FLEXFLOW_ROOT}/src/runtime/cpp_driver.cc)
@@ -429,6 +435,18 @@ if(NOT BUILD_LEGION_ONLY)
   endif()
 
   target_link_libraries(flexflow raft::raft)
+
+  if(SUFFIX_DECODING_VERSION STREQUAL "v1")
+    target_compile_definitions(flexflow PRIVATE SUFFIX_DECODING_V1)
+  elseif(SUFFIX_DECODING_VERSION STREQUAL "v2")
+    target_compile_definitions(flexflow PRIVATE SUFFIX_DECODING_V2)
+  elseif(SUFFIX_DECODING_VERSION STREQUAL "v3_ukkonen")
+    target_compile_definitions(flexflow PRIVATE SUFFIX_DECODING_V3_UKKONEN)
+  elseif(SUFFIX_DECODING_VERSION STREQUAL "v4")
+    target_compile_definitions(flexflow PRIVATE SUFFIX_DECODING_V4)
+  else()
+    message(FATAL_ERROR "Unknown SUFFIX_DECODING_VERSION: ${SUFFIX_DECODING_VERSION}")
+  endif()
 
   #library api version, bump from time to time
   set(SOVERSION 1)
