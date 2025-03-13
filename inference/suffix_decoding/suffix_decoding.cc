@@ -67,6 +67,7 @@ void parse_input_args(char **argv,
                       std::string &matching_strategy,
                       int &max_tree_depth,
                       float &max_spec_factor,
+                      float &min_token_prob,
                       bool &online_tree_update) {
   for (int i = 1; i < argc; i++) {
     // llm model name
@@ -152,6 +153,10 @@ void parse_input_args(char **argv,
     }
     if (!strcmp(argv[i], "--max-spec-factor")) {
       max_spec_factor = std::stof(argv[++i]);
+      continue;
+    }
+    if (!strcmp(argv[i], "--min-token-prob")) {
+      min_token_prob = std::stof(argv[++i]);
       continue;
     }
     if (!strcmp(argv[i], "--disable-online-tree-update")) {
@@ -292,8 +297,9 @@ void FlexFlow::top_level_task(Task const *task,
   int max_output_length = 512;
 
   std::string matching_strategy = "linear_token_path";
-  int max_tree_depth = 16;
+  int max_tree_depth = 64;
   float max_spec_factor = 1.0;
+  float min_token_prob = 0.1;
   bool online_tree_update = true;
   RequestManager::DecodingMode decoding_mode = RequestManager::SUFFIX_DECODING;
 
@@ -323,6 +329,7 @@ void FlexFlow::top_level_task(Task const *task,
                    matching_strategy,
                    max_tree_depth,
                    max_spec_factor,
+                    min_token_prob,
                    online_tree_update);
 
   get_model_meta(file_paths, model_metadata, use_full_precision);
@@ -426,6 +433,9 @@ void FlexFlow::top_level_task(Task const *task,
           : MatchingStrategy::DYNAMIC_TOKEN_TREE);
   rm->set_suffix_tree_max_depth(max_tree_depth);
   rm->set_suffix_tree_max_spec_factor(max_spec_factor);
+#if defined(SUFFIX_DECODING_V4)
+  rm->set_suffix_tree_min_token_prob(min_token_prob);
+#endif
   rm->set_suffix_tree_online_tree_update(online_tree_update);
   printf("Initializing suffix tree\n");
   rm->init_suffix_tree(file_paths.trace_file_path, target_partition);

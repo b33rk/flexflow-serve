@@ -52,7 +52,7 @@ CUDNN_DIR=${CUDNN_DIR:-"/usr/local/cuda"}
 # otherwise, we will build nccl from source
 NCCL_DIR=${NCCL_DIR:-"/usr/local/cuda"}
 
-SUFFIX_DECODING_VERSION=${SUFFIX_DECODING_VERSION:-"v3_ukkonen"}
+SUFFIX_DECODING_VERSION=${SUFFIX_DECODING_VERSION:-"v4"}
 
 # enable Python
 FF_USE_PYTHON=${FF_USE_PYTHON:-ON}

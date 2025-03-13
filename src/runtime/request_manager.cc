@@ -240,6 +240,19 @@ void RequestManager::set_suffix_tree_max_spec_factor(float factor) {
   suffix_tree_max_spec_factor = factor;
 }
 
+#if defined(SUFFIX_DECODING_V4)
+float RequestManager::get_suffix_tree_min_token_prob() {
+  assert(suffix_tree_min_token_prob >= 0.0 &&
+         suffix_tree_min_token_prob <= 1.0);
+  return suffix_tree_min_token_prob;
+}
+
+void RequestManager::set_suffix_tree_min_token_prob(float factor) {
+  assert(factor >= 0.0 && factor <= 1.0);
+  suffix_tree_min_token_prob = factor;
+}
+#endif
+
 bool RequestManager::get_suffix_tree_online_tree_update() {
   return suffix_tree_online_tree_update;
 }
@@ -568,7 +581,13 @@ void RequestManager::init_suffix_tree(std::string const &trace_filepath,
   std::cout << "Generating suffix tree for partition: " << partition_name
             << " with " << training_dataset.size() << " training entries..." << std::endl;
   auto start_time = std::chrono::high_resolution_clock::now();
+#if defined(SUFFIX_DECODING_V3_UKKONEN)
   suffix_tree = new SuffixTree<int>(training_dataset);
+#elif defined(SUFFIX_DECODING_V4)
+  suffix_tree = new SuffixTree(training_dataset, get_suffix_tree_max_depth());
+#else
+#error "Suffix Decoding version not implemented"
+#endif
   auto end_time = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> duration = end_time - start_time;
   std::cout << "Suffix tree construction took " << duration.count() << " seconds." << std::endl;
@@ -826,7 +845,13 @@ void RequestManager::insert_completed_request_into_suffix_tree(
       request.tokens.end() - request.decode_length(), request.tokens.end());
   assert(output_tokens.size() == request.decode_length());
   if (output_tokens.size() > 0) {
+#if defined(SUFFIX_DECODING_V3_UKKONEN)
     suffix_tree->add_entry(output_tokens);
+#elif defined(SUFFIX_DECODING_V4)
+    suffix_tree->add_doc(suffix_tree->docs.size(), output_tokens);
+#else
+    #error "Suffix Decoding version not implemented"
+#endif
   }
   long long int end_time = Realm::Clock::current_time_in_microseconds();
   assert(profiling.tree_operation_step_times.size() > 0);
@@ -1113,7 +1138,13 @@ bool RequestManager::update_llm_prefill_results(InferenceResult const &result) {
             assert(request->prompt_tree == nullptr && "Prompt tree was already initialized");
             assert(this->suffix_tree_max_depth > 0 && "Invalid max depth for suffix tree");
             assert(request->tokens.size() > 0 && "Attempting to create prompt tree for empty request");
+#if defined(SUFFIX_DECODING_V3_UKKONEN)
             request->prompt_tree = new SuffixTree<int>({request->tokens});
+#elif defined(SUFFIX_DECODING_V4)
+            request->prompt_tree = new SuffixTree({request->tokens}, get_suffix_tree_max_depth());
+#else
+            #error "Suffix Decoding version not implemented"
+#endif
           }
 
           if (decoding_mode == SPECULATIVE_DECODING) {
@@ -1831,7 +1862,14 @@ void RequestManager::populate_best_suffix_tree_candidates(Request &request) {
         request.prompt_tree->find_best_path_or_tree(
             prefix,
             this->get_suffix_tree_matching_strategy(),
+#if defined(SUFFIX_DECODING_V3_UKKONEN)
             this->get_suffix_tree_max_spec_factor());
+#elif defined(SUFFIX_DECODING_V4)
+            this->get_suffix_tree_max_spec_factor(),
+            this->get_suffix_tree_min_token_prob());
+#else
+            #error "Suffix Decoding version not implemented"
+#endif
     if (p_score > request.suffix_decoding_best_score) {
       request.suffix_decoding_best_token_ids = p_token_ids;
       request.suffix_decoding_best_parents = p_parents;
@@ -1845,7 +1883,14 @@ void RequestManager::populate_best_suffix_tree_candidates(Request &request) {
         suffix_tree->find_best_path_or_tree(
             prefix,
             this->get_suffix_tree_matching_strategy(),
+#if defined(SUFFIX_DECODING_V3_UKKONEN)
             this->get_suffix_tree_max_spec_factor());
+#elif defined(SUFFIX_DECODING_V4)
+            this->get_suffix_tree_max_spec_factor(),
+            this->get_suffix_tree_min_token_prob());
+#else
+            #error "Suffix Decoding version not implemented"
+#endif
     if (s_score > request.suffix_decoding_best_score) {
       request.suffix_decoding_best_token_ids = s_token_ids;
       request.suffix_decoding_best_parents = s_parents;
@@ -2936,6 +2981,9 @@ void RequestManager::get_verify_results_suffix_decoding(
         request.committed_tokens.push_back(Request::CommittedToken(
             llm_cache_size + i, committed_token_index, current_token));
         request.tokens.push_back(current_token);
+#if defined(SUFFIX_DECODING_V4)
+        request.prompt_tree->append(0, current_token);
+#endif
         committed_token_index++;
         last_accepted_token_idx=i;
         if (is_eos_token(current_token)) {
@@ -2977,6 +3025,9 @@ void RequestManager::get_verify_results_suffix_decoding(
           committed_token_index,
           llm_verify_result.token_ids[llm_result_offset + bonus_token_idx]));
       request.tokens.push_back(llm_verify_result.token_ids[llm_result_offset + bonus_token_idx]);
+#if defined(SUFFIX_DECODING_V4)
+      request.prompt_tree->append(0, llm_verify_result.token_ids[llm_result_offset + bonus_token_idx]);
+#endif
     }
 
     assert(request.committed_tokens.size() >=2);
