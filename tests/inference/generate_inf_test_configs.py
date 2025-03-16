@@ -10,7 +10,7 @@ ff_init_configs = {
     "zero_copy_memory_per_node": 40000,
     # optional parameters
     "num_cpus": 8,
-    "cpu_memory_per_node": 1024,
+    "cpu_memory_per_node": 2048,
     "legion_utility_processors": 8,
     "data_parallelism_degree": 1,
     "tensor_parallelism_degree": 1,

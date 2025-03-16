@@ -416,9 +416,6 @@ InferenceResult
     m->decoding_step++;
   }
 
-  std::cout << "inference task! batch_size: " << batch_size << std::endl;
-  print_tensor(indices.get_int32_ptr(), batch_size, "token ids: ");
-  std::cout << std::endl;
   copy_tensor_dev_to_host<BatchConfig::TokenId>(
       indices.get_int32_ptr(), ir.token_ids, batch_size);
 
