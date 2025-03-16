@@ -46,6 +46,7 @@ void parse_input_args(char **argv,
                       bool &do_sample,
                       float &temperature,
                       float &topp,
+                      float &qps,
                       int &max_requests_per_batch,
                       int &max_tokens_per_batch,
                       int &max_sequence_length,
@@ -102,6 +103,11 @@ void parse_input_args(char **argv,
       topp = std::stof(argv[++i]);
       continue;
     }
+    // arrival rate (queries per second)
+    if (!strcmp(argv[i], "--qps")) {
+      qps = std::stof(argv[++i]);
+      continue;
+    }
     if (!strcmp(argv[i], "--max-requests-per-batch")) {
       max_requests_per_batch = std::stoi(argv[++i]);
       continue;
@@ -156,8 +162,13 @@ std::vector<Request> make_warmup_requests(int num_requests) {
 }
 
 std::vector<Request> load_prompt_list(nlohmann::ordered_json prompt_json,
+                                      float qps,
                                       int max_length) {
   int total_num_requests = 0;
+  assert(qps >= 0.0f);
+  long long interarrival_time =
+      (qps <= 0.0f) ? 0 : static_cast<long long>(1000000.0 / qps);
+  long long arrival_time = 0;
   std::vector<Request> requests;
   for (auto &prompt : prompt_json) {
     std::string text = prompt.get<std::string>();
@@ -165,15 +176,22 @@ std::vector<Request> load_prompt_list(nlohmann::ordered_json prompt_json,
     Request inference_req;
     inference_req.prompt = text;
     inference_req.max_length = max_length;
+    inference_req.arrival_time_us = arrival_time;
     requests.push_back(inference_req);
     total_num_requests++;
+    arrival_time += interarrival_time;
   }
   return requests;
 }
 
 std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
+                                float qps,
                                 bool benchmarking = false) {
   std::vector<Request> requests;
+  assert(qps >= 0.0f);
+  long long interarrival_time =
+      (qps <= 0.0f) ? 0 : static_cast<long long>(1000000.0 / qps);
+  long long arrival_time = 0;
   auto &metadata = prompt_json["metadata"];
   for (auto &entry : prompt_json["entries"]) {
     int prompt_length = entry["prompt_length"];
@@ -187,13 +205,16 @@ std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
     } else {
       inference_req.prompt = text;
     }
+    inference_req.arrival_time_us = arrival_time;
     inference_req.max_new_tokens = response_length;
+    arrival_time += interarrival_time;
     requests.push_back(inference_req);
   }
   return requests;
 }
 
 std::vector<Request> load_requests(std::string prompt_file_path,
+                                   float qps,
                                    int max_length_if_needed) {
   std::ifstream file_handle(prompt_file_path);
   if (!file_handle.good()) {
@@ -220,9 +241,9 @@ std::vector<Request> load_requests(std::string prompt_file_path,
     std::cerr << "Error: JSON file is null!" << std::endl;
     assert(false);
   } else if (prompt_json.is_array()) {
-    return load_prompt_list(prompt_json, max_length_if_needed);
+    return load_prompt_list(prompt_json, qps, max_length_if_needed);
   } else if (prompt_json.is_object()) {
-    return load_trace(prompt_json);
+    return load_trace(prompt_json, qps);
   } else {
     std::cerr << "JSON is neither an array nor an object!" << std::endl;
     assert(false);
@@ -245,6 +266,7 @@ void FlexFlow::top_level_task(Task const *task,
   bool do_sample = false;
   float temperature = 0.0f;
   float topp = 0.0f;
+  float qps = 0.0f; // queries per second
   int max_requests_per_batch = 4;
   int max_tokens_per_batch = 64;
   int max_sequence_length = 256;
@@ -264,6 +286,7 @@ void FlexFlow::top_level_task(Task const *task,
                    do_sample,
                    temperature,
                    topp,
+                   qps,
                    max_requests_per_batch,
                    max_tokens_per_batch,
                    max_sequence_length,
@@ -400,8 +423,11 @@ void FlexFlow::top_level_task(Task const *task,
   }
   std::cout << "----------inference started--------------" << std::endl;
   std::vector<Request> requests =
-      load_requests(file_paths.prompt_file_path, max_length);
-  std::vector<GenerationResult> result = model.generate(requests);
+      load_requests(file_paths.prompt_file_path, qps, max_length);
+
+  std::vector<GenerationResult> result =
+      (qps > 0.0f) ? model.generate_online(requests, {})
+                   : model.generate(requests);
   std::cout << "----------inference finished--------------" << std::endl;
 
   // terminate the request manager by stopping the background thread
@@ -433,7 +459,7 @@ void FlexFlow::top_level_task(Task const *task,
                                    max_requests_per_batch,
                                    max_tokens_per_batch,
                                    num_kv_cache_slots,
-                                   0.0,                  // arrival rate
+                                   qps,                  // arrival rate
                                    run_warmup ? 10 : 0); // num_warmup_requests
   }
 }

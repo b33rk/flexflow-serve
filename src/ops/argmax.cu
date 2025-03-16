@@ -15,33 +15,102 @@
 #include "flexflow/ffconst_utils.h"
 #include "flexflow/ops/argmax.h"
 #include "flexflow/utils/cuda_helper.h"
-#include <cub/cub.cuh>
+#include <cub/block/block_reduce.cuh>
+// #include <cuda_fp16.h>
+// #include <cuda_runtime.h>
+// #include <cfloat>
+#include <type_traits>
 
 namespace FlexFlow {
 
-__global__ void init_offset(int batch_size,
-                            int vocab_size,
-                            int total_eles,
-                            int *d_offsets) {
-  CUDA_KERNEL_LOOP(i, total_eles) {
-    if (i % vocab_size == 0) {
-      d_offsets[i / vocab_size] = i;
+// Data structure to hold a value-index pair.
+struct ArgmaxPair {
+  float value;
+  int index;
+};
+
+// Functor that returns the pair with the larger value.
+struct ArgmaxOp {
+  __device__ __forceinline__ ArgmaxPair operator()(ArgmaxPair const &a,
+                                                   ArgmaxPair const &b) const {
+    return (a.value >= b.value) ? a : b;
+  }
+};
+
+// Single inline helper function to convert a value of type T to float.
+template <typename T>
+__device__ __forceinline__ float toFloat(T x) {
+  if constexpr (std::is_same<T, float>::value) {
+    return x;
+  } else if constexpr (std::is_same<T, __half>::value) {
+    return __half2float(x);
+  }
+}
+
+// Templated kernel that computes the argmax over the first dimension
+// (vocab_size) for each column (i.e. for each batch element). The tensor is
+// assumed to be stored in column-major order. The index of the maximum value is
+// written to `output`, and if `prob_ptr` is not null, the maximum value (in
+// float) is written there.
+template <typename T, int BLOCK_SIZE>
+__global__ void argmaxKernel(T const *__restrict__ input,
+                             int vocab_size,
+                             int batch_size,
+                             int *__restrict__ output,
+                             float *__restrict__ prob_ptr) {
+  int col = blockIdx.x;
+  if (col >= batch_size) {
+    return; // safeguard
+  }
+
+  // Pointer to the start of the column.
+  T const *col_ptr = input + col * vocab_size;
+
+  // Each thread processes a subset of the column.
+  float thread_max = -FLT_MAX;
+  int thread_idx = -1;
+  for (int i = threadIdx.x; i < vocab_size; i += BLOCK_SIZE) {
+    float val = toFloat(col_ptr[i]);
+    if (val > thread_max) {
+      thread_max = val;
+      thread_idx = i;
+    }
+  }
+
+  // Prepare candidate for block reduction.
+  ArgmaxPair thread_data;
+  thread_data.value = thread_max;
+  thread_data.index = thread_idx;
+
+  // Use CUB's block reduction to compute the maximum and its index.
+  typedef cub::BlockReduce<ArgmaxPair, BLOCK_SIZE> BlockReduceT;
+  __shared__ typename BlockReduceT::TempStorage temp_storage;
+  ArgmaxPair block_result =
+      BlockReduceT(temp_storage).Reduce(thread_data, ArgmaxOp());
+
+  // Thread 0 writes the results.
+  if (threadIdx.x == 0) {
+    output[col] = block_result.index;
+    if (prob_ptr != nullptr) {
+      prob_ptr[col] = block_result.value;
     }
   }
 }
 
-template <typename DT>
-__global__ void copy_result(cub::KeyValuePair<int, DT> *d_out,
-                            int *indices,
-                            float *prob_ptr,
-                            int batch_size,
-                            bool beam_search) {
-  CUDA_KERNEL_LOOP(i, batch_size) {
-    indices[i] = d_out[i].key;
-    if (beam_search) {
-      prob_ptr[i] = static_cast<float>(d_out[i].value);
-    }
-  }
+// Templated host wrapper for launching the kernel asynchronously on a given
+// stream. Note: d_probs is always a float pointer.
+template <typename T>
+void launchArgmaxKernel(
+    T const *d_input,
+    int vocab_size,
+    int batch_size,
+    int *d_output,
+    float *d_probs, // optional pointer for max values (always float)
+    cudaStream_t stream) {
+  dim3 grid(batch_size);
+  dim3 block(CUDA_NUM_THREADS);
+  argmaxKernel<T, CUDA_NUM_THREADS><<<grid, block, 0, stream>>>(
+      d_input, vocab_size, batch_size, d_output, d_probs);
 }
 
 template <typename DT>
@@ -77,29 +146,11 @@ void ArgMax::forward_kernel(ArgMaxMeta const *m,
     // set all parents id zero in arg top1 case.
     checkCUDA(cudaMemsetAsync(parent, 0, batch_size * sizeof(int), stream));
   }
-  size_t temp_storage_bytes = m->temp_storage_bytes;
-  // use cub
-  checkCUDA(cub::DeviceSegmentedReduce::ArgMax(
-      m->d_temp_storage,
-      temp_storage_bytes,
-      input_ptr,
-      static_cast<cub::KeyValuePair<int, DT> *>(m->d_out),
-      batch_size,
-      m->d_offsets,
-      m->d_offsets + 1,
-      stream));
 
-  // copy dout to indices
-  int parallelism = batch_size;
-  copy_result<<<GET_BLOCKS(parallelism),
-                min(CUDA_NUM_THREADS, parallelism),
-                0,
-                stream>>>(static_cast<cub::KeyValuePair<int, DT> *>(m->d_out),
-                          indices_ptr,
-                          prob_ptr,
-                          batch_size,
-                          m->beam_search);
-  // print_tensor<int>(indices_ptr, 32, "argmax op");
+  launchArgmaxKernel(
+      input_ptr, length, batch_size, indices_ptr, prob_ptr, stream);
+
+  // print_tensor(indices_ptr, batch_size, "indices_ptr: ");
 
   // compute cross-entropy loss if there is a finetuning request
   assert(loss != nullptr);
@@ -162,7 +213,7 @@ void ArgMax::forward_kernel_wrapper(ArgMaxMeta const *m,
                                  bc,
                                  input.get_half_ptr(),
                                  indices.get_int32_ptr(),
-                                 m->probs,
+                                 m->beam_search ? m->probs : nullptr,
                                  m->beam_search ? parent.get_int32_ptr()
                                                 : nullptr,
                                  length,
@@ -175,7 +226,7 @@ void ArgMax::forward_kernel_wrapper(ArgMaxMeta const *m,
                                   bc,
                                   input.get_float_ptr(),
                                   indices.get_int32_ptr(),
-                                  m->probs,
+                                  m->beam_search ? m->probs : nullptr,
                                   m->beam_search ? parent.get_int32_ptr()
                                                  : nullptr,
                                   length,
@@ -210,59 +261,13 @@ ArgMaxMeta::ArgMaxMeta(FFHandler handler,
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
 
-  size_t d_offsets_size = batch_size;
+  // size_t d_offsets_size = batch_size;
   size_t prob_size = batch_size;
   assert(data_type == DT_FLOAT || data_type == DT_HALF);
-  size_t total_size =
-      d_offsets_size * sizeof(int) +
-      (data_type == DT_FLOAT
-           ? sizeof(cub::KeyValuePair<int, float>) * batch_size
-           : sizeof(cub::KeyValuePair<int, half>) * batch_size) +
-      prob_size * sizeof(float);
+  size_t total_size = prob_size * sizeof(float);
   gpu_mem_allocator.create_legion_instance(
       reserveInst, total_size, "ArgMaxMeta");
-  d_offsets = gpu_mem_allocator.allocate_instance<int>(d_offsets_size);
-  d_out = data_type == DT_FLOAT
-              ? gpu_mem_allocator.allocate_instance_untyped(
-                    batch_size * sizeof(cub::KeyValuePair<int, float>))
-              : gpu_mem_allocator.allocate_instance_untyped(
-                    batch_size * sizeof(cub::KeyValuePair<int, half>));
   probs = gpu_mem_allocator.allocate_instance<float>(prob_size);
-  // init offset
-  int parallelism = total_ele;
-  init_offset<<<GET_BLOCKS(parallelism),
-                min(CUDA_NUM_THREADS, parallelism),
-                0,
-                stream>>>(
-      batch_size, total_ele / batch_size, total_ele, d_offsets);
-
-  if (data_type == DT_FLOAT) {
-    checkCUDA(cub::DeviceSegmentedReduce::ArgMax(
-        d_temp_storage,
-        temp_storage_bytes,
-        input.get_float_ptr(),
-        static_cast<cub::KeyValuePair<int, float> *>(d_out),
-        batch_size,
-        d_offsets,
-        d_offsets + 1,
-        stream));
-
-  } else if (data_type == DT_HALF) {
-    checkCUDA(cub::DeviceSegmentedReduce::ArgMax(
-        d_temp_storage,
-        temp_storage_bytes,
-        input.get_half_ptr(),
-        static_cast<cub::KeyValuePair<int, half> *>(d_out),
-        batch_size,
-        d_offsets,
-        d_offsets + 1,
-        stream));
-  }
-
-  gpu_mem_allocator.create_legion_instance(
-      reserveInst, temp_storage_bytes, "ArgMaxMeta");
-  d_temp_storage =
-      gpu_mem_allocator.allocate_instance_untyped(temp_storage_bytes);
 
   // allocate space for loss on device
   gpu_mem_allocator.create_legion_instance(

@@ -919,6 +919,7 @@ void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
       // This is a decoding token
       assert(old_fwd_bc.tokensInfo[i].abs_depth_in_request + 1 ==
              request.tokens.size());
+      assert(result.token_ids[i] >= 0);
       request.tokens.push_back(result.token_ids[i]);
       if (!profiling_requests[guid].first_token_time_set) {
         profiling_requests[guid].first_token_time =
@@ -1162,6 +1163,7 @@ void RequestManager::add_continuing_inf_req_to_new_batch(
     new_bc.tokensInfo[new_bc.num_tokens].request_index = i;
     new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request = depth;
     assert(depth < request.tokens.size());
+    assert(request.tokens[depth] >= 0);
     new_bc.tokensInfo[new_bc.num_tokens].token_id = request.tokens[depth];
     new_bc.num_tokens++;
   }
@@ -1226,6 +1228,7 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
     new_bc.tokensInfo[new_bc.num_tokens].request_index = i;
     new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request = depth;
     assert(depth < new_request.tokens.size());
+    assert(new_request.tokens[depth] >= 0);
     new_bc.tokensInfo[new_bc.num_tokens].token_id = new_request.tokens[depth];
 
     new_bc.num_tokens++;
@@ -1830,7 +1833,7 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
                                                 int max_requests_per_batch,
                                                 int max_tokens_per_batch,
                                                 int num_kv_cache_slots,
-                                                double arrival_rate,
+                                                double qps,
                                                 int num_warmup_requests) {
   // create output file based on the parameters
   // llm_model_name_safe: make llm_model_name lowercase and replace / with _
@@ -1848,9 +1851,8 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
       std::to_string(tensor_parallelism_degree) + "_max_requests_per_batch_" +
       std::to_string(max_requests_per_batch) + "_max_tokens_per_batch_" +
       std::to_string(max_tokens_per_batch) + "_num_kv_cache_slots_" +
-      std::to_string(num_kv_cache_slots) + "_arrival_rate_" +
-      std::to_string(arrival_rate) + "_num_warmup_requests_" +
-      std::to_string(num_warmup_requests) + ".csv";
+      std::to_string(num_kv_cache_slots) + "_qps_" + std::to_string(qps) +
+      "_num_warmup_requests_" + std::to_string(num_warmup_requests) + ".csv";
   std::cout << "Opening the output file: " << step_info_output_filepath
             << std::endl;
   std::ofstream StepInfoOutputFile(step_info_output_filepath);
@@ -1858,7 +1860,7 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
     // print CSV header
     StepInfoOutputFile
         << "llm_model_name,dataset_name,tensor_parallelism_degree,max_requests_"
-           "per_batch,max_tokens_per_batch,num_kv_cache_slots,arrival_rate,num_"
+           "per_batch,max_tokens_per_batch,num_kv_cache_slots,qps,num_"
            "warmup_requests,"
         << "run_idx,step_idx,is_warmup_step,timestamp,num_inference_requests,"
            "num_prefilling_tokens,num_decoding_tokens,num_finetuning_fwd_"
@@ -1869,8 +1871,8 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
                          << tensor_parallelism_degree << ","
                          << max_requests_per_batch << ","
                          << max_tokens_per_batch << "," << num_kv_cache_slots
-                         << "," << arrival_rate << "," << num_warmup_requests
-                         << "," << step_profile_info.run_idx << ","
+                         << "," << qps << "," << num_warmup_requests << ","
+                         << step_profile_info.run_idx << ","
                          << step_profile_info.step_idx << ","
                          << step_profile_info.is_warmup_step << ","
                          << step_profile_info.timestamp << ","
@@ -1893,9 +1895,8 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
       std::to_string(tensor_parallelism_degree) + "_max_requests_per_batch_" +
       std::to_string(max_requests_per_batch) + "_max_tokens_per_batch_" +
       std::to_string(max_tokens_per_batch) + "_num_kv_cache_slots_" +
-      std::to_string(num_kv_cache_slots) + "_arrival_rate_" +
-      std::to_string(arrival_rate) + "_num_warmup_requests_" +
-      std::to_string(num_warmup_requests) + ".csv";
+      std::to_string(num_kv_cache_slots) + "_qps_" + std::to_string(qps) +
+      "_num_warmup_requests_" + std::to_string(num_warmup_requests) + ".csv";
   std::cout << "Opening the output file: " << request_info_output_filepath
             << std::endl;
   std::ofstream RequestInfoOutputFile(request_info_output_filepath);
@@ -1903,7 +1904,7 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
     // print CSV header
     RequestInfoOutputFile
         << "llm_model_name,dataset_name,tensor_parallelism_degree,max_requests_"
-           "per_batch,max_tokens_per_batch,num_kv_cache_slots,arrival_rate,num_"
+           "per_batch,max_tokens_per_batch,num_kv_cache_slots,qps,num_"
            "warmup_requests,"
         << "request_guid,is_warmup_request,timestamp,decoding_step_idx\n";
     for (int i = 0; i < inf_req_profile_infos.size(); i++) {
@@ -1911,10 +1912,9 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
       RequestInfoOutputFile
           << llm_model_name << "," << dataset_name << ","
           << tensor_parallelism_degree << "," << max_requests_per_batch << ","
-          << max_tokens_per_batch << "," << num_kv_cache_slots << ","
-          << arrival_rate << "," << num_warmup_requests << ","
-          << inf_profile_info.request_guid << ","
-          << all_requests[inf_profile_info.request_guid].warmup << ","
+          << max_tokens_per_batch << "," << num_kv_cache_slots << "," << qps
+          << "," << num_warmup_requests << "," << inf_profile_info.request_guid
+          << "," << all_requests[inf_profile_info.request_guid].warmup << ","
           << inf_profile_info.timestamp << ","
           << inf_profile_info.decoding_step_idx << "\n";
     }
@@ -2005,6 +2005,7 @@ BeamSearchBatchConfig
     while (result_index < old_bc.num_tokens &&
            old_bc.tokensInfo[result_index].request_index == i) {
       int abs_depth = old_bc.tokensInfo[result_index].abs_depth_in_request;
+      assert(result.token_ids[result_index] >= 0);
       int token_id = result.token_ids[result_index];
 
       if (request.status == Request::PENDING) {

@@ -53,6 +53,8 @@ Tensor FFModel::argmax(const Tensor input, bool beam_search, char const *name) {
                         0 /*weights*/,
                         beam_search ? 2 : 1 /*outputs*/,
                         input);
+
+  printf("Adding argmax layer\n");
   {
     int numdims = input->num_dims;
     int dims[MAX_TENSOR_DIM];
@@ -414,6 +416,9 @@ InferenceResult
     m->decoding_step++;
   }
 
+  std::cout << "inference task! batch_size: " << batch_size << std::endl;
+  print_tensor(indices.get_int32_ptr(), batch_size, "token ids: ");
+  std::cout << std::endl;
   copy_tensor_dev_to_host<BatchConfig::TokenId>(
       indices.get_int32_ptr(), ir.token_ids, batch_size);
 
