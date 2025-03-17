@@ -35,7 +35,8 @@ import json, os, argparse
 from types import SimpleNamespace
 from typing import Optional, List, Dict
 import time
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, HfFolder
+from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset
 
 # Initialize FastAPI application
 app = FastAPI()
@@ -57,6 +58,7 @@ class Message(BaseModel):
 #     temperature: Optional[float] = 0.1
 #     stream: Optional[bool] = False
 
+# For inference request
 class ChatCompletionRequest(BaseModel):
     max_new_tokens: Optional[int] = 1024
     messages: List[Message]
@@ -69,7 +71,9 @@ class FinetuneRequest(BaseModel):
     dataset_option: str
     dataset: Optional[List[str]] = None
     dataset_name: Optional[str] = None
-    file_name: Optional[str] = None
+    config_name: Optional[str] = None
+    selected_split: Optional[str] = None
+    selected_column: Optional[str] = None
     lora_rank: int = 16
     lora_alpha: int = 16
     target_modules: Optional[List[str]] = ["down_proj"]
@@ -79,6 +83,13 @@ class FinetuneRequest(BaseModel):
     weight_decay: float
     nesterov: bool = False
     max_steps: int = 10000
+
+# For uploading model request
+class UploadModelRequest(BaseModel):
+    token: str
+    peft_model_id: str
+    upload_peft_model_id: str
+    private: bool = False
 
 # Global variable to store the LLM model
 llm = None
@@ -137,6 +148,7 @@ def get_configs():
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,
             "full_precision": False,
+            # "full_precision": True,
             "prompt": "",
             "output_file": "",
         }
@@ -173,7 +185,8 @@ async def startup_event():
         generation_config,
         max_requests_per_batch=16,
         # max_seq_length=2048 will cause memory allocation error
-        max_seq_length=256,
+        # max_seq_length=256,
+        max_seq_length=600,
         max_tokens_per_batch=1024,
         enable_peft_finetuning=True,
     )
@@ -264,81 +277,270 @@ async def chat_completions(request: ChatCompletionRequest):
         raise HTTPException(status_code=500, detail=error_message)
 
 
+# API endpoint for getting dataset config names
+@app.get("/get_dataset_configs/")
+async def get_dataset_configs(dataset_name: str):
+    """
+    Given a dataset name, return the available config names.
+    """
+    try:
+        config_names = get_dataset_config_names(dataset_name)
+        if config_names == ['default']: # No configs in dataset
+            config_names = []
+        return {"dataset_name": dataset_name, "config_names": config_names}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching dataset config names: {str(e)}")
+
+# API endpoint for getting dataset splits
+@app.get("/get_dataset_splits/")
+async def get_dataset_splits(dataset_name: str, config_name: Optional[str] = None):
+    """
+    Given a dataset name, return the available splits (e.g., train, validation, test).
+    """
+    try:
+        splits = get_dataset_split_names(dataset_name, config_name=config_name)
+        return {"dataset_name": dataset_name, "splits": splits}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching dataset splits: {str(e)}")
+
+# API endpoint for getting dataset available columns
+@app.get("/get_dataset_columns/")
+async def get_dataset_columns(dataset_name: str, split: str, config_name: Optional[str] = None):
+    """
+    Given a dataset name and split, return available columns.
+    """
+    try:
+        dataset = load_dataset(dataset_name, data_dir=config_name, split=split)
+        return {"dataset_name": dataset_name, "columns": dataset.column_names}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching dataset columns: {str(e)}")
+
 # API endpoint for finetuning request
 @app.post("/finetuning/")
 async def finetune(request: FinetuneRequest):
     """
     Endpoint to start LoRA finetuning based on the provided parameters.
     """
+    # try:
+    #     if llm is None:
+    #         raise HTTPException(status_code=503, detail="LLM model is not initialized.")
+
+    print("received request:", request)
+
+    llm.download_peft_adapter_if_needed(request.peft_model_id)
+
+    if request.optimizer_type not in OPTIMIZER_TYPE_MAP:
+        raise ValueError(f"Unsupported optimizer type: {request.optimizer_type}")
+
+    optimizer_type = OPTIMIZER_TYPE_MAP[request.optimizer_type]
+
+    # Prepare LoRA configuration for finetuning
+    lora_finetuning_config = ff.LoraLinearConfig(
+        llm.cache_path,
+        request.peft_model_id.lower(),
+        trainable=True,
+        init_lora_weights=True,
+        base_model_name_or_path=llm.model_name,
+        optimizer_type=optimizer_type,
+        target_modules=request.target_modules,
+        optimizer_kwargs={
+            "learning_rate": request.learning_rate,
+            "momentum": request.momentum,
+            "weight_decay": request.weight_decay,
+            "nesterov": request.nesterov,
+        },
+    )
+
+    llm.register_peft_adapter(lora_finetuning_config)
+
+    cache_folder = os.path.expanduser(llm.cache_path)
+    # Load the dataset
+    file_path = None
+    if request.dataset_option == "Upload JSON":
+        dataset_dir = os.path.join(cache_folder, "datasets", "uploaded")
+        os.makedirs(dataset_dir, exist_ok=True)
+
+        file_path = os.path.join(dataset_dir, "dataset.json")
+        with open(file_path, "w") as f:
+            json.dump(request.dataset, f)
+    elif request.dataset_option == "Hugging Face Dataset":
+        dataset_dir = os.path.join(cache_folder, "datasets", "huggingface")
+        os.makedirs(dataset_dir, exist_ok=True)
+
+        from transformers import AutoTokenizer
+        # Load dataset from Hugging Face
+        dataset_info = f"{request.dataset_name}/{request.config_name}/{request.selected_split}" \
+            if request.config_name else f"{request.dataset_name}/{request.selected_split}"
+        json_filename = f"{request.dataset_name}/{dataset_info.replace('/', '_')}.json"
+
+        print(f"Loading dataset: {dataset_info}")
+        dataset = load_dataset(request.dataset_name, data_dir=request.config_name, split=request.selected_split)
+
+        total_entries = len(dataset)
+        print(f"Found {total_entries} entries in the dataset.")
+
+        max_length = 10000 # Change if needed
+
+        # Load a pre-trained tokenizer.
+        tokenizer = AutoTokenizer.from_pretrained(request.peft_model_id)
+
+        # Function to tokenize text and add a token count.
+        def tokenize_count(example):
+            # Tokenize the selected field
+            tokens = tokenizer.tokenize(example[request.selected_column])
+            # Save the number of tokens to a new field
+            example["token_count"] = len(tokens)
+            return example
+
+        # Apply the function to each example in the dataset.
+        tokenized_dataset = dataset.map(tokenize_count)
+        # Filter entries with token_count less than max_length.
+        filtered_dataset = tokenized_dataset.filter(lambda example: example["token_count"] < min(max_length, llm.max_seq_length))
+        # Extract the original selected field from the filtered examples.
+        text_list = filtered_dataset[request.selected_column]
+
+        remaining_entries = len(filtered_dataset)
+        print(f"Filtering out entries longer than {llm.max_seq_length} tokens...")
+        print(f"{remaining_entries} entries remaining after filtering.")
+
+        # Save the text list to a JSON file.
+        file_path = os.path.join(dataset_dir, json_filename)
+        with open(file_path, "w") as f:
+            json.dump(text_list, f, indent=2)
+        
+    print(f"Dataset saved to {file_path}")
+
+    # Create finetuning request
+    finetuning_request = ff.Request(
+        ff.RequestType.REQ_FINETUNING,
+        peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
+        dataset_filepath=file_path,
+        # max_training_steps=request.max_steps,
+        max_training_steps=1000,
+    )
+
+    results = llm.generate(finetuning_request)
+    return {"results": results, "status": "success", "total_entries": total_entries, "remaining_entries": remaining_entries}
+
+    # except Exception as e:
+    #     error_message = f"Error during finetuning: {str(e)}"
+    #     raise HTTPException(status_code=500, detail=error_message)
+
+
+# API endpoint for uploading model request
+@app.post("/upload_peft_model/")
+async def upload_peft_model(request: UploadModelRequest):
+    """
+    Endpoint to upload the fine-tuned PEFT model to Hugging Face Hub.
+    """
     try:
         if llm is None:
             raise HTTPException(status_code=503, detail="LLM model is not initialized.")
 
-        print("received request:", request)
+        from transformers import AutoModelForCausalLM
+        from peft import get_peft_model
+        import torch
+        import numpy as np
 
-        llm.download_peft_adapter_if_needed(request.peft_model_id)
-
-        if request.optimizer_type not in OPTIMIZER_TYPE_MAP:
-            raise ValueError(f"Unsupported optimizer type: {request.optimizer_type}")
-
-        optimizer_type = OPTIMIZER_TYPE_MAP[request.optimizer_type]
-
-        # Prepare LoRA configuration for finetuning
-        lora_finetuning_config = ff.LoraLinearConfig(
-            llm.cache_path,
-            request.peft_model_id.lower(),
-            trainable=True,
-            init_lora_weights=True,
-            base_model_name_or_path=llm.model_name,
-            optimizer_type=optimizer_type,
-            target_modules=request.target_modules,
-            optimizer_kwargs={
-                "learning_rate": request.learning_rate,
-                "momentum": request.momentum,
-                "weight_decay": request.weight_decay,
-                "nesterov": request.nesterov,
-            },
+        cache_folder = os.path.expanduser(llm.cache_path)
+        lora_config_filepath = os.path.join(
+            cache_folder, 
+            "finetuned_models", 
+            request.peft_model_id.lower(), 
+            "config", 
+            "ff_config.json"
         )
+        while not os.path.exists(lora_config_filepath):
+            time.sleep(0.5)  # Check every 0.5 seconds
+        peft_config = ff.LoraLinearConfig.from_jsonfile(lora_config_filepath)
+        hf_peft_config = peft_config.to_hf_config()
 
-        llm.register_peft_adapter(lora_finetuning_config)
-        # Load the dataset
-        file_path = None
-        if request.dataset_option == "Upload JSON":
-            dataset_dir = os.path.join(os.path.expanduser(llm.cache_path), "datasets", "uploaded")
-            os.makedirs(dataset_dir, exist_ok=True)
+        # Load model
+        model = AutoModelForCausalLM.from_pretrained(
+            peft_config.base_model_name_or_path,
+            torch_dtype=torch.float32 if peft_config.precision == "fp32" else torch.float16,
+            device_map=None  # Prevent meta tensor issues
+        )
+        model = get_peft_model(model, hf_peft_config, autocast_adapter_dtype=False)
+        
+        in_dim = model.config.intermediate_size
+        out_dim = model.config.hidden_size
 
-            file_path = os.path.join(dataset_dir, "dataset.json")
-            with open(file_path, "w") as f:
-                json.dump(request.dataset, f)
-        elif request.dataset_option == "Hugging Face Dataset":
-            dataset_dir = os.path.join(os.path.expanduser(llm.cache_path), "datasets", "huggingface")
-            os.makedirs(dataset_dir, exist_ok=True)
-            
-            print(f"Attempting to load dataset: {request.dataset_name}/{request.file_name}")
-
-            file_path = hf_hub_download(
-                repo_id=request.dataset_name,
-                filename=request.file_name,
-                repo_type="dataset",
-                local_dir=dataset_dir,
+        weight_folder = os.path.join(
+            cache_folder, "finetuned_models", request.peft_model_id.lower(), "weights", "shard_0"
+        )
+        num_shards = 1
+        while os.path.exists(weight_folder.replace("shard_0", f"shard_{num_shards}")):
+            num_shards += 1
+        if not in_dim % num_shards == 0:
+            raise ValueError(
+                f"Number of shards ({num_shards}) must divide the input dimension ({in_dim})"
             )
-            
-        print(f"Dataset saved to {file_path}")
 
-        # Create finetuning request
-        finetuning_request = ff.Request(
-            ff.RequestType.REQ_FINETUNING,
-            peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
-            dataset_filepath=file_path,
-            # max_training_steps=request.max_steps,
-            max_training_steps=5,
-        )
+        lora_weight_files = os.listdir(weight_folder)
+        for lora_file in sorted(lora_weight_files):
+            lora_filename = ".weight".join(lora_file.split(".weight")[:-1])
+            hf_parameter_name = f"base_model.model.model.{lora_filename}.default.weight"
+            if hf_parameter_name not in model.state_dict().keys():
+                raise KeyError(f"Parameter {lora_file} not found in HF model.")
 
-        results = llm.generate(finetuning_request)
-        return {"results": results, "status": "success"}
+            ff_dtype = np.float32 if peft_config.precision == "fp32" else np.float16
+            weight_path = os.path.join(weight_folder, lora_file)
+            # LoRA_A: [in_dim, rank]
+            # LoRA_B: [rank, out_dim]
+            if "lora_A" in lora_file:
+                weight_data = []
+                for shard_id in range(num_shards):
+                    weight_path_shard = weight_path.replace("shard_0", f"shard_{shard_id}")
+                    weight_data_shard = np.fromfile(weight_path_shard, dtype=ff_dtype)
+                    weight_data_shard = weight_data_shard.reshape(
+                        (in_dim // num_shards, peft_config.rank), order="F"
+                    )
+                    weight_data.append(weight_data_shard)
+                weight_data = np.concatenate(weight_data, axis=0).T
+            elif "lora_B" in lora_file:
+                weight_data = np.fromfile(weight_path, dtype=ff_dtype)
+                weight_data = weight_data.reshape((peft_config.rank, out_dim), order="F").T
+            weight_tensor = torch.from_numpy(weight_data)
+
+            param = model.state_dict()[hf_parameter_name]
+
+            actual_numel = weight_tensor.numel()
+            expected_numel = param.numel()
+            if actual_numel != expected_numel:
+                raise ValueError(
+                    f"Parameter {lora_file} has unexpected parameter count: {actual_numel} (actual) != {expected_numel} (expected)"
+                )
+
+            if weight_tensor.shape != param.shape:
+                raise ValueError(
+                    f"Parameter {lora_file} has unexpected shape: {weight_tensor.shape} (actual) != {param.shape} (expected)"
+                )
+
+            if weight_tensor.dtype != param.dtype:
+                raise ValueError(
+                    f"Parameter {lora_file} has unexpected dtype: {weight_tensor.dtype} (actual) != {param.dtype} (expected)"
+                )
+
+            with torch.no_grad():
+                param.copy_(weight_tensor)
+
+        # Ensure all parameters are properly initialized
+        for name, param in model.named_parameters():
+            if param.device.type == "meta":
+                print(f"Parameter {name} is still on 'meta' device. Moving to CPU.")
+                param.data = torch.zeros_like(param, device="cpu")  # Allocate real memory
+
+        model = model.to("cpu")
+
+        # Upload model to Hugging Face Hub
+        model.push_to_hub(request.upload_peft_model_id, token=request.token, private=request.private)
+        print(f"Upload process for {request.upload_peft_model_id} completed.")
+        
+        return {"status": "success"}
 
     except Exception as e:
-        error_message = f"Error during finetuning: {str(e)}"
+        error_message = f"Error during model upload: {str(e)}"
         raise HTTPException(status_code=500, detail=error_message)
 
 
