@@ -59,7 +59,7 @@ get_cuda_docker_image() {
   done
 
   # Filter out tags that do not contain "cudnn"
-  tags_list=($(printf "%s\n" "${tags_list[@]}" | grep "cudnn"))
+  mapfile -t tags_list < <(printf "%s\n" "${tags_list[@]}" | grep "cudnn")
 
   if [ ${#tags_list[@]} -eq 0 ]; then
       echo "Error: No docker images found matching criteria." >&2
