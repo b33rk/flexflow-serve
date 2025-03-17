@@ -22,8 +22,9 @@
 #include <math_constants.h>
 
 // flashinfer & paged attention
-#include "flashinfer/decode_attention_decl.cuh"
-#include "flashinfer/prefill_attention_decl.cuh"
+#include "flashinfer/attention/decode.cuh"
+#include "flashinfer/attention/prefill.cuh"
+#include "flashinfer_ops.cuh"
 #include "flexflow/page_manager.h"
 
 namespace FlexFlow {
@@ -38,16 +39,17 @@ namespace Kernels {
 namespace IncMultiHeadAttention {
 
 // flashinfer & paged attention
-using flashinfer::BatchDecodeHandler;
-using flashinfer::BatchDecodeWithPagedKVCacheWrapperDispatched;
-using flashinfer::BatchPrefillHandler;
-using flashinfer::BatchPrefillWithPagedKVCacheWrapperDispatched;
-using flashinfer::LogitsPostHook;
-using flashinfer::MaskMode;
-using flashinfer::paged_kv_t;
-using flashinfer::PageStorage;
-using flashinfer::PosEncodingMode;
-using flashinfer::QKVLayout;
+// using flashinfer::BatchDecodeHandler;
+// using flashinfer::BatchDecodeWithPagedKVCacheWrapperDispatched;
+// using flashinfer::BatchPrefillHandler;
+// using flashinfer::BatchPrefillWithPagedKVCacheWrapperDispatched;
+// using flashinfer::LogitsPostHook;
+// using flashinfer::MaskMode;
+// using flashinfer::paged_kv_t;
+// using flashinfer::PageStorage;
+// using flashinfer::PosEncodingMode;
+// using flashinfer::QKVLayout;
+using namespace flashinfer;
 
 std::string get_fwd_dbg_folder(IncMultiHeadSelfAttentionMeta const *m,
                                int shard_id) {
@@ -1111,13 +1113,20 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
          "kv_indptr is null!");
   assert(m->handle.incr_attention_metadata->kv_last_page_len != nullptr &&
          "kv_last_page_len is null!");
-  paged_kv_t<PageStorage::kIndices, half, int32_t> paged_kv(
+
+  int64_t stride_page = 2 * num_kv_heads * kPagesize * head_dim;
+  int64_t stride_n = num_kv_heads * head_dim;
+  int64_t stride_h = head_dim;
+  std::vector<int64_t> kv_strides = {stride_page, stride_n, stride_h};
+  paged_kv_t<half, int32_t> paged_kv(
       num_kv_heads,
       kPagesize,
       head_dim,
       batch_size,
       QKVLayout::kNHD,
       kv,
+      kv + num_kv_heads * kPagesize * head_dim,
+      kv_strides.data(),
       m->handle.incr_attention_metadata->kv_indices,
       m->handle.incr_attention_metadata->kv_indptr,
       m->handle.incr_attention_metadata->kv_last_page_len);
@@ -1160,41 +1169,24 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
       m->handle.incr_attention_metadata->prompt_handler_collections[batch_size];
   // printf("obtained handler\n");
   assert(sizeof(DT) == 2 && "FlashInfer only supports half precision");
-  DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
-    // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
-    cudaError_t result =
-        BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
-                                                      HEAD_DIM,
-                                                      LogitsPostHook::kNone,
-                                                      PosEncodingMode::kNone,
-                                                      false,
-                                                      MaskMode::kCausal,
-                                                      half,
-                                                      half,
-                                                      half,
-                                                      int32_t>(
-            static_cast<BatchPrefillHandler *>(handler),
-            q,
-            m->handle.incr_attention_metadata->q_indptr,
-            /*q_offset=*/nullptr,
-            paged_kv,
-            /*custom_mask=*/nullptr,
-            /*qk_indptr=*/nullptr,
-            o,
-            /*lse=*/nullptr,
-            num_q_heads,
-            /*window_left=*/-1,
-            /*logits_soft_cap=*/0.f,
-            sm_scale,
-            /*rope_scale=*/1.f,
-            /*rope_theta=*/static_cast<float>(1e4),
-            stream);
-    if (result != cudaSuccess) {
-      throw std::runtime_error("Failed to run "
-                               "IncrementalDecodingAttentionForwardKernel: " +
-                               std::string(cudaGetErrorString(result)));
-    }
-  });
+  cudaError_t status =
+      BatchPrefillWithPagedKVCacheWrapper<half, half, half, int32_t>(
+          static_cast<BatchPrefillHandler *>(handler),
+          q,
+          m->handle.incr_attention_metadata->q_indptr,
+          /*q_rope_offset=*/nullptr,
+          paged_kv,
+          o,
+          /*lse=*/nullptr,
+          num_q_heads,
+          /*causal=*/true,
+          /*pos_encoding_mode=*/PosEncodingMode::kNone,
+          /*use_fp16_qk_reduction=*/false,
+          /*maybe_sm_scale=*/sm_scale,
+          /*rope_scale=*/1.f,
+          /*rope_theta=*/static_cast<float>(1e4),
+          stream);
+  checkCUDA(status);
 }
 
 template <typename DT>
