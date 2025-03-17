@@ -19,9 +19,6 @@ import random, torch
 
 class STARCODERConfig:
     def __init__(self, hf_config):
-        self.max_beam_width = 1
-        self.max_beam_depth = 8
-        self.max_spec_tree_token_num = 20
         self.dropout_p = hf_config.attn_pdrop
         self.hidden_size = hf_config.n_embd
         self.layer_norm_epsilon = hf_config.layer_norm_epsilon
@@ -44,7 +41,6 @@ class FlexFlowSTARCODER(FlexFlowModel):
         ffconfig,
         hf_config,
         data_type,
-        max_tokens_per_batch,
         weights_filepath="",
         tokenizer_filepath="",
     ):
@@ -56,9 +52,6 @@ class FlexFlowSTARCODER(FlexFlowModel):
         self.weights_filepath = weights_filepath
         self.tokenizer_filepath = tokenizer_filepath
         self.maxint = 2**31 - 1
-        max_verify_tokens_per_batch = (
-            max_tokens_per_batch + self.starcoder_config.max_spec_tree_token_num
-        )
 
         # Sanity checks
         if (
@@ -82,16 +75,27 @@ class FlexFlowSTARCODER(FlexFlowModel):
                 f"Number of attention heads ({self.starcoder_config.num_attention_heads}) is smaller, or not divisible by tensor parallelism degree ({self.ffconfig.tensor_parallelism_degree})"
             )
 
-        self.build_model(
-            max_tokens_per_batch
-            if self.mode == InferenceMode.INC_DECODING_MODE
-            else max_verify_tokens_per_batch
-        )
+        self.build_model()
 
-    def build_model(self, max_tokens_per_batch):
+    def build_model(self):
         ffmodel = FFModel(self.ffconfig)
 
-        tokens_dims = [max_tokens_per_batch, 1]
+        is_spec = self.mode != InferenceMode.INC_DECODING_MODE
+        self.rm = RequestManager()
+        self.max_requests_per_batch = self.rm.get_max_requests_per_batch()
+        self.max_sequence_length = self.rm.get_max_sequence_length()
+        self.max_tokens_per_batch = self.rm.get_max_tokens_per_batch()
+        if is_spec:
+            self.max_tokens_per_batch += self.rm.get_max_spec_tree_token_num()
+            self.max_sequence_length += self.rm.get_max_spec_tree_token_num()
+
+        ffmodel.set_num_kv_cache_pages(
+            compute_num_kv_cache_pages_needed(
+                self.max_sequence_length, self.max_requests_per_batch, is_spec
+            )
+        )
+
+        tokens_dims = [self.max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
         position_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
 
@@ -145,7 +149,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
             )
 
             assert self.mode == InferenceMode.INC_DECODING_MODE
-            o_proj = ffmodel.inc_multiquery_self_attention(
+            o_proj = ffmodel.inc_multihead_self_attention(
                 qkv_proj,
                 self.starcoder_config.hidden_size,
                 self.starcoder_config.num_attention_heads,
@@ -167,7 +171,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
                 self.starcoder_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 False,
-                name=f"layers.{i}.self_attn.o_proj"
+                name=f"layers.{i}.self_attn.o_proj",
             )
 
             residual, l2_norm = ffmodel.residual_layer_norm(
@@ -231,7 +235,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
             ffmodel.add_lora_layers(["c_fc", "c_proj"])
-        
+
         self.ffmodel = ffmodel
 
     def convert_hf_model(model, dst_folder):

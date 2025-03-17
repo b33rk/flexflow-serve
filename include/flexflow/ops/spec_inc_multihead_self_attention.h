@@ -39,6 +39,7 @@ public:
                                 float _scaling_factor,
                                 bool _qk_prod_scaling,
                                 bool _position_bias,
+                                int _num_kv_cache_pages,
                                 char const *name);
   SpecIncMultiHeadSelfAttention(FFModel &model,
                                 const ParallelTensor _input,
@@ -54,6 +55,7 @@ public:
                                 float _scaling_factor,
                                 bool _qk_prod_scaling,
                                 bool _position_bias,
+                                int _num_kv_cache_pages,
                                 char const *name);
   SpecIncMultiHeadSelfAttention(FFModel &model,
                                 SpecIncMultiHeadSelfAttention const &other,
@@ -107,11 +109,11 @@ public:
   Params get_params() const;
 
 public:
-  int num_q_heads, num_kv_heads, tensor_parallelism_degree;
+  int num_q_heads, num_kv_heads, tensor_parallelism_degree, num_kv_cache_pages;
   float dropout, scaling_factor;
   bool add_zero_attn, scaling_query, qk_prod_scaling, position_bias;
   RotaryEmbeddingMeta rotary_embedding_meta;
-  int qSize, kSize, vSize, qProjSize, kProjSize, vProjSize, oProjSize;
+  int qProjSize, kProjSize, vProjSize, oProjSize;
   int qoSeqLength, kvSeqLength;
 };
 
@@ -119,8 +121,9 @@ class SpecIncMultiHeadSelfAttentionMeta : public IncMultiHeadSelfAttentionMeta {
 public:
   SpecIncMultiHeadSelfAttentionMeta(FFHandler handler,
                                     SpecIncMultiHeadSelfAttention const *attn,
-                                    MemoryAllocator &gpu_mem_allocator,
-                                    int num_samples,
+                                    MemoryAllocator &inf_mem_allocator,
+                                    MemoryAllocator &kv_cache_mem_allocator,
+                                    MemoryAllocator &peft_mem_allocator,
                                     int _num_q_heads,
                                     int _num_kv_heads);
   ~SpecIncMultiHeadSelfAttentionMeta(void);

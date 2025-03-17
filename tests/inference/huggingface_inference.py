@@ -23,14 +23,13 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", type=str, required=True)
-    parser.add_argument("--max-length", type=int, default=128)
+    parser.add_argument("--max-length", type=int, default=255)
     parser.add_argument("--prompt-file", type=str, required=True)
     parser.add_argument("--output-file", type=str, required=True)
     parser.add_argument(
         "--use-full-precision", action="store_true", help="Use full precision"
     )
     parser.add_argument("--do-sample", action="store_true", help="Use sampling")
-    parser.add_argument("--gpu", action="store_true", help="Run on GPU")
     parser.add_argument(
         "--inference-debugging",
         action="store_true",
@@ -61,10 +60,8 @@ def main():
         torch.set_default_dtype(torch.float32)
     
     # Run huggingface model
-    cuda_availble = torch.cuda.is_available()
-    device = "cuda" if args.gpu and cuda_availble else "cpu"
     # Get Model
-    model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True).to(device)
+    model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, attn_implementation="eager", device_map="auto")
     # Get Tokenizer
     hf_config = AutoConfig.from_pretrained(args.model_name, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
@@ -86,20 +83,33 @@ def main():
 
     ###############################################
     # Generate output
+    output_list = []
+    for i, prompt in enumerate(prompt_list):
+        batch = tokenizer(prompt, return_tensors="pt", add_special_tokens=True).to(model.device)
+        generated = model.generate(
+            batch["input_ids"],
+            max_length=args.max_length,
+            generation_config=generation_config,
+        )
+        prompt_token_ids = list(batch["input_ids"].cpu().numpy()[0])
+        response_token_ids = list(generated[0].cpu().numpy())[len(prompt_token_ids):]
+        # Remove eos token if present at the end
+        if response_token_ids[-1] == tokenizer.eos_token_id:
+            response_token_ids = response_token_ids[:-1]
+        response = tokenizer.decode(response_token_ids)
+        output_list.append({
+            "req_idx": i,
+            "req_type": "inference",
+            "prompt_length": len(prompt_token_ids),
+            "response_length": len(response_token_ids),
+            "prompt": prompt,
+            "response": response,
+            "input_tokens": ",".join(str(x) for x in prompt_token_ids),
+            "output_tokens": ",".join(str(x) for x in response_token_ids),
+            "num_decoding_steps": len(response_token_ids),
+        })
     with open(args.output_file, "w") as f:
-        for i, prompt in enumerate(prompt_list):
-            batch = tokenizer(prompt, return_tensors="pt", add_special_tokens=True).to(
-                device
-            )
-            generated = model.generate(
-                batch["input_ids"],
-                max_length=args.max_length,
-                generation_config=generation_config,
-            )
-            out = tokenizer.decode(generated[0])
-            # Write output to file
-            out_str = out if i == (len(prompt_list) - 1) else out + "\n"
-            f.write(out_str)
+        json.dump(output_list, f, indent=2)
 
 
 if __name__ == "__main__":

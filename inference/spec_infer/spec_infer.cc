@@ -64,7 +64,8 @@ void parse_input_args(char **argv,
                       int &max_requests_per_batch,
                       int &max_tokens_per_batch,
                       int &max_sequence_length,
-                      int &expansion_degree) {
+                      int &expansion_degree,
+                      int &max_length) {
   for (int i = 1; i < argc; i++) {
     // llm model name
     if (!strcmp(argv[i], "-llm-model")) {
@@ -115,12 +116,18 @@ void parse_input_args(char **argv,
       max_tokens_per_batch = std::stoi(argv[++i]);
       continue;
     }
+    // max allowed sequence length
     if (!strcmp(argv[i], "--max-sequence-length")) {
       max_sequence_length = std::stoi(argv[++i]);
       continue;
     }
     if (!strcmp(argv[i], "--expansion-degree")) {
       expansion_degree = std::stoi(argv[++i]);
+      continue;
+    }
+    // max length before stopping if we haven't reached the EOS
+    if (!strcmp(argv[i], "--max-length")) {
+      max_length = std::stoi(argv[++i]);
       continue;
     }
   }
@@ -290,6 +297,7 @@ void FlexFlow::top_level_task(Task const *task,
   int max_sequence_length = 1024;
   int max_spec_tree_token_num = 23;
   int expansion_degree = 3;
+  int max_length = 128;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -303,7 +311,8 @@ void FlexFlow::top_level_task(Task const *task,
                    max_requests_per_batch,
                    max_tokens_per_batch,
                    max_sequence_length,
-                   expansion_degree);
+                   expansion_degree,
+                   max_length);
 
   get_model_meta(file_paths, model_metadata, use_full_precision);
 
@@ -334,6 +343,11 @@ void FlexFlow::top_level_task(Task const *task,
 
   // Create LLM model
   FFModel tree_model(ffconfig, ffconfig.cpu_offload);
+  // set amount of kv cache needed
+  tree_model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
+      max_sequence_length + max_spec_tree_token_num,
+      max_requests_per_batch,
+      true));
   if (model_metadata.llm_model_type == ModelType::LLAMA) {
     LLAMA::create_llama_model(tree_model,
                               model_metadata.llm_model_config_path,
@@ -378,6 +392,10 @@ void FlexFlow::top_level_task(Task const *task,
 
   for (int ssm_id = 0; ssm_id < num_ssms; ssm_id++) {
     FFModel &beam_model = ssm_models[ssm_id];
+    beam_model.set_num_kv_cache_pages(compute_num_kv_cache_pages_needed(
+        max_sequence_length + max_spec_tree_token_num,
+        max_requests_per_batch,
+        true));
     if (model_metadata.ssm_model_types[ssm_id] == ModelType::LLAMA) {
       LLAMA::create_llama_model(beam_model,
                                 model_metadata.ssm_model_config_paths[ssm_id],
@@ -432,7 +450,7 @@ void FlexFlow::top_level_task(Task const *task,
       // Add inference request
       Request inference_req;
       inference_req.prompt = text;
-      inference_req.max_length = 128;
+      inference_req.max_length = max_length;
       requests.push_back(inference_req);
       total_num_requests++;
     }

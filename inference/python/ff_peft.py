@@ -55,9 +55,8 @@ def get_configs():
             "use_4bit_quantization": False,
             "use_8bit_quantization": False,
             "enable_peft": True,
-            "peft_activation_reserve_space_size": 1024,  # 1GB
             "profiling": False,
-            "inference_debugging": True,
+            "inference_debugging": False,
             "fusion": False,
         }
         model_configs = {
@@ -78,6 +77,10 @@ def get_configs():
                 "../prompt/peft_dataset.json",
             ),
             "output_file": "",
+            "max_requests_per_batch": 1,
+            "max_seq_length": 256,
+            "max_tokens_per_batch": 128,
+            "max_concurrent_adapters": 1,
         }
         # Merge dictionaries
         ff_init_configs.update(model_configs)
@@ -110,11 +113,11 @@ def main():
     enable_peft_finetuning = len(configs.finetuning_dataset) > 0
     llm.compile(
         generation_config,
-        max_requests_per_batch=1 if not enable_peft_finetuning else 2,
-        max_seq_length=256,
-        max_tokens_per_batch=128,
-        max_concurrent_adapters=1 if not enable_peft_finetuning else 2,
-        enable_peft_finetuning=enable_peft_finetuning,
+        max_requests_per_batch = configs_dict.get("max_requests_per_batch", 1) + enable_peft_finetuning,
+        max_seq_length = configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 128),
+        max_concurrent_adapters = configs_dict.get("max_concurrent_adapters", 1) + enable_peft_finetuning,
+        enable_peft_finetuning = enable_peft_finetuning,
     )
 
     llm.start_server()
@@ -167,7 +170,7 @@ def main():
             ff.RequestType.REQ_FINETUNING,
             peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
             dataset_filepath=configs.finetuning_dataset,
-            max_training_steps=2,
+            max_training_epochs=2,
         )
         requests.append(finetuning_request)
 

@@ -19,11 +19,6 @@ import random, torch
 
 class FalconConfig:
     def __init__(self, hf_config):
-        # self.max_seq_len = 256
-        # self.max_num_tokens = 64
-        self.max_beam_width = 1
-        self.max_beam_depth = 8
-        self.max_spec_tree_token_num = 20
         self.bias = hf_config.bias
         self.hidden_size = hf_config.hidden_size
         self.layer_norm_epsilon = hf_config.layer_norm_epsilon
@@ -43,15 +38,25 @@ class FalconConfig:
         self.vocab_size = hf_config.vocab_size
         self.rotary_embedding_meta = RotaryEmbeddingMeta(
             apply_rotary_embedding=True,
-            rope_theta=hf_config.rope_theta if "rope_theta" in hf_config.__dict__ else 10000.0,
+            rope_theta=(
+                hf_config.rope_theta if "rope_theta" in hf_config.__dict__ else 10000.0
+            ),
         )
         if "rope_scaling" in hf_config.__dict__:
             if hf_config.rope_scaling is not None:
-                self.rotary_embedding_meta.rope_type = hf_config.rope_scaling["rope_type"]
+                self.rotary_embedding_meta.rope_type = hf_config.rope_scaling[
+                    "rope_type"
+                ]
                 self.rotary_embedding_meta.factor = hf_config.rope_scaling["factor"]
-                self.rotary_embedding_meta.low_freq_factor = hf_config.rope_scaling["low_freq_factor"]
-                self.rotary_embedding_meta.high_freq_factor = hf_config.rope_scaling["high_freq_factor"]
-                self.rotary_embedding_meta.original_max_position_embeddings = hf_config.rope_scaling["original_max_position_embeddings"]
+                self.rotary_embedding_meta.low_freq_factor = hf_config.rope_scaling[
+                    "low_freq_factor"
+                ]
+                self.rotary_embedding_meta.high_freq_factor = hf_config.rope_scaling[
+                    "high_freq_factor"
+                ]
+                self.rotary_embedding_meta.original_max_position_embeddings = (
+                    hf_config.rope_scaling["original_max_position_embeddings"]
+                )
         # Standardized FlexFlow num heads fields below
         self.num_attention_heads = self.n_head
         self.num_key_value_heads = self.n_head_kv
@@ -65,7 +70,6 @@ class FlexFlowFalcon(FlexFlowModel):
         ffconfig,
         hf_config,
         data_type,
-        max_tokens_per_batch,
         weights_filepath="",
         tokenizer_filepath="",
     ):
@@ -77,9 +81,6 @@ class FlexFlowFalcon(FlexFlowModel):
         self.weights_filepath = weights_filepath
         self.tokenizer_filepath = tokenizer_filepath
         self.maxint = 2**31 - 1
-        max_verify_tokens_per_batch = (
-            max_tokens_per_batch + self.falcon_config.max_spec_tree_token_num
-        )
 
         # Sanity checks
         if self.falcon_config.hidden_size % self.falcon_config.n_head != 0:
@@ -94,16 +95,26 @@ class FlexFlowFalcon(FlexFlowModel):
                 f"Number of q attention heads ({self.falcon_config.n_head}) is smaller, or not divisible by tensor parallelism degree ({self.ffconfig.tensor_parallelism_degree})"
             )
 
-        self.build_model(
-            max_tokens_per_batch
-            if self.mode == InferenceMode.INC_DECODING_MODE
-            else max_verify_tokens_per_batch
+        self.build_model()
+
+    def build_model(self):
+        ffmodel = FFModel(self.ffconfig)
+        is_spec = self.mode != InferenceMode.INC_DECODING_MODE
+        self.rm = RequestManager()
+        self.max_requests_per_batch = self.rm.get_max_requests_per_batch()
+        self.max_sequence_length = self.rm.get_max_sequence_length()
+        self.max_tokens_per_batch = self.rm.get_max_tokens_per_batch()
+        if is_spec:
+            self.max_tokens_per_batch += self.rm.get_max_spec_tree_token_num()
+            self.max_sequence_length += self.rm.get_max_spec_tree_token_num()
+
+        ffmodel.set_num_kv_cache_pages(
+            compute_num_kv_cache_pages_needed(
+                self.max_sequence_length, self.max_requests_per_batch, is_spec
+            )
         )
 
-    def build_model(self, max_tokens_per_batch):
-        ffmodel = FFModel(self.ffconfig)
-
-        tokens_dims = [max_tokens_per_batch, 1]
+        tokens_dims = [self.max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
 
         embed_init = UniformInitializer(random.randint(0, self.maxint), 0, 0)
@@ -144,22 +155,26 @@ class FlexFlowFalcon(FlexFlowModel):
                     name=f"layers.{i}.input_layernorm",
                 )
 
+            assert self.falcon_config.hidden_size % self.falcon_config.n_head == 0
+            head_dim = self.falcon_config.hidden_size // self.falcon_config.n_head
+
             qkv_proj = ffmodel.dense(
                 att_norm,
-                3 * self.falcon_config.hidden_size,
+                head_dim
+                * (self.falcon_config.n_head + 2 * self.falcon_config.n_head_kv),
                 ActiMode.AC_MODE_NONE,
                 False,
                 name=f"layers.{i}.self_attention.qkv_proj",
             )
 
             if self.mode == InferenceMode.BEAM_SEARCH_MODE:
-                o_proj = ffmodel.spec_inc_multiquery_self_attention(
+                o_proj = ffmodel.spec_inc_multihead_self_attention(
                     qkv_proj,
                     self.falcon_config.hidden_size,
                     self.falcon_config.n_head,
                     self.falcon_config.n_head_kv,
-                    self.falcon_config.hidden_size // self.falcon_config.n_head,
-                    self.falcon_config.hidden_size // self.falcon_config.n_head,
+                    head_dim,
+                    head_dim,
                     0.0,  # dropout
                     False,  # add_zero_attn
                     DataType.DT_NONE,  # data_type
@@ -168,7 +183,7 @@ class FlexFlowFalcon(FlexFlowModel):
                     name=f"layers.{i}.self_attention",
                 )
             elif self.mode == InferenceMode.TREE_VERIFY_MODE:
-                o_proj = ffmodel.inc_multiquery_self_attention_verify(
+                o_proj = ffmodel.inc_multihead_self_attention_verify(
                     qkv_proj,
                     self.falcon_config.hidden_size,
                     self.falcon_config.n_head,
@@ -183,7 +198,7 @@ class FlexFlowFalcon(FlexFlowModel):
                     name=f"layers.{i}.self_attention",
                 )
             elif self.mode == InferenceMode.INC_DECODING_MODE:
-                o_proj = ffmodel.inc_multiquery_self_attention(
+                o_proj = ffmodel.inc_multihead_self_attention(
                     qkv_proj,
                     self.falcon_config.hidden_size,
                     self.falcon_config.n_head,
@@ -205,7 +220,7 @@ class FlexFlowFalcon(FlexFlowModel):
                 self.falcon_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 False,
-                name=f"layers.{i}.self_attention.o_proj"
+                name=f"layers.{i}.self_attention.o_proj",
             )
 
             dense_h_to_4h = ffmodel.dense(
@@ -257,7 +272,7 @@ class FlexFlowFalcon(FlexFlowModel):
                 # output = ffmodel.arg_top_k(lm_head, 1, False)
                 softmax = ffmodel.softmax(lm_head, -1)
                 output = ffmodel.argmax(softmax, False)
-        
+
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
             ffmodel.add_lora_layers(["dense_h_to_4h", "dense_4h_to_h"])
@@ -266,7 +281,8 @@ class FlexFlowFalcon(FlexFlowModel):
 
     # TODO: finish this
     def convert_hf_weight_name(name):
-        return (name.replace("transformer.h.", "layers.")
+        return (
+            name.replace("transformer.h.", "layers.")
             .replace("transformer.", "")
             .replace("self_attention.dense", "self_attention.o_proj")
         )
@@ -282,9 +298,15 @@ class FlexFlowFalcon(FlexFlowModel):
             name = FlexFlowFalcon.convert_hf_weight_name(name)
             # Split Q,K,V attention weights
             if "self_attention.query_key_value" in name:
-                name_q = name.replace("self_attention.query_key_value", "self_attention.q_proj")
-                name_k = name.replace("self_attention.query_key_value", "self_attention.k_proj")
-                name_v = name.replace("self_attention.query_key_value", "self_attention.v_proj")
+                name_q = name.replace(
+                    "self_attention.query_key_value", "self_attention.q_proj"
+                )
+                name_k = name.replace(
+                    "self_attention.query_key_value", "self_attention.k_proj"
+                )
+                name_v = name.replace(
+                    "self_attention.query_key_value", "self_attention.v_proj"
+                )
                 q, k, v = torch.split(
                     params,
                     [

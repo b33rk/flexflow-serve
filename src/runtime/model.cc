@@ -71,9 +71,7 @@
 #include "flexflow/parallel_ops/partition.h"
 #include "flexflow/parallel_ops/reduction.h"
 #include "flexflow/parallel_ops/replicate.h"
-#ifdef FF_BUILD_INFERENCE
 #include "flexflow/request_manager.h"
-#endif
 #include "flexflow/substitution.h"
 #include "flexflow/utils/random_utils.h"
 #include "flexflow/utils/test_utils.h"
@@ -128,7 +126,8 @@ Op::Op(FFModel &model,
     : op_type(_otype), data_type(_dtype), op_guid(model.op_global_guid++),
       numInputs(_numInputs), numWeights(_numWeights), numOutputs(_numOutputs),
       profiling(model.config.profiling),
-      inference_debugging(model.config.inference_debugging) {
+      inference_debugging(model.config.inference_debugging),
+      enable_peft_finetuning(model.config.enable_peft_finetuning) {
   for (int i = 0; i < MAX_NUM_INPUTS; i++) {
     inputs[i] = NULL;
   }
@@ -176,7 +175,8 @@ Op::Op(FFModel &model,
     : op_type(_otype), data_type(_dtype), op_guid(model.op_global_guid++),
       numInputs(_numInputs), numWeights(_numWeights), numOutputs(_numOutputs),
       profiling(model.config.profiling),
-      inference_debugging(model.config.inference_debugging) {
+      inference_debugging(model.config.inference_debugging),
+      enable_peft_finetuning(model.config.enable_peft_finetuning) {
   std::string pcname;
   if (_name == NULL) {
     pcname = get_operator_type_name(op_type);
@@ -1218,7 +1218,10 @@ void Op::set_argumentmap_for_init(FFModel const &ff, ArgumentMap &argmap) {
       if (ff.config.computationMode == COMP_MODE_TRAINING &&                   \
           op_type == OP_WEIGHT) {                                              \
         ncclComm_t *nccl_comms = ff.find_nccl_comms(view);                     \
-        handle.ncclComm = nccl_comms[idx++];                                   \
+        handle.ncclComm = nccl_comms[idx];                                     \
+        ncclComm_t *nccl_comms_peft = ff.find_nccl_comms_peft(view);           \
+        handle.ncclCommPeft = nccl_comms_peft[idx];                            \
+        idx++;                                                                 \
       }                                                                        \
       argmap.set_point(*it, TaskArgument(&handle, sizeof(FFHandler)));         \
     }                                                                          \
@@ -1264,7 +1267,10 @@ void Op::set_argumentmap_for_init_inference(FFModel const &ff,
       if (op_type == OP_ALLREDUCE || op_type == OP_LORA ||                     \
           op_type == OP_PARALLEL_IDENTITY) {                                   \
         ncclComm_t *nccl_comms = ff.find_nccl_comms(view);                     \
-        handle.ncclComm = nccl_comms[idx++];                                   \
+        handle.ncclComm = nccl_comms[idx];                                     \
+        ncclComm_t *nccl_comms_peft = ff.find_nccl_comms_peft(view);           \
+        handle.ncclCommPeft = nccl_comms_peft[idx];                            \
+        idx++;                                                                 \
       }                                                                        \
       argmap.set_point(*it, TaskArgument(&handle, sizeof(FFHandler)));         \
     }                                                                          \
@@ -1492,30 +1498,10 @@ bool Op::get_weight_parameter(TNParameter tnp,
   return true;
 }
 
-#ifdef DEADCODE
-OpMeta::OpMeta(FFHandler _handle)
-    : handle(_handle), profiling(false), inference_debugging(false) {
-  for (int i = 0; i < MAX_NUM_INPUTS; i++) {
-    trainable_inputs[i] = true;
-    reset_input_grads[i] = true;
-  }
-  for (int i = 0; i < MAX_NUM_INPUTS; i++) {
-    input_type[i] = DT_NONE;
-  }
-  for (int i = 0; i < MAX_NUM_WEIGHTS; i++) {
-    weight_type[i] = DT_NONE;
-  }
-  for (int i = 0; i < MAX_NUM_OUTPUTS; i++) {
-    output_type[i] = DT_NONE;
-  }
-  decoding_step = 0;
-  bwd_step = 0;
-}
-#endif
-
 OpMeta::OpMeta(FFHandler _handle, Op const *op)
     : handle(_handle), profiling(op->profiling),
-      inference_debugging(op->inference_debugging) {
+      inference_debugging(op->inference_debugging),
+      enable_peft_finetuning(op->enable_peft_finetuning) {
   for (int i = 0; i < op->numInputs; i++) {
     trainable_inputs[i] = op->trainable_inputs[i];
     reset_input_grads[i] = op->reset_input_grads[i];
@@ -1548,8 +1534,6 @@ FFRuntime::FFRuntime(FFConfig &config) {
     info.workSpaceSize = config.workSpaceSize;
     info.offload_reserve_space_size =
         config.cpu_offload ? config.offload_reserve_space_size : 0;
-    info.peft_activation_reserve_space_size =
-        config.enable_peft ? config.peft_activation_reserve_space_size : 0;
     info.quantization_type = config.quantization_type;
     info.allowTensorOpMathConversion = config.allow_tensor_op_math_conversion;
     argmap.set_point(*it, TaskArgument(&info, sizeof(FFInitInfo)));
@@ -1649,7 +1633,39 @@ FFModel::FFModel(FFConfig &_config, bool cpu_offload)
 void FFModel::finish_nccl_comms() {
   Context ctx = config.lg_ctx;
   Runtime *runtime = config.lg_hlr;
+  // finish inference nccl comms
   for (auto const &comm : view_hash_to_nccl_comms) {
+    // Find the machine view that has the hash
+    MachineView view;
+    for (size_t l = 0; l < operators.size(); l++) {
+      view = operators[l]->outputs[0]->machine_view;
+      if (view.hash() == comm.first) {
+        break;
+      }
+    }
+    assert(view.hash() == comm.first && "Cannot find the machine view");
+    IndexSpace task_is = get_or_create_task_is(view);
+    Domain domain = runtime->get_index_space_domain(ctx, task_is);
+    ArgumentMap argmap;
+    int idx = 0;
+    for (Domain::DomainPointIterator it(domain); it; it++, idx++) {
+      argmap.set_point(*it,
+                       TaskArgument(&comm.second[idx], sizeof(ncclComm_t)));
+    }
+    IndexLauncher index_launcher(NCCL_FINISH_COMMS_TASK_ID,
+                                 task_is,
+                                 TaskArgument(nullptr, 0),
+                                 argmap,
+                                 Predicate::TRUE_PRED,
+                                 false /*must*/,
+                                 0 /*mapper_id*/,
+                                 comm.first);
+    index_launcher.concurrent = true;
+    FutureMap fm = runtime->execute_index_space(ctx, index_launcher);
+    fm.wait_all_results();
+  }
+  // finish peft nccl comms
+  for (auto const &comm : view_hash_to_nccl_comms_peft) {
     // Find the machine view that has the hash
     MachineView view;
     for (size_t l = 0; l < operators.size(); l++) {
@@ -1698,6 +1714,15 @@ void FFModel::clear_graph_search_cache() {
 
 #ifdef FF_USE_NCCL
 ncclComm_t *FFModel::find_nccl_comms(MachineView const &view) const {
+  auto const &it = view_hash_to_nccl_comms.find(view.hash());
+  if (it == view_hash_to_nccl_comms.end()) {
+    assert(config.computationMode == COMP_MODE_INFERENCE);
+    return nullptr;
+  } else {
+    return it->second;
+  }
+}
+ncclComm_t *FFModel::find_nccl_comms_peft(MachineView const &view) const {
   auto const &it = view_hash_to_nccl_comms.find(view.hash());
   if (it == view_hash_to_nccl_comms.end()) {
     assert(config.computationMode == COMP_MODE_INFERENCE);
@@ -3535,7 +3560,11 @@ void FFModel::create_operators_from_layers() {
           std::to_string(
               transformer_layer_allreduce_count[transformer_layer_id]));
       transformer_layer_allreduce_count[transformer_layer_id]++;
+      LayerID ar_guid = LayerID(this->layer_global_guid++,
+                                op->layer_guid.transformer_layer_id,
+                                this->model_id);
       AllReduce *allreduce = new AllReduce(*this,
+                                           ar_guid,
                                            op->outputs[0],
                                            op->outputs[0]->num_dims - 1,
                                            allreduce_name.c_str());
@@ -3564,15 +3593,20 @@ void FFModel::create_operators_from_layers() {
               transformer_layer_parallel_identity_count[transformer_layer_id]));
       transformer_layer_parallel_identity_count[transformer_layer_id]++;
       ParallelIdentity *parallel_identity = nullptr;
+      LayerID pi_guid = LayerID(this->layer_global_guid++,
+                                op->layer_guid.transformer_layer_id,
+                                this->model_id);
       if (op->numOutputs == 1) {
         parallel_identity =
             new ParallelIdentity(*this,
+                                 pi_guid,
                                  op->outputs[0],
                                  op->outputs[0]->num_dims - 1,
                                  parallel_identity_name.c_str());
       } else if (op->numOutputs == 2) {
         parallel_identity =
             new ParallelIdentity(*this,
+                                 pi_guid,
                                  op->outputs[1],
                                  op->outputs[1]->num_dims - 1,
                                  parallel_identity_name.c_str());
@@ -3932,6 +3966,34 @@ void FFModel::compile(LossType loss_type,
           nccl_comms[idx] = fm.get_result<ncclComm_t>(*it);
         }
         view_hash_to_nccl_comms[view.hash()] = nccl_comms;
+      }
+      if (view_hash_to_nccl_comms_peft.find(view.hash()) ==
+          view_hash_to_nccl_comms_peft.end()) {
+        TaskLauncher launcher(NCCL_GETUNIQUEID_TASK_ID, TaskArgument(NULL, 0));
+        Future future = runtime->execute_task(ctx, launcher);
+        ncclUniqueId ncclId = future.get_result<ncclUniqueId>();
+        IndexSpace task_is = get_or_create_task_is(view);
+        ArgumentMap argmap;
+        IndexLauncher index_launcher(
+            NCCL_INIT_COMMS_TASK_ID,
+            task_is,
+            TaskArgument(&ncclId, sizeof(ncclUniqueId)),
+            argmap,
+            Predicate::TRUE_PRED,
+            false /*must*/,
+            0 /*mapper_id*/,
+            view.hash() /*MappingTagID*/);
+        index_launcher.concurrent = true;
+        FutureMap fm = runtime->execute_index_space(ctx, index_launcher);
+        fm.wait_all_results();
+        int idx = 0;
+        Domain task_domain = runtime->get_index_space_domain(ctx, task_is);
+        ncclComm_t *nccl_comms_peft =
+            (ncclComm_t *)malloc(sizeof(ncclComm_t) * task_domain.get_volume());
+        for (Domain::DomainPointIterator it(task_domain); it; it++, idx++) {
+          nccl_comms_peft[idx] = fm.get_result<ncclComm_t>(*it);
+        }
+        view_hash_to_nccl_comms_peft[view.hash()] = nccl_comms_peft;
       }
     }
   }
@@ -4303,9 +4365,11 @@ struct DefaultConfig {
   const static int epochs = 1;
   // const static int iterations = 1;
   const static int batchSize = 64;
+  static bool const log_instance_creation = false;
   const static bool profiling = false;
   const static bool benchmarking = false;
   const static bool inference_debugging = false;
+  const static bool enable_peft_finetuning = false;
   constexpr static float learningRate = 0.01f;
   constexpr static float weightDecay = 0.0001f;
   const static size_t workSpaceSize = (size_t)128 * 1024 * 1024; // 128 MB
@@ -4321,10 +4385,6 @@ struct DefaultConfig {
       (size_t)8 * 1024 * 1024 * 1024; // 8 GB
   // PEFT related fields
   const static bool enablePeft = false;
-  const static size_t peftActivationReserveSpaceSize =
-      (size_t)1 * 1024 * 1024 * 1024; // 1GB
-  const static size_t peftWeightReserveSpaceSize =
-      (size_t)1 * 1024 * 1024 * 1024; // 1GB
   const static bool cpuOffload = false;
   const static bool onlyDataParallel = true;
   const static bool enableSampleParallel = true;
@@ -4346,8 +4406,10 @@ FFConfig::FFConfig() {
   // iterations = DefaultConfig::iterations;
   batchSize = DefaultConfig::batchSize;
   profiling = DefaultConfig::profiling;
+  log_instance_creation = DefaultConfig::log_instance_creation;
   benchmarking = DefaultConfig::benchmarking;
   inference_debugging = DefaultConfig::inference_debugging;
+  enable_peft_finetuning = DefaultConfig::enable_peft_finetuning;
   learningRate = DefaultConfig::learningRate;
   weightDecay = DefaultConfig::weightDecay;
   workSpaceSize = DefaultConfig::workSpaceSize;
@@ -4363,8 +4425,6 @@ FFConfig::FFConfig() {
   offload_reserve_space_size = DefaultConfig::offloadReserveSpaceSize;
   // PEFT related fields
   enable_peft = DefaultConfig::enablePeft;
-  peft_activation_reserve_space_size =
-      DefaultConfig::peftActivationReserveSpaceSize;
   quantization_type = DT_NONE;
   only_data_parallel = DefaultConfig::onlyDataParallel;
   data_parallelism_degree = 1;
@@ -4495,10 +4555,6 @@ void FFConfig::parse_args(char **argv, int argc) {
       enable_peft = true;
       continue;
     }
-    if (!strcmp(argv[i], "-peft-activation-reserve-space-size")) {
-      peft_activation_reserve_space_size = atoll(argv[++i]) * 1024 * 1024;
-      continue;
-    }
     if ((!strcmp(argv[i], "--only-data-parallel"))) {
       only_data_parallel = true;
       continue;
@@ -4543,6 +4599,10 @@ void FFConfig::parse_args(char **argv, int argc) {
     }
     if (!strcmp(argv[i], "-ll:cpu")) {
       cpusPerNode = atoi(argv[++i]);
+      continue;
+    }
+    if ((!strcmp(argv[i], "--log-instance-creation"))) {
+      log_instance_creation = true;
       continue;
     }
     if (!strcmp(argv[i], "--profiling")) {
@@ -4658,7 +4718,6 @@ void register_flexflow_internal_tasks(Runtime *runtime,
           registrar);
     }
   }
-#ifdef FF_BUILD_INFERENCE
   // RequestManager load_tokens
   {
     TaskVariantRegistrar registrar(RM_LOAD_TOKENS_TASK_ID,
@@ -4710,7 +4769,7 @@ void register_flexflow_internal_tasks(Runtime *runtime,
           registrar);
     }
   }
-  // RequestManager prepare_next_batch
+  // RequestManager prepare_next_batch_task
   {
     TaskVariantRegistrar registrar(RM_PREPARE_NEXT_BATCH_TASK_ID,
                                    "RequestManager Prepare Next Batch");
@@ -4826,7 +4885,6 @@ void register_flexflow_internal_tasks(Runtime *runtime,
           registrar);
     }
   }
-#endif
   // ElementUnary task
   {
     TaskVariantRegistrar registrar(ELEMENTUNARY_INIT_TASK_ID,
@@ -5185,6 +5243,21 @@ void register_flexflow_internal_tasks(Runtime *runtime,
         registrar.global_registration = false;
       }
       runtime->register_task_variant<Embedding::inference_task>(registrar);
+    }
+  }
+  {
+    TaskVariantRegistrar registrar(EMBED_PEFT_BWD_TASK_ID,
+                                   "Embedding PEFT BWD");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    if (pre_register) {
+      Runtime::preregister_task_variant<bool, Embedding::peft_bwd_task>(
+          registrar, "Embedding PEFT BWD Task");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime->register_task_variant<bool, Embedding::peft_bwd_task>(registrar);
     }
   }
   {
@@ -5672,13 +5745,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<ResidualLayerNorm::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, ResidualLayerNorm::peft_bwd_task>(
           registrar, "residual_layernorm_peft_bwd_task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<ResidualLayerNorm::peft_bwd_task>(
+      runtime->register_task_variant<bool, ResidualLayerNorm::peft_bwd_task>(
           registrar);
     }
   }
@@ -5742,13 +5815,15 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.set_leaf();
     if (pre_register) {
       Runtime::preregister_task_variant<
+          bool,
           AddBiasResidualLayerNorm::peft_bwd_task>(
           registrar, "AddBiasResidualLayerNorm PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<AddBiasResidualLayerNorm::peft_bwd_task>(
+      runtime->register_task_variant<bool,
+                                     AddBiasResidualLayerNorm::peft_bwd_task>(
           registrar);
     }
   }
@@ -5807,13 +5882,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<SigmoidSiluMulti::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, SigmoidSiluMulti::peft_bwd_task>(
           registrar, "SigmoidSiluMulti PEFT Bwd Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<SigmoidSiluMulti::peft_bwd_task>(
+      runtime->register_task_variant<bool, SigmoidSiluMulti::peft_bwd_task>(
           registrar);
     }
   }
@@ -5880,13 +5955,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<RMSNorm::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, RMSNorm::peft_bwd_task>(
           registrar, "RMS Norm PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<RMSNorm::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, RMSNorm::peft_bwd_task>(registrar);
     }
   }
   // residual rms norm task
@@ -5943,13 +6018,14 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<ResidualRMSNorm::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, ResidualRMSNorm::peft_bwd_task>(
           registrar, "Residual RMS Norm PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<ResidualRMSNorm::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, ResidualRMSNorm::peft_bwd_task>(
+          registrar);
     }
   }
   {
@@ -5958,13 +6034,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<LayerNorm::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, LayerNorm::peft_bwd_task>(
           registrar, "peft_bwd_task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<LayerNorm::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, LayerNorm::peft_bwd_task>(registrar);
     }
   }
   {
@@ -6016,13 +6092,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<Linear::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, Linear::peft_bwd_task>(
           registrar, "Linear PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<Linear::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, Linear::peft_bwd_task>(registrar);
     }
   }
   {
@@ -6159,13 +6235,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<Softmax::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, Softmax::peft_bwd_task>(
           registrar, "Softmax PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<Softmax::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, Softmax::peft_bwd_task>(registrar);
     }
   }
 
@@ -6781,13 +6857,15 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.set_leaf();
     if (pre_register) {
       Runtime::preregister_task_variant<
+          bool,
           IncMultiHeadSelfAttention::peft_bwd_task>(
           registrar, "IncMultiHeadSelfAttention PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<IncMultiHeadSelfAttention::peft_bwd_task>(
+      runtime->register_task_variant<bool,
+                                     IncMultiHeadSelfAttention::peft_bwd_task>(
           registrar);
     }
   }
@@ -6908,13 +6986,14 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.set_concurrent();
     registrar.set_concurrent_barrier();
     if (pre_register) {
-      Runtime::preregister_task_variant<LoraLinear::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, LoraLinear::peft_bwd_task>(
           registrar, "LoraLinear PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<LoraLinear::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, LoraLinear::peft_bwd_task>(
+          registrar);
     }
   }
 
@@ -6972,13 +7051,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.set_concurrent();
     registrar.set_concurrent_barrier();
     if (pre_register) {
-      Runtime::preregister_task_variant<FusedOp::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, FusedOp::peft_bwd_task>(
           registrar, "FusedOp PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<FusedOp::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, FusedOp::peft_bwd_task>(registrar);
     }
   }
 
@@ -7125,13 +7204,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<Combine::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, Combine::peft_bwd_task>(
           registrar, "Combine PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<Combine::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, Combine::peft_bwd_task>(registrar);
     }
   }
   // Replicate
@@ -7183,13 +7262,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<Replicate::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, Replicate::peft_bwd_task>(
           registrar, "Replicate PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<Replicate::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, Replicate::peft_bwd_task>(registrar);
     }
   }
   // Reduction
@@ -7307,13 +7386,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
     registrar.set_leaf();
     if (pre_register) {
-      Runtime::preregister_task_variant<AllReduce::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, AllReduce::peft_bwd_task>(
           registrar, "AllReduce PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<AllReduce::peft_bwd_task>(registrar);
+      runtime->register_task_variant<bool, AllReduce::peft_bwd_task>(registrar);
     }
   }
   // ParallelIdentity
@@ -7390,13 +7469,13 @@ void register_flexflow_internal_tasks(Runtime *runtime,
     registrar.set_concurrent();
     // registrar.set_concurrent_barrier();
     if (pre_register) {
-      Runtime::preregister_task_variant<ParallelIdentity::peft_bwd_task>(
+      Runtime::preregister_task_variant<bool, ParallelIdentity::peft_bwd_task>(
           registrar, "ParallelIdentity PEFT Backward Task");
     } else {
       if (enable_control_replication) {
         registrar.global_registration = false;
       }
-      runtime->register_task_variant<ParallelIdentity::peft_bwd_task>(
+      runtime->register_task_variant<bool, ParallelIdentity::peft_bwd_task>(
           registrar);
     }
   }

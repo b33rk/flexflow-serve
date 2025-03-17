@@ -699,7 +699,8 @@ BeamTopKMeta::BeamTopKMeta(FFHandler handler,
                      sizeof(int) * request_id_size +
                      sizeof(int) * tokens_per_request_size;
 
-  gpu_mem_allocator.create_legion_instance(reserveInst, totalSize);
+  gpu_mem_allocator.create_legion_instance(
+      reserveInst, totalSize, "BeamTopKMeta");
   parent_ids = gpu_mem_allocator.allocate_instance<int>(parent_id_size);
   if (data_type == DT_FLOAT) {
     acc_probs = gpu_mem_allocator.allocate_instance<float>(acc_probs_size);

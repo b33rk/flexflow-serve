@@ -31,7 +31,8 @@ fs::path get_dst_folder(std::string const &subdir,
     step_substr += "_pre";
   }
   char cwd[PATH_MAX];
-  getcwd(cwd, sizeof(cwd));
+  char *result = getcwd(cwd, sizeof(cwd));
+  assert(result && "getcwd failed");
 
   // char const *ff_cache_path = std::string(std::getenv("FF_DEBUG_PATH")) ==
   // "." ?

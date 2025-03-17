@@ -34,18 +34,20 @@ void FALCON::create_falcon_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  std::unordered_map<std::string, Layer *> weights_layers;
+  assert(falcon_config.hidden_size % falcon_config.n_head == 0 &&
+         "Hidden size not divisible by number of attention heads");
+  int head_dim = falcon_config.hidden_size / falcon_config.n_head;
+  int tot_num_heads = falcon_config.n_head + 2 * falcon_config.n_head_kv;
 
   Tensor input;
-  {
-    // assert(falcon_config.max_num_tokens <= BatchConfig::MAX_NUM_TOKENS);
-    int const token_dims[] = {
-        (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE)
-            ? BatchConfig::max_verify_tokens_per_batch()
-            : BatchConfig::max_tokens_per_batch(),
-        1};
-    input = ff.create_tensor<2>(token_dims, DT_INT32);
+  int batch_tensor_num_tokens = BatchConfig::max_tokens_per_batch();
+  if (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE) {
+    batch_tensor_num_tokens = BatchConfig::max_verify_tokens_per_batch();
+  } else if (ff.config.enable_peft_finetuning) {
+    batch_tensor_num_tokens = BatchConfig::max_sequence_length();
   }
+  int const token_dims[] = {batch_tensor_num_tokens, 1};
+  input = ff.create_tensor<2>(token_dims, DT_INT32);
 
   std::vector<int> axes = {0};
 
@@ -100,9 +102,7 @@ void FALCON::create_falcon_model(FFModel &ff,
 
     qkv_proj = ff.dense(
         att_norm,
-        falcon_config.hidden_size *
-            3, // q, k, v. need to change if want to remove replication.
-               // (q_heads + 2 * kv_heads) * proj_size
+        head_dim * tot_num_heads,
         AC_MODE_NONE,
         false,         // seems like it does not use bias
         DT_NONE,       // what is this
@@ -117,13 +117,13 @@ void FALCON::create_falcon_model(FFModel &ff,
 
     switch (mode) {
       case BEAM_SEARCH_MODE: {
-        o_proj = ff.spec_inc_multiquery_self_attention(
+        o_proj = ff.spec_inc_multihead_self_attention(
             qkv_proj,
             falcon_config.hidden_size,
             falcon_config.n_head,
             falcon_config.n_head_kv,
-            falcon_config.hidden_size / falcon_config.n_head,
-            falcon_config.hidden_size / falcon_config.n_head,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -140,13 +140,13 @@ void FALCON::create_falcon_model(FFModel &ff,
       }
 
       case TREE_VERIFY_MODE: {
-        o_proj = ff.inc_multiquery_self_attention_verify(
+        o_proj = ff.inc_multihead_self_attention_verify(
             qkv_proj,
             falcon_config.hidden_size,
             falcon_config.n_head,
             falcon_config.n_head_kv,
-            falcon_config.hidden_size / falcon_config.n_head,
-            falcon_config.hidden_size / falcon_config.n_head,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -163,13 +163,13 @@ void FALCON::create_falcon_model(FFModel &ff,
       }
 
       case INC_DECODING_MODE: {
-        o_proj = ff.inc_multiquery_self_attention(
+        o_proj = ff.inc_multihead_self_attention(
             qkv_proj,
             falcon_config.hidden_size,
             falcon_config.n_head,
             falcon_config.n_head_kv,
-            falcon_config.hidden_size / falcon_config.n_head,
-            falcon_config.hidden_size / falcon_config.n_head,
+            head_dim,
+            head_dim,
             0.0f,    /*dropout*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -283,7 +283,7 @@ void FALCON::create_falcon_model(FFModel &ff,
                          falcon_config.n_head,
                          falcon_config.n_head_kv,
                          falcon_config.hidden_size,
-                         falcon_config.hidden_size / falcon_config.n_head,
+                         head_dim,
                          ff.config.tensor_parallelism_degree,
                          use_full_precision);
 

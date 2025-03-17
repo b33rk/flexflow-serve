@@ -3800,14 +3800,18 @@ bool FFModel::convert_graph_to_operators(
       case OP_ALLREDUCE: {
         assert(inList.size() == 1);
         AllReduce *allreduce = (AllReduce *)node.ptr;
-        new_op = new AllReduce(
-            *this, inputs[0], allreduce->allreduce_dim, allreduce->name);
+        new_op = new AllReduce(*this,
+                               allreduce->layer_guid,
+                               inputs[0],
+                               allreduce->allreduce_dim,
+                               allreduce->name);
         break;
       }
       case OP_PARALLEL_IDENTITY: {
         assert(inList.size() == 1);
         ParallelIdentity *parallel_identity = (ParallelIdentity *)node.ptr;
         new_op = new ParallelIdentity(*this,
+                                      parallel_identity->layer_guid,
                                       inputs[0],
                                       parallel_identity->parallel_identity_dim,
                                       parallel_identity->name);

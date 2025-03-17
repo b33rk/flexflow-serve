@@ -19,11 +19,6 @@ import random, shutil
 
 class OPTConfig:
     def __init__(self, hf_config):
-        # self.max_seq_len = 256
-        # self.max_num_tokens = 64
-        self.max_beam_width = 1
-        self.max_beam_depth = 8
-        self.max_spec_tree_token_num = 20
         self.do_layer_norm_before = hf_config.do_layer_norm_before
         self.dropout = hf_config.dropout
         self.enable_bias = hf_config.enable_bias
@@ -48,7 +43,6 @@ class FlexFlowOPT(FlexFlowModel):
         ffconfig,
         hf_config,
         data_type,
-        max_tokens_per_batch,
         weights_filepath="",
         tokenizer_filepath="",
     ):
@@ -60,9 +54,6 @@ class FlexFlowOPT(FlexFlowModel):
         self.weights_filepath = weights_filepath
         self.tokenizer_filepath = tokenizer_filepath
         self.maxint = 2**31 - 1
-        max_verify_tokens_per_batch = (
-            max_tokens_per_batch + self.opt_config.max_spec_tree_token_num
-        )
 
         # Sanity checks
         if self.opt_config.hidden_size % self.opt_config.num_attention_heads != 0:
@@ -82,16 +73,26 @@ class FlexFlowOPT(FlexFlowModel):
                 f"Number of attention heads ({self.opt_config.num_attention_heads}) is smaller, or not divisible by tensor parallelism degree ({self.ffconfig.tensor_parallelism_degree})"
             )
 
-        self.build_model(
-            max_tokens_per_batch
-            if self.mode == InferenceMode.INC_DECODING_MODE
-            else max_verify_tokens_per_batch
+        self.build_model()
+
+    def build_model(self):
+        ffmodel = FFModel(self.ffconfig)
+        is_spec = self.mode != InferenceMode.INC_DECODING_MODE
+        self.rm = RequestManager()
+        self.max_requests_per_batch = self.rm.get_max_requests_per_batch()
+        self.max_sequence_length = self.rm.get_max_sequence_length()
+        self.max_tokens_per_batch = self.rm.get_max_tokens_per_batch()
+        if is_spec:
+            self.max_tokens_per_batch += self.rm.get_max_spec_tree_token_num()
+            self.max_sequence_length += self.rm.get_max_spec_tree_token_num()
+
+        ffmodel.set_num_kv_cache_pages(
+            compute_num_kv_cache_pages_needed(
+                self.max_sequence_length, self.max_requests_per_batch, is_spec
+            )
         )
 
-    def build_model(self, max_tokens_per_batch):
-        ffmodel = FFModel(self.ffconfig)
-
-        tokens_dims = [max_tokens_per_batch, 1]
+        tokens_dims = [self.max_tokens_per_batch, 1]
         input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
         position_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
 
@@ -142,7 +143,7 @@ class FlexFlowOPT(FlexFlowModel):
                 residual = hidden_states
 
             qkv_proj = ffmodel.dense(
-               hidden_states,
+                hidden_states,
                 3 * self.opt_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 True,
@@ -153,6 +154,7 @@ class FlexFlowOPT(FlexFlowModel):
                 o_proj = ffmodel.spec_inc_multihead_self_attention(
                     qkv_proj,
                     self.opt_config.hidden_size,
+                    self.opt_config.num_attention_heads,
                     self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
@@ -172,6 +174,7 @@ class FlexFlowOPT(FlexFlowModel):
                     qkv_proj,
                     self.opt_config.hidden_size,
                     self.opt_config.num_attention_heads,
+                    self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
                     0.0,  # dropout
@@ -189,6 +192,7 @@ class FlexFlowOPT(FlexFlowModel):
                 o_proj = ffmodel.inc_multihead_self_attention(
                     qkv_proj,
                     self.opt_config.hidden_size,
+                    self.opt_config.num_attention_heads,
                     self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
                     self.opt_config.hidden_size // self.opt_config.num_attention_heads,
@@ -211,7 +215,7 @@ class FlexFlowOPT(FlexFlowModel):
                 self.opt_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 False,
-                name=f"layers.{i}.self_attn.o_proj"
+                name=f"layers.{i}.self_attn.o_proj",
             )
             # This is either a before or after attention LayerNorm. In both cases, we need to compute the LN here.
             residual, ff_norm = ffmodel.add_bias_residual_layer_norm(
@@ -290,7 +294,7 @@ class FlexFlowOPT(FlexFlowModel):
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
             ffmodel.add_lora_layers(["fc1", "fc2"])
-        
+
         self.ffmodel = ffmodel
 
     def convert_hf_weight_name(name):

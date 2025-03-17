@@ -4,6 +4,7 @@
 namespace FlexFlow {
 
 struct ParallelIdentityParams {
+  LayerID layer_guid;
   int parallel_identity_legion_dim;
   char name[MAX_OPNAME];
   bool is_valid(ParallelTensorShape const &) const;

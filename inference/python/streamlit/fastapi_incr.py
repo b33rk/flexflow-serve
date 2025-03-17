@@ -185,7 +185,6 @@ async def startup_event():
         generation_config,
         max_requests_per_batch=16,
         # max_seq_length=2048 will cause memory allocation error
-        # max_seq_length=256,
         max_seq_length=600,
         max_tokens_per_batch=1024,
         enable_peft_finetuning=True,

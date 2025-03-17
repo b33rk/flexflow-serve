@@ -86,7 +86,7 @@ void peft_bwd_kernel_wrapper(AllReduceMeta const *m,
   assert(input_grad.domain == output_grad.domain);
   size_t hidden_dim_size =
       input_grad.domain.hi()[0] - input_grad.domain.lo()[0] + 1;
-  size_t num_elements = bc->num_active_tokens();
+  size_t num_elements = bc->num_finetuning_bwd_tokens();
   size_t data_size = data_type_size(output_grad.data_type);
   checkCUDA(cudaMemcpyAsync(input_grad.ptr,
                             output_grad.ptr,
