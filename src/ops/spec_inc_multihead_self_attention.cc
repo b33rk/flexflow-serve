@@ -55,40 +55,6 @@ bool SpecIncMultiHeadSelfAttentionParams::is_valid(
 Tensor FFModel::spec_inc_multihead_self_attention(
     Tensor const input,
     int embed_dim,
-    int num_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    DataType data_type,
-    Initializer *kernel_initializer,
-    RotaryEmbeddingMeta rotary_embedding_meta,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name) {
-  return spec_inc_multiquery_self_attention(input,
-                                            embed_dim,
-                                            num_heads,
-                                            num_heads,
-                                            kdim,
-                                            vdim,
-                                            dropout,
-                                            add_zero_attn,
-                                            data_type,
-                                            kernel_initializer,
-                                            rotary_embedding_meta,
-                                            scaling_query,
-                                            scaling_factor,
-                                            qk_prod_scaling,
-                                            position_bias,
-                                            name);
-}
-
-Tensor FFModel::spec_inc_multiquery_self_attention(
-    Tensor const input,
-    int embed_dim,
     int num_q_heads,
     int num_kv_heads,
     int kdim,
@@ -161,6 +127,7 @@ Tensor FFModel::spec_inc_multiquery_self_attention(
   li->add_float_property("scaling_factor", scaling_factor);
   li->add_int_property("qk_prod_scaling", qk_prod_scaling);
   li->add_int_property("position_bias", position_bias);
+  li->add_int_property("num_kv_cache_pages", get_num_kv_cache_pages());
   layers.push_back(li);
   return li->outputs[0];
 }
@@ -206,6 +173,8 @@ Op *SpecIncMultiHeadSelfAttention::create_operator_from_layer(
   bool qk_prod_scaling = (bool)value;
   layer->get_int_property("position_bias", value);
   bool position_bias = (bool)value;
+  layer->get_int_property("num_kv_cache_pages", value);
+  int num_kv_cache_pages = (int)value;
 
   return new SpecIncMultiHeadSelfAttention(model,
                                            layer->layer_guid,
@@ -222,6 +191,7 @@ Op *SpecIncMultiHeadSelfAttention::create_operator_from_layer(
                                            scaling_factor,
                                            qk_prod_scaling,
                                            position_bias,
+                                           num_kv_cache_pages,
                                            layer->name);
 }
 
@@ -241,6 +211,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
     float _scaling_factor,
     bool _qk_prod_scaling,
     bool _position_bias,
+    int _num_kv_cache_pages,
     char const *name)
     : Op(model,
          OP_SPEC_INC_MULTIHEAD_SELF_ATTENTION,
@@ -252,10 +223,8 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
          _input),
       num_q_heads(_num_q_heads), num_kv_heads(_num_kv_heads), dropout(_dropout),
       add_zero_attn(_add_zero_attn),
-      rotary_embedding_meta(_rotary_embedding_meta),
-      qSize(_input->dims[0].size), kSize(_input->dims[0].size),
-      vSize(_input->dims[0].size), qProjSize(_kdim), kProjSize(_kdim),
-      vProjSize(_vdim), oProjSize(_embed_dim),
+      rotary_embedding_meta(_rotary_embedding_meta), qProjSize(_kdim),
+      kProjSize(_kdim), vProjSize(_vdim), oProjSize(_embed_dim),
       qoSeqLength(_input->dims[1].size), kvSeqLength(_input->dims[1].size),
       scaling_query(_scaling_query), scaling_factor(_scaling_factor),
       qk_prod_scaling(_qk_prod_scaling), position_bias(_position_bias) {
@@ -274,6 +243,8 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
 
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       _input->num_dims, dims, this->data_type, this);
+
+  num_kv_cache_pages = _num_kv_cache_pages;
 }
 
 SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
@@ -291,6 +262,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
     float _scaling_factor,
     bool _qk_prod_scaling,
     bool _position_bias,
+    int _num_kv_cache_pages,
     char const *name)
     : Op(model,
          OP_SPEC_INC_MULTIHEAD_SELF_ATTENTION,
@@ -302,10 +274,8 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
          _input),
       num_q_heads(_num_q_heads), num_kv_heads(_num_kv_heads), dropout(_dropout),
       add_zero_attn(_add_zero_attn),
-      rotary_embedding_meta(_rotary_embedding_meta),
-      qSize(_input->dims[0].size), kSize(_input->dims[0].size),
-      vSize(_input->dims[0].size), qProjSize(_kdim), kProjSize(_kdim),
-      vProjSize(_vdim), oProjSize(_embed_dim),
+      rotary_embedding_meta(_rotary_embedding_meta), qProjSize(_kdim),
+      kProjSize(_kdim), vProjSize(_vdim), oProjSize(_embed_dim),
       qoSeqLength(_input->dims[1].size), kvSeqLength(_input->dims[1].size),
       scaling_query(_scaling_query), scaling_factor(_scaling_factor),
       qk_prod_scaling(_qk_prod_scaling), position_bias(_position_bias) {
@@ -318,6 +288,8 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
   dims[0].size = _embed_dim;
   // Currently require no parallelism along this dim
   assert(dims[0].degree == 1);
+
+  num_kv_cache_pages = _num_kv_cache_pages;
 
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       _input->num_dims, dims, this->data_type, this);
@@ -342,6 +314,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
                                     other.scaling_factor,
                                     other.qk_prod_scaling,
                                     other.position_bias,
+                                    other.num_kv_cache_pages,
                                     other.name) {}
 
 SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
@@ -364,6 +337,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
                                     params.scaling_factor,
                                     params.qk_prod_scaling,
                                     params.position_bias,
+                                    params.num_kv_cache_pages,
                                     params.name) {}
 
 void SpecIncMultiHeadSelfAttention::init_inference(
@@ -466,7 +440,6 @@ OpMeta *SpecIncMultiHeadSelfAttention::init_task(
                                        ctx,
                                        runtime);
 
-  int num_samples = input.domain.hi()[2] - input.domain.lo()[2] + 1;
   assert(attn->qoSeqLength == input.domain.hi()[1] - input.domain.lo()[1] + 1);
   assert(attn->kvSeqLength == input.domain.hi()[1] - input.domain.lo()[1] + 1);
   int num_q_heads = attn->num_q_heads;
@@ -474,15 +447,28 @@ OpMeta *SpecIncMultiHeadSelfAttention::init_task(
   assert(attn->oProjSize == output.domain.hi()[0] - output.domain.lo()[0] + 1);
 
   Memory gpu_mem = get_proc_mem(Machine::get_machine(), task->target_proc);
-  MemoryAllocator gpu_mem_allocator(gpu_mem);
+  MemoryAllocator inf_mem_allocator(gpu_mem);
+  MemoryAllocator kv_cache_mem_allocator(gpu_mem);
+  MemoryAllocator peft_mem_allocator(gpu_mem);
   // We don't do offloading for SSMs (small speculative models)
-  SpecIncMultiHeadSelfAttentionMeta *m = new SpecIncMultiHeadSelfAttentionMeta(
-      handle, attn, gpu_mem_allocator, num_samples, num_q_heads, num_kv_heads);
+  SpecIncMultiHeadSelfAttentionMeta *m =
+      new SpecIncMultiHeadSelfAttentionMeta(handle,
+                                            attn,
+                                            inf_mem_allocator,
+                                            kv_cache_mem_allocator,
+                                            peft_mem_allocator,
+                                            num_q_heads,
+                                            num_kv_heads);
   // assert that we didn't over allocate memory
-  assert(gpu_mem_allocator.instance_allocated_size ==
-         gpu_mem_allocator.instance_total_size);
+  assert(inf_mem_allocator.instance_allocated_size ==
+         inf_mem_allocator.instance_total_size);
+  assert(kv_cache_mem_allocator.instance_allocated_size ==
+         kv_cache_mem_allocator.instance_total_size);
+  assert(peft_mem_allocator.instance_allocated_size ==
+         peft_mem_allocator.instance_total_size);
   m->profiling = attn->profiling;
   m->inference_debugging = attn->inference_debugging;
+  m->enable_peft_finetuning = attn->enable_peft_finetuning;
   std::strcpy(m->op_name, attn->name);
   m->layer_guid = attn->layer_guid;
   return m;
@@ -627,7 +613,8 @@ bool operator==(SpecIncMultiHeadSelfAttentionParams const &lhs,
          lhs.scaling_query == rhs.scaling_query &&
          lhs.scaling_factor == rhs.scaling_factor &&
          lhs.qk_prod_scaling == rhs.qk_prod_scaling &&
-         lhs.position_bias == rhs.position_bias;
+         lhs.position_bias == rhs.position_bias &&
+         lhs.num_kv_cache_pages == rhs.num_kv_cache_pages;
 }
 
 SpecIncMultiHeadSelfAttentionParams
@@ -646,6 +633,7 @@ SpecIncMultiHeadSelfAttentionParams
   params.scaling_factor = this->scaling_factor;
   params.qk_prod_scaling = this->qk_prod_scaling;
   params.position_bias = this->position_bias;
+  params.num_kv_cache_pages = this->num_kv_cache_pages;
   if (strlen(this->name) < MAX_OPNAME) {
     strcpy(params.name, this->name);
   }
@@ -679,6 +667,7 @@ size_t hash<FlexFlow::SpecIncMultiHeadSelfAttentionParams>::operator()(
   hash_combine(key, params.scaling_factor);
   hash_combine(key, params.qk_prod_scaling);
   hash_combine(key, params.position_bias);
+  hash_combine(key, params.num_kv_cache_pages);
   return key;
 }
 }; // namespace std

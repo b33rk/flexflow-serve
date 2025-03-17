@@ -19,9 +19,6 @@ import random, torch, shutil
 
 class MPTConfig:
     def __init__(self, hf_config):
-        self.max_beam_width = 1
-        self.max_beam_depth = 8
-        self.max_spec_tree_token_num = 20
         self.hidden_size = hf_config.d_model
         self.n_heads = hf_config.n_heads
         self.n_layers = hf_config.n_layers
@@ -40,8 +37,6 @@ class FlexFlowMPT(FlexFlowModel):
         ffconfig,
         hf_config,
         data_type,
-        # max_batch_size=1,
-        # max_seq_length=256,
         max_tokens_per_batch,
         weights_filepath="",
         tokenizer_filepath="",
@@ -54,9 +49,6 @@ class FlexFlowMPT(FlexFlowModel):
         self.weights_filepath = weights_filepath
         self.tokenizer_filepath = tokenizer_filepath
         self.maxint = 2**31 - 1
-        max_verify_tokens_per_batch = (
-            max_tokens_per_batch + self.mpt_config.max_spec_tree_token_num
-        )
 
         # Sanity checks
         if self.mpt_config.hidden_size % self.mpt_config.n_heads != 0:
@@ -72,16 +64,27 @@ class FlexFlowMPT(FlexFlowModel):
             raise ValueError(
                 f"Number of attention heads ({self.mpt_config.n_heads}) is smaller, or not divisible by tensor parallelism degree ({self.ffconfig.tensor_parallelism_degree})"
             )
-        self.build_model(
-            max_tokens_per_batch
-            if self.mode == InferenceMode.INC_DECODING_MODE
-            else max_verify_tokens_per_batch
-        )
+        self.build_model()
 
-    def build_model(self, max_tokens_per_batch):
+    def build_model(self):
         ffmodel = FFModel(self.ffconfig)
 
-        tokens_dims = [max_tokens_per_batch, 1]
+        is_spec = self.mode != InferenceMode.INC_DECODING_MODE
+        self.rm = RequestManager()
+        self.max_requests_per_batch = self.rm.get_max_requests_per_batch()
+        self.max_sequence_length = self.rm.get_max_sequence_length()
+        self.max_tokens_per_batch = self.rm.get_max_tokens_per_batch()
+        if is_spec:
+            self.max_tokens_per_batch += self.rm.get_max_spec_tree_token_num()
+            self.max_sequence_length += self.rm.get_max_spec_tree_token_num()
+
+        ffmodel.set_num_kv_cache_pages(
+            compute_num_kv_cache_pages_needed(
+                self.max_sequence_length, self.max_requests_per_batch, is_spec
+            )
+        )
+
+        tokens_dims = [self.max_tokens_per_batch, 1]
         input = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
 
         embed_init = UniformInitializer(random.randint(0, self.maxint), 0, 0)
@@ -138,6 +141,7 @@ class FlexFlowMPT(FlexFlowModel):
                     qkv_proj,
                     self.mpt_config.hidden_size,
                     self.mpt_config.n_heads,
+                    self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
                     0.0,  # dropout
@@ -157,6 +161,7 @@ class FlexFlowMPT(FlexFlowModel):
                     qkv_proj,
                     self.mpt_config.hidden_size,
                     self.mpt_config.n_heads,
+                    self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
                     0.0,  # dropout
@@ -175,6 +180,7 @@ class FlexFlowMPT(FlexFlowModel):
                 o_proj = ffmodel.inc_multihead_self_attention(
                     qkv_proj,
                     self.mpt_config.hidden_size,
+                    self.mpt_config.n_heads,
                     self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
                     self.mpt_config.hidden_size // self.mpt_config.n_heads,
@@ -198,7 +204,7 @@ class FlexFlowMPT(FlexFlowModel):
                 self.mpt_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 False,
-                name=f"layers.{i}.attn.o_proj"
+                name=f"layers.{i}.attn.o_proj",
             )
 
             hidden_states, layernorm_output = ffmodel.residual_layer_norm(
@@ -261,7 +267,7 @@ class FlexFlowMPT(FlexFlowModel):
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
             ffmodel.add_lora_layers(["up_proj", "down_proj"])
-        
+
         self.ffmodel = ffmodel
 
     # TODO: finish this

@@ -45,6 +45,7 @@ public:
                             DataType _quantization_type,
                             bool _offload,
                             int _tensor_parallelism_degree,
+                            int _num_kv_cache_pages,
                             char const *name);
   IncMultiHeadSelfAttention(FFModel &model,
                             ParallelTensor const _input,
@@ -63,6 +64,7 @@ public:
                             DataType _quantization_type,
                             bool _offload,
                             int _tensor_parallelism_degree,
+                            int _num_kv_cache_pages,
                             char const *name);
   IncMultiHeadSelfAttention(FFModel &model,
                             IncMultiHeadSelfAttention const &other,
@@ -105,7 +107,7 @@ public:
                              std::vector<Legion::PhysicalRegion> const &regions,
                              Legion::Context ctx,
                              Legion::Runtime *runtime);
-  static void peft_bwd_task(Legion::Task const *task,
+  static bool peft_bwd_task(Legion::Task const *task,
                             std::vector<Legion::PhysicalRegion> const &regions,
                             Legion::Context ctx,
                             Legion::Runtime *runtime);
@@ -126,11 +128,11 @@ public:
   Params get_params() const;
 
 public:
-  int num_q_heads, num_kv_heads, tensor_parallelism_degree;
+  int num_q_heads, num_kv_heads, tensor_parallelism_degree, num_kv_cache_pages;
   float dropout, scaling_factor;
   bool add_zero_attn, scaling_query, qk_prod_scaling, position_bias;
   RotaryEmbeddingMeta rotary_embedding_meta;
-  int qSize, kSize, vSize, qProjSize, kProjSize, vProjSize, oProjSize;
+  int qProjSize, kProjSize, vProjSize, oProjSize;
   int qoSeqLength, kvSeqLength;
   DataType quantization_type;
   bool offload;
@@ -140,16 +142,14 @@ class IncMultiHeadSelfAttentionMeta : public OpMeta {
 public:
   IncMultiHeadSelfAttentionMeta(FFHandler handler,
                                 IncMultiHeadSelfAttention const *attn,
-                                MemoryAllocator &gpu_mem_allocator,
-                                int num_samples,
+                                MemoryAllocator &inf_mem_allocator,
+                                MemoryAllocator &kv_cache_mem_allocator,
+                                MemoryAllocator &peft_mem_allocator,
                                 int _num_q_heads,
                                 int _num_kv_heads);
   IncMultiHeadSelfAttentionMeta(FFHandler handler,
                                 InferenceMode infer_mode,
                                 Op const *attn,
-                                int _qSize,
-                                int _kSize,
-                                int _vSize,
                                 int _qProjSize,
                                 int _kProjSize,
                                 int _vProjSize,
@@ -159,46 +159,72 @@ public:
                                 bool _qk_prod_scaling,
                                 bool _position_bias,
                                 float _scaling_factor,
-                                MemoryAllocator &gpu_mem_allocator,
-                                int num_samples,
+                                MemoryAllocator &inf_mem_allocator,
+                                MemoryAllocator &kv_cache_mem_allocator,
+                                MemoryAllocator &peft_mem_allocator,
                                 int _global_num_q_heads,
                                 int _global_num_kv_heads,
                                 int _num_q_heads,
                                 int _num_kv_heads,
+                                int _num_kv_cache_pages,
                                 DataType _quantization_type,
                                 bool _offload);
   ~IncMultiHeadSelfAttentionMeta(void);
 
 public:
-  Realm::RegionInstance reserveInst;
+  // Realm::RegionInstance reserveInst;
+  Realm::RegionInstance inf_instance, kv_cache_instance, peft_instance;
   size_t reserveSpaceSize;
-  int qSize, kSize, vSize, qProjSize, kProjSize, vProjSize, oProjSize;
-  int global_num_q_heads, global_num_kv_heads, num_q_heads, num_kv_heads,
-      hidden_size;
+  int qProjSize, kProjSize, vProjSize, oProjSize;
+  int global_num_q_heads, global_num_kv_heads, num_q_heads, num_kv_heads;
   RotaryEmbeddingMeta *rotary_embedding_meta;
   bool *scaling_query;
   bool *qk_prod_scaling;
   bool *position_bias;
   float scaling_factor;
-  void *devQKVProjArray, *keyCache, *valueCache;
-  void *qk_prods, *qk_prods_softmax;
-  void *attn_heads;
-  BatchConfig::PerTokenInfo *token_infos;
-  BatchConfig::PerRequestInfo *request_infos;
   DataType quantization_type;
   bool offload;
+  int num_kv_cache_pages;
+
+  // GPU memory sizes (or num elements)
+  size_t gqa_ptr_array_size = 0;
+  size_t key_cache_size = 0, value_cache_size = 0;           // numel
+  size_t peft_key_cache_size = 0, peft_value_cache_size = 0; // numel
+  size_t qkv_max_proj_size, qkv_max_proj_size_bwd = 0;       // numel
+  size_t query_tmp_size = 0;                                 // numel
+  size_t complex_size = 0, complex_size_bwd = 0;             // numel
+  size_t qk_prod_size = 0;                                   // numel
+  size_t allocated_peft_buffer_size1 = 0, allocated_peft_buffer_size2 = 0,
+         peft_token_infos_size = 0;
+
+  void *devQKVProjArray, *devQKVProjArrayBWD;
+  void *kvCache, *keyCache, *valueCache;
+  void *keyCachePeft, *valueCachePeft;
+  void *qk_prods, *qk_prods_softmax;
+  // flashinfer
+  void *queryTmp, *outputTmp;
+
+  BatchConfig::PerTokenInfo *token_infos;
+  BatchConfig::PerRequestInfo *request_infos;
+  bool *request_completed;
+
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
   cudnnTensorDescriptor_t qk_tensor;
-  cuFloatComplex *complex_input;
+  cuFloatComplex *complex_input, *complex_input_bwd;
 #elif defined(FF_USE_HIP_ROCM)
   miopenTensorDescriptor_t qk_tensor;
-  //  typedef hipFloatComplex attFloatComplex;
-  hipFloatComplex *complex_input;
+  hipFloatComplex *complex_input, *complex_input_bwd;
 #endif
+
+  // GQA
+  void **d_A_array, **d_B_array, **d_C_array;
+
   // PEFT specific fields
+  void **d_A_array2, **d_B_array2, **d_C_array2;
   void *softmax_activation_buffer;
   void *query_activation_buffer;
-  size_t allocated_peft_buffer_size1 = 0, allocated_peft_buffer_size2 = 0;
+  BatchConfig::PerTokenInfo *peft_token_infos = nullptr;
+  BatchConfig::PerTokenInfo *peft_token_infos_device;
 };
 
 }; // namespace FlexFlow

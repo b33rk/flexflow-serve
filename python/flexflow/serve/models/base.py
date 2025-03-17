@@ -21,9 +21,6 @@ class FlexFlowModel:
         ffconfig,
         hf_config,
         data_type,
-        # max_batch_size=1,
-        # max_seq_length=256,
-        # max_tokens_per_batch=64,
         weights_filepath="",
         tokenizer_filepath="",
     ):

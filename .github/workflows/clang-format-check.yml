@@ -1,9 +1,9 @@
-name: clang-format Check
+name: Clang format
 on: [push, pull_request, workflow_dispatch]
 jobs:
   formatting-check:
     name: Formatting Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         path:
@@ -14,7 +14,6 @@ jobs:
           - check: "python"
           - check: "scripts"
           - check: "tests"
-          - check: "examples"
     steps:
       - uses: actions/checkout@v2
       - name: Run clang-format style check for C/C++/Protobuf programs.

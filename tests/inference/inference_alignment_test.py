@@ -261,37 +261,43 @@ class LlamaAlignmentTest(AlignmentTest):
             torch.testing.assert_close(hf_q_proj_in, hf_k_proj_in)
             torch.testing.assert_close(hf_k_proj_in, hf_v_proj_in)
             compare(hf_q_proj_in, ff_qkv_tensor_in, label=f"QKV proj {i} input")
+
+            bz, seq_len, hidden_dim = hf_q_proj_out.shape
+            head_dim = hidden_dim // self.num_attention_heads
+            tot_num_heads = self.num_attention_heads + 2*self.num_key_value_heads
+
             ff_qkv_tensor_out = get_ff_tensor(
                 ff_qkv_tensor_name, 
                 output_comparison, 
-                torch.Size([hf_q_proj_out.shape[0], hf_q_proj_out.shape[1], 3*hf_q_proj_out.shape[2]]), 
+                torch.Size([bz, seq_len, head_dim*tot_num_heads]), 
                 tp_type=TPType.PARTITION
             )
-            head_dim = hf_q_proj_out.shape[2] // self.num_attention_heads
-            heads_per_shard = self.num_attention_heads // self.tp_degree
-            chunk_size = head_dim * heads_per_shard
+            q_heads_per_shard = self.num_attention_heads // self.tp_degree
+            kv_heads_per_shard = self.num_key_value_heads // self.tp_degree
+            q_chunk_size = head_dim * q_heads_per_shard
+            kv_chunk_size = head_dim * kv_heads_per_shard
             # print(ff_qkv_tensor_out.shape)
-            ff_qproj_out = ff_qkv_tensor_out[:chunk_size, :, :]
-            ff_kproj_out = ff_qkv_tensor_out[chunk_size:2*chunk_size, :, :]
-            ff_vproj_out = ff_qkv_tensor_out[2*chunk_size : 3*chunk_size, :, :]
-            qkv_chunk_size = 3*chunk_size
+            ff_qproj_out = ff_qkv_tensor_out[: q_chunk_size, :, :]
+            ff_kproj_out = ff_qkv_tensor_out[q_chunk_size : q_chunk_size + kv_chunk_size, :, :]
+            ff_vproj_out = ff_qkv_tensor_out[q_chunk_size + kv_chunk_size : q_chunk_size + 2*kv_chunk_size, :, :]
+            qkv_chunk_size = q_chunk_size + 2*kv_chunk_size
             for tp_idx in range(1, self.tp_degree):
                 prev_size = tp_idx * qkv_chunk_size
-                ff_qproj_out_ = ff_qkv_tensor_out[prev_size : prev_size + chunk_size, :, :]
-                ff_kproj_out_ = ff_qkv_tensor_out[prev_size + chunk_size : prev_size + 2*chunk_size, :, :]
-                ff_vproj_out_ = ff_qkv_tensor_out[prev_size + 2*chunk_size : prev_size + 3*chunk_size, :, :]
+                ff_qproj_out_ = ff_qkv_tensor_out[prev_size : prev_size + q_chunk_size, :, :]
+                ff_kproj_out_ = ff_qkv_tensor_out[prev_size + q_chunk_size : prev_size + q_chunk_size + kv_chunk_size, :, :]
+                ff_vproj_out_ = ff_qkv_tensor_out[prev_size + q_chunk_size + kv_chunk_size : prev_size + q_chunk_size + 2*kv_chunk_size, :, :]
                 ff_qproj_out = np.concatenate((ff_qproj_out, ff_qproj_out_), axis=0)
                 ff_kproj_out = np.concatenate((ff_kproj_out, ff_kproj_out_), axis=0)
                 ff_vproj_out = np.concatenate((ff_vproj_out, ff_vproj_out_), axis=0)
-            compare_loaded_tensors(hf_q_proj_out.T, ff_qproj_out)
-            compare_loaded_tensors(hf_k_proj_out.T, ff_kproj_out)
-            compare_loaded_tensors(hf_v_proj_out.T, ff_vproj_out)
+            compare_loaded_tensors(hf_q_proj_out.T, ff_qproj_out, label=f"Q proj {i} output")
+            compare_loaded_tensors(hf_k_proj_out.T, ff_kproj_out, label=f"K proj {i} output")
+            compare_loaded_tensors(hf_v_proj_out.T, ff_vproj_out, label=f"V proj {i} output")
             ff_tensor_name = f"layers.{i}.layers.{i}.self_attn"
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input", ff_tensor_type="input", hf_tensor_idx=0, ff_tensor_idx=0)
             ff_attn_tensor_in = get_ff_tensor(
                 ff_tensor_name, 
                 input_comparison, 
-                torch.Size([hf_q_proj_out.shape[0], hf_q_proj_out.shape[1], 3*hf_q_proj_out.shape[2]]),
+                torch.Size([bz, seq_len, head_dim*tot_num_heads]),
                 tp_type=TPType.PARTITION
             )
             assert torch.allclose(ff_qkv_tensor_out, ff_attn_tensor_in)

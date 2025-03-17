@@ -55,7 +55,6 @@ def get_configs():
             "use_4bit_quantization": False,
             "use_8bit_quantization": False,
             "enable_peft": False,
-            "peft_activation_reserve_space_size": 1024,  # 1GB
             "profiling": False,
             "benchmarking": False,
             "inference_debugging": False,
@@ -80,6 +79,9 @@ def get_configs():
             ],
             "prompt": "",
             "output_file": "",
+            "max_requests_per_batch": 4,
+            "max_seq_length": 256,
+            "max_tokens_per_batch": 64,
             "max_length": 128,
         }
         # Merge dictionaries
@@ -131,17 +133,17 @@ def main():
     for ssm in ssms:
         ssm.compile(
             generation_config,
-            max_requests_per_batch=1,
-            max_seq_length=256,
-            max_tokens_per_batch=64,
+            max_requests_per_batch = configs_dict.get("max_requests_per_batch", 4),
+            max_seq_length = configs_dict.get("max_seq_length", 256),
+            max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 64),
         )
 
     # Compile the LLM for inference and load the weights into memory
     llm.compile(
         generation_config,
-        max_requests_per_batch=1,
-        max_seq_length=256,
-        max_tokens_per_batch=64,
+        max_requests_per_batch = configs_dict.get("max_requests_per_batch", 4),
+        max_seq_length = configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 64),
         ssms=ssms,
     )
 

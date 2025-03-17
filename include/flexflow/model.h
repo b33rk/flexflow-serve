@@ -75,6 +75,7 @@ enum TaskIDs {
   EMBED_INIT_TASK_ID,
   EMBED_FWD_TASK_ID,
   EMBED_INF_TASK_ID,
+  EMBED_PEFT_BWD_TASK_ID,
   EMBED_BWD_TASK_ID,
   GATHER_INIT_TASK_ID,
   GATHER_FWD_TASK_ID,
@@ -737,7 +738,8 @@ public:
   Tensor inc_multihead_self_attention(
       const Tensor input,
       int embed_dim,
-      int num_heads,
+      int num_q_heads,
+      int num_kv_heads,
       int kdim = 0,
       int vdim = 0,
       float dropout = 0.0f,
@@ -753,7 +755,8 @@ public:
   Tensor spec_inc_multihead_self_attention(
       const Tensor input,
       int embed_dim,
-      int num_heads,
+      int num_q_heads,
+      int num_kv_heads,
       int kdim = 0,
       int vdim = 0,
       float dropout = 0.0f,
@@ -767,56 +770,6 @@ public:
       bool position_bias = false,
       char const *name = NULL);
   Tensor inc_multihead_self_attention_verify(
-      const Tensor input,
-      int embed_dim,
-      int num_heads,
-      int kdim = 0,
-      int vdim = 0,
-      float dropout = 0.0f,
-      bool add_zero_attn = false,
-      DataType data_type = DT_NONE,
-      Initializer *kernel_initializer = NULL,
-      RotaryEmbeddingMeta rotary_embedding_meta = RotaryEmbeddingMeta(),
-      bool scaling_query = false,
-      float scaling_factor = 1.0f,
-      bool qk_prod_scaling = true,
-      bool position_bias = false,
-      char const *name = NULL);
-  Tensor inc_multiquery_self_attention(
-      const Tensor input,
-      int embed_dim,
-      int num_q_heads,
-      int num_kv_heads,
-      int kdim = 0,
-      int vdim = 0,
-      float dropout = 0.0f,
-      bool add_zero_attn = false,
-      DataType data_type = DT_NONE,
-      Initializer *kernel_initializer = NULL,
-      RotaryEmbeddingMeta rotary_embedding_meta = RotaryEmbeddingMeta(),
-      bool scaling_query = false,
-      float scaling_factor = 1.0f,
-      bool qk_prod_scaling = true,
-      bool position_bias = false,
-      char const *name = NULL);
-  Tensor spec_inc_multiquery_self_attention(
-      const Tensor input,
-      int embed_dim,
-      int num_q_heads,
-      int num_kv_heads,
-      int kdim = 0,
-      int vdim = 0,
-      float dropout = 0.0f,
-      bool add_zero_attn = false,
-      DataType data_type = DT_NONE,
-      Initializer *kernel_initializer = NULL,
-      RotaryEmbeddingMeta rotary_embedding_meta = RotaryEmbeddingMeta(),
-      bool scaling_query = false,
-      float scaling_factor = 1.0f,
-      bool qk_prod_scaling = true,
-      bool position_bias = false,
-      char const *name = NULL);
-  Tensor inc_multiquery_self_attention_verify(
       const Tensor input,
       int embed_dim,
       int num_q_heads,
@@ -843,6 +796,9 @@ public:
   // Inference APIs
   // ========================================
   std::vector<GenerationResult> generate(std::vector<Request> const &requests);
+  std::vector<GenerationResult>
+      generate_online(std::vector<Request> const &inference_requests,
+                      std::vector<Request> const &ft_requests);
 
   Tensor create_tensor_legion_ordering(int num_dim,
                                        int const dims[],
@@ -1091,6 +1047,11 @@ public:
                CompMode comp_mode = COMP_MODE_TRAINING);
   void compile_inference();
   void set_transformer_layer_id(int id);
+
+  // paged attention
+  void set_num_kv_cache_pages(int num_pages);
+  int get_num_kv_cache_pages() const;
+
   void set_position_offset(int offset);
   void graph_optimize(size_t budget,
                       bool only_data_parallel,
@@ -1110,6 +1071,7 @@ public:
                      bool use_propagation) const;
 #ifdef FF_USE_NCCL
   ncclComm_t *find_nccl_comms(MachineView const &view) const;
+  ncclComm_t *find_nccl_comms_peft(MachineView const &view) const;
   void finish_nccl_comms();
 #endif
 #ifdef FF_USE_PROPAGATE
@@ -1154,6 +1116,10 @@ public:
   size_t op_global_guid, layer_global_guid, peft_model_global_guid;
   size_t tensor_global_guid, parallel_tensor_global_guid, node_global_guid;
   size_t current_transformer_layer_id;
+
+  // paged attention
+  int num_kv_cache_pages;
+
   // positional embedding start offset
   int position_offset;
   FFConfig config;
@@ -1301,6 +1267,7 @@ public:
                 // inference_debugging mode.
 #ifdef FF_USE_NCCL
   std::unordered_map<size_t, ncclComm_t *> view_hash_to_nccl_comms;
+  std::unordered_map<size_t, ncclComm_t *> view_hash_to_nccl_comms_peft;
 #endif
 private:
   bool debug;

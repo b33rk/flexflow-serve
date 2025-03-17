@@ -55,7 +55,6 @@ def get_configs():
             "use_4bit_quantization": False,
             "use_8bit_quantization": False,
             "enable_peft": False,
-            "peft_activation_reserve_space_size": 1024,  # 1GB
             "profiling": False,
             "benchmarking": False,
             "inference_debugging": False,
@@ -63,13 +62,16 @@ def get_configs():
         }
         llm_configs = {
             # required parameters
-            "llm_model": "tiiuae/falcon-7b",
+            "llm_model": "meta-llama/Llama-3.2-1B-Instruct",
             # optional parameters
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,
             "full_precision": False,
             "prompt": "",
             "output_file": "",
+            "max_requests_per_batch": 4,
+            "max_seq_length": 256,
+            "max_tokens_per_batch": 64,
             "max_length": 128,
         }
         # Merge dictionaries
@@ -102,9 +104,9 @@ def main():
     )
     llm.compile(
         generation_config,
-        max_requests_per_batch=1,
-        max_seq_length=256,
-        max_tokens_per_batch=64,
+        max_requests_per_batch = configs_dict.get("max_requests_per_batch", 4),
+        max_seq_length = configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 64),
     )
 
     llm.start_server()

@@ -46,14 +46,13 @@ configs_dict = {
     "use_4bit_quantization": False,
     "use_8bit_quantization": False,
     "enable_peft": True,
-    "peft_activation_reserve_space_size": 1024,  # 1GB
     "profiling": False,
     "inference_debugging": False,
     "fusion": False,
     "max_requests_per_batch": 1,
     "max_sequence_length": 128,
     "max_tokens_per_batch": 128,
-    "max_training_steps": 100,
+    "max_training_epochs": 100,
     "seed": 42,
 }
 model_configs = {
@@ -186,7 +185,7 @@ finetuning_request = ff.Request(
     max_sequence_length=configs.max_sequence_length,
     peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
     dataset_filepath=os.path.join(os.getcwd(), configs.finetuning_dataset),
-    max_training_steps=configs.max_training_steps,
+    max_training_epochs=configs.max_training_epochs,
 )
 ft_res = llm.generate([finetuning_request])
 for res in ft_res:
@@ -232,7 +231,7 @@ print("==Inference result before finetuning: ", inf_req_res_1[0].output_text)
 print("==Inference result after finetuning: ", inf_req_res_2[0].output_text)
 
 
-epochs = list(range(configs_dict["max_training_steps"]))
+epochs = list(range(configs_dict["max_training_epochs"]))
 loss_values = ft_res[0].finetuning_losses
 
 plt.figure(figsize=(10, 6))

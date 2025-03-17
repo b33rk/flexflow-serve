@@ -3,10 +3,8 @@ import torch.nn as nn
 import transformers
 from transformers import (
     TrainerCallback,
-    AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
-    LlamaTokenizer,
 )
 import os, shutil
 from peft import PeftConfig, PeftModel
@@ -167,11 +165,46 @@ def fwd_hook(module, input, output):
     module.fwd_step += 1
 
 
-def peft_optimizer_hook(model_, callback_func_handle):
-    def post_hook(optimizer, args, kwargs):
+# def peft_optimizer_hook(model_, callback_func_handle):
+#     def post_hook(optimizer, args, kwargs):
+#         if verbose:
+#             print("Optimizer Hook activated")
+#         bwd_step = callback_func_handle.step_count
+#         for name_, module in model_.named_modules():
+#             name = simplify_name(name_)
+#             for param_name, param in module.named_parameters(recurse=False):
+#                 if param.requires_grad:
+#                     if verbose:
+#                         print(
+#                             f"Step #{bwd_step}: Saving weight gradient for {name} ({param.grad.shape})"
+#                         )
+#                     dst_folder = get_dst_folder("weights", bwd_step)
+#                     dst_filepath = os.path.join(dst_folder, f"{name}.gradient")
+#                     torch.save(param.grad, dst_filepath)
+
+#     return post_hook
+
+
+class HFTrainingCallBack(TrainerCallback):
+    def on_train_begin(self, args, state, control, **kwargs):
+        self.step_count = 0
+        if verbose:
+            print("Starting finetuning")
+        model_ = kwargs.get("model", None)
+        # optim = kwargs.get("optimizer", None)
+        # print(model_.__dict__.keys())
+        assert model_ is not None
+        # assert optim is not None
+        self.step_count = 0
+        # assert False
+        # optim.optimizer.register_step_post_hook(peft_optimizer_hook(model_, self))
+    
+    def on_pre_optimizer_step(self, args, state, control, **kwargs):
         if verbose:
             print("Optimizer Hook activated")
-        bwd_step = callback_func_handle.step_count
+        bwd_step = self.step_count
+        model_ = kwargs.get("model", None)
+        assert model_ is not None
         for name_, module in model_.named_modules():
             name = simplify_name(name_)
             for param_name, param in module.named_parameters(recurse=False):
@@ -184,19 +217,6 @@ def peft_optimizer_hook(model_, callback_func_handle):
                     dst_filepath = os.path.join(dst_folder, f"{name}.gradient")
                     torch.save(param.grad, dst_filepath)
 
-    return post_hook
-
-
-class HFTrainingCallBack(TrainerCallback):
-    def on_train_begin(self, args, state, control, **kwargs):
-        if verbose:
-            print("Starting finetuning")
-        model_ = kwargs.get("model", None)
-        optim = kwargs.get("optimizer", None)
-        assert model_ is not None
-        assert optim is not None
-        self.step_count = 0
-        optim.optimizer.register_step_post_hook(peft_optimizer_hook(model_, self))
 
     def save_lora_weights(self, model, pre_finetuning=False):
         lora_weights_handles = [
@@ -275,6 +295,7 @@ def build_peft_model(args, peft_config):
         peft_config.base_model_name_or_path,
         torch_dtype=torch.float32 if args.use_full_precision else torch.float16,
         device_map="auto",
+        attn_implementation="eager",
     )
     model = PeftModel.from_pretrained(model, args.peft_model_id, config=peft_config)
     model = prepare_model_for_lora_finetuning(model, args.save_peft_tensors)
@@ -283,21 +304,10 @@ def build_peft_model(args, peft_config):
 
 def get_peft_tokenizer(args, peft_config):
     # Get Tokenizer
-    hf_config = AutoConfig.from_pretrained(
-        peft_config.base_model_name_or_path, trust_remote_code=True
+    tokenizer = AutoTokenizer.from_pretrained(
+        peft_config.base_model_name_or_path,
+        torch_dtype=torch.float32 if args.use_full_precision else torch.float16,
     )
-    hf_arch = getattr(hf_config, "architectures")[0]
-    if hf_arch == "LLaMAForCausalLM" or hf_arch == "LlamaForCausalLM":
-        tokenizer = LlamaTokenizer.from_pretrained(
-            peft_config.base_model_name_or_path,
-            use_fast=True,
-            torch_dtype=torch.float32 if args.use_full_precision else torch.float16,
-        )
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(
-            peft_config.base_model_name_or_path,
-            torch_dtype=torch.float32 if args.use_full_precision else torch.float16,
-        )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = "[PAD]"
         tokenizer.padding_side = "left"

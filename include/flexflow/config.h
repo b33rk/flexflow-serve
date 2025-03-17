@@ -16,6 +16,7 @@
 #ifndef _FLEXFLOW_CONFIG_H_
 #define _FLEXFLOW_CONFIG_H_
 #include "ffconst.h"
+#include "flexflow/attention_config.h"
 #include "flexflow/batch_config.h"
 #include "legion.h"
 #include <cstring>
@@ -87,35 +88,35 @@ struct CombinedBatchConfigMetaStruct {
 
 struct FFHandler {
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
-  cudnnHandle_t dnn;
-  cublasHandle_t blas;
+  cudnnHandle_t dnn, peft_dnn;
+  cublasHandle_t blas, peft_blas;
 #else
-  miopenHandle_t dnn;
-  hipblasHandle_t blas;
+  miopenHandle_t dnn, peft_dnn;
+  hipblasHandle_t blas, peft_blas;
 #endif
   void *workSpace;
   size_t workSpaceSize;
   CombinedBatchConfigMetaStruct *batch_config_metadata;
 
+  // flashinfer
+  AttentionMetaData *incr_attention_metadata;
+
   // request info + token info + topolopgy mask info
   size_t batch_config_metadata_size = sizeof(CombinedBatchConfigMetaStruct);
   void *offload_reserve_space;
   size_t offload_reserve_space_size;
-  // PEFT related fields
-  MemoryAllocator *peft_activation_allocator;
-  size_t peft_activation_reserve_space_size;
   // Quantization fields
   DataType quantization_type;
   bool allowTensorOpMathConversion;
 #ifdef FF_USE_NCCL
   ncclComm_t ncclComm;
+  ncclComm_t ncclCommPeft;
 #endif
 };
 
 struct FFInitInfo {
   size_t workSpaceSize;
   size_t offload_reserve_space_size;
-  size_t peft_activation_reserve_space_size;
   DataType quantization_type;
   bool allowTensorOpMathConversion;
   // int myRank, allRanks;
@@ -163,6 +164,7 @@ public:
   Legion::Runtime *lg_hlr;
   Legion::IndexSpaceT<1> all_gpu_task_is;
   // Legion::FieldSpace field_space;
+  bool log_instance_creation;
   bool benchmarking, profiling, perform_fusion;
   bool inference_debugging;
   size_t simulator_work_space_size;
@@ -174,8 +176,7 @@ public:
   size_t offload_reserve_space_size;
   DataType quantization_type;
   // PEFT related fields
-  bool enable_peft;
-  size_t peft_activation_reserve_space_size;
+  bool enable_peft, enable_peft_finetuning;
   // Control parallelizable dimensions
   bool only_data_parallel;
   bool enable_sample_parallel;

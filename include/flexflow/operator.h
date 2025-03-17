@@ -200,6 +200,7 @@ public:
   Op(int guid,
      bool profiling,
      bool inference_debugging,
+     bool enable_peft_finetuning,
      OperatorType otype,
      DataType dtype,
      char const *name,
@@ -249,6 +250,8 @@ public:
                                      std::vector<ParallelTensor> const &,
                                      MachineView const *mv = nullptr) {
     assert(false);
+    Legion::FutureMap empty_map;
+    return empty_map;
   }
   virtual void print_layer(FFModel const &model) = 0;
   template <typename OpMetaType>
@@ -505,6 +508,7 @@ public:
   int numInputs, numWeights, numOutputs;
   bool profiling;
   bool inference_debugging;
+  bool enable_peft_finetuning;
   bool add_bias_only_once;
 #ifdef FF_USE_NCCL
   ncclUniqueId ncclId;

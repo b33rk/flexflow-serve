@@ -45,7 +45,8 @@ using namespace FlexFlow::Kernels::AllReduce;
 
 /* Params */
 bool operator==(AllReduceParams const &lhs, AllReduceParams const &rhs) {
-  return lhs.allreduce_legion_dim == rhs.allreduce_legion_dim &&
+  return lhs.layer_guid == rhs.layer_guid &&
+         lhs.allreduce_legion_dim == rhs.allreduce_legion_dim &&
          std::strcmp(lhs.name, rhs.name) == 0;
 }
 
@@ -55,6 +56,7 @@ bool AllReduceParams::is_valid(ParallelTensorShape const &input) const {
 
 AllReduceParams AllReduce::get_params() const {
   AllReduceParams params;
+  params.layer_guid = this->layer_guid;
   params.allreduce_legion_dim = this->allreduce_dim;
   if (strlen(this->name) < MAX_OPNAME) {
     strcpy(params.name, this->name);
@@ -63,10 +65,11 @@ AllReduceParams AllReduce::get_params() const {
 }
 
 AllReduce::AllReduce(FFModel &model,
+                     LayerID const &_layer_guid,
                      const ParallelTensor _input,
                      int _allreduce_legion_dim,
                      char const *name)
-    : ParallelOp(model, OP_ALLREDUCE, name, _input),
+    : ParallelOp(model, OP_ALLREDUCE, name, _input), layer_guid(_layer_guid),
       allreduce_dim(_allreduce_legion_dim) {
   int numdim = _input->num_dims;
   ParallelDim dims[MAX_TENSOR_DIM];
@@ -83,7 +86,11 @@ AllReduce::AllReduce(FFModel &model,
                      AllReduceParams const &params,
                      ParallelTensor const input,
                      char const *name)
-    : AllReduce(model, input, params.allreduce_legion_dim, params.name) {}
+    : AllReduce(model,
+                params.layer_guid,
+                input,
+                params.allreduce_legion_dim,
+                params.name) {}
 
 void AllReduce::create_input_partition(FFModel &ff) {
   // Do nothing
@@ -112,6 +119,7 @@ OpMeta *AllReduce::init_task(Task const *task,
   meta->output_type[0] = ar->outputs[0]->data_type;
   assert(meta->input_type[0] == meta->output_type[0]);
   std::strcpy(meta->op_name, ar->name);
+  meta->layer_guid = ar->layer_guid;
   return meta;
 }
 
@@ -131,7 +139,7 @@ void AllReduce::init(FFModel const &ff) {
                          false /*must*/,
                          0 /*mapper_id*/,
                          outputs[0]->machine_view.hash());
-  launcher.concurrent = true;
+  // launcher.concurrent = true;
   launcher.add_region_requirement(RegionRequirement(inputs[0]->part,
                                                     0 /*projection id*/,
                                                     READ_ONLY,
@@ -270,7 +278,7 @@ void AllReduce::init_inference(FFModel const &ff,
                          false /*must*/,
                          0 /*mapper_id*/,
                          machine_view_hash);
-  launcher.concurrent = true;
+  // launcher.concurrent = true;
   launcher.add_region_requirement(RegionRequirement(batch_inputs[0]->part,
                                                     0 /*projection id*/,
                                                     READ_ONLY,
@@ -403,7 +411,7 @@ FutureMap AllReduce::peft_bwd(FFModel const &ff,
 }
 
 /*static*/
-void AllReduce::peft_bwd_task(Task const *task,
+bool AllReduce::peft_bwd_task(Task const *task,
                               std::vector<PhysicalRegion> const &regions,
                               Context ctx,
                               Runtime *runtime) {
@@ -412,8 +420,8 @@ void AllReduce::peft_bwd_task(Task const *task,
 
   AllReduceMeta *m = *((AllReduceMeta **)task->local_args);
   BatchConfig const *bc = BatchConfig::from_future(task->futures[0]);
-  if (bc->num_active_peft_tokens() == 0) {
-    return;
+  if (!bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id)) {
+    return false;
   }
   GenericTensorAccessorW input_grad = helperGetGenericTensorAccessorRW(
       m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
@@ -428,6 +436,7 @@ void AllReduce::peft_bwd_task(Task const *task,
     AllReduce::save_inference_tensors_to_file(
         m, shard_id, bc, {input_grad}, {}, {output_grad}, false);
   }
+  return true;
 }
 
 bool AllReduce::measure_operator_cost(Simulator *sim,

@@ -44,6 +44,7 @@ def init(
     num_gpus: Optional[int] = None,
     memory_per_gpu: Optional[int] = None,
     zero_copy_memory_per_node: Optional[int] = None,
+    cpu_memory_per_node: Optional[int] = None,
     num_cpus: Optional[int] = None,
     legion_utility_processors: Optional[int] = None,
     data_parallelism_degree: Optional[int] = None,
@@ -54,11 +55,11 @@ def init(
     use_4bit_quantization: Optional[bool] = None,
     use_8bit_quantization: Optional[bool] = None,
     enable_peft: Optional[bool] = None,
-    peft_activation_reserve_space_size: Optional[int] = None,
     profiling: Optional[bool] = None,
     benchmarking: Optional[bool] = None,
     inference_debugging: Optional[bool] = None,
     fusion: Optional[bool] = None,
+    log_instance_cration: Optional[bool] = None,
 ):
     """
     Configure FlexFlow Serve and start the runtime.
@@ -75,6 +76,7 @@ def init(
 
     The optional parameters are:
     - num_cpus: the number of CPU processors to reserve for the runtime, defaults to 4
+    - cpu_memory_per_node: the amount of CPU memory (in MB) to pre-allocate for each node, defaults to 0
     - legion_utility_processors: number of Legion utility threads to create per process, defaults to 1
     - data_parallelism_degree: the degree of parallelization in the data parallel dimension, defaults to 1
     - tensor_parallelism_degree: the degree of parallelization in the tensor parallel dimension (using the Megatron technique), defaults to 1
@@ -84,11 +86,11 @@ def init(
     - use_4bit_quantization: whether to use 4-bit quantization, defaults to False
     - use_8bit_quantization: whether to use 8-bit quantization, defaults to False
     - enable_peft: whether to enable the use of PEFT, defaults to False
-    - peft_activation_reserve_space_size: the space (in MB) to reserve on GPU for PEFT activations, default to 1 GB
     - profiling: whether to enable the FlexFlow profiling mode, defaults to False
     - benchmarking: whether to run benchmaking only, without loading real weights, defaults to False
     - inference_debugging: whether to run inference in debugging mode, saving all inputs/outputs/weights to file, defaults to False
     - fusion: whether to enable the FlexFlow operator fusion optimization, defaults to True
+    - log_instance_cration: whether to log the creation of the FlexFlow instances, defaults to False
 
     The configurations are passed down to the FlexFlow runtime (implemented in C++) via command line arguments.
 
@@ -103,6 +105,8 @@ def init(
     :type zero_copy_memory_per_node: int
     :param num_cpus: the number of CPU processors to reserve for the runtime, defaults to 4
     :type num_cpus: Optional[int], optional
+    :param cpu_memory_per_node: the amount of CPU memory (in MB) to pre-allocate for each node, defaults to 0
+    :type cpu_memory_per_node: Optional[int], optional
     :param legion_utility_processors: number of Legion utility threads to create per process, defaults to 1
     :type legion_utility_processors: Optional[int], optional
     :param data_parallelism_degree: the degree of parallelization in the data parallel dimension, defaults to 1
@@ -121,8 +125,6 @@ def init(
     :type use_8bit_quantization: Optional[bool], optional
     :param enable_peft: whether to enable the use of PEFT, defaults to False
     :type enable_peft: Optional[bool], optional
-    :param peft_activation_reserve_space_size: the space (in MB) to reserve on GPU for PEFT activations, default to 1 GB
-    :type peft_activation_reserve_space_size: Optional[int], optional
     :param profiling: whether to enable the FlexFlow profiling mode, defaults to False
     :type profiling: Optional[bool], optional
     :param benchmarking: whether to run benchmaking only, without loading real weights, defaults to False
@@ -131,6 +133,8 @@ def init(
     :type inference_debugging: Optional[bool], optional
     :param fusion: whether to enable the FlexFlow operator fusion optimization, defaults to True
     :type fusion: Optional[bool], optional
+    :param log_instance_cration: whether to log the creation of the FlexFlow instances, defaults to False
+    :type log_instance_cration: Optional[bool], optional
 
     :raises ValueError: this function will raise an exception if the user passes both a configs_dict and some named parameters
     :raises TypeError: this function will raise an exception if the configs_dict is not a dictionary
@@ -144,6 +148,7 @@ def init(
             memory_per_gpu is not None,
             zero_copy_memory_per_node is not None,
             num_cpus is not None,
+            cpu_memory_per_node is not None,
             legion_utility_processors is not None,
             data_parallelism_degree is not None,
             tensor_parallelism_degree is not None,
@@ -153,11 +158,11 @@ def init(
             use_4bit_quantization is not None,
             use_8bit_quantization is not None,
             enable_peft is not None,
-            peft_activation_reserve_space_size is not None,
             profiling is not None,
             benchmarking is not None,
             inference_debugging is not None,
             fusion is not None,
+            log_instance_cration is not None,
         ]
     ):
         raise ValueError("Cannot pass both configs_dict and individual args")
@@ -172,6 +177,7 @@ def init(
             "memory_per_gpu": memory_per_gpu,
             "num_cpus": num_cpus,
             "zero_copy_memory_per_node": zero_copy_memory_per_node,
+            "cpu_memory_per_node": cpu_memory_per_node,
             "legion_utility_processors": legion_utility_processors,
             "data_parallelism_degree": data_parallelism_degree,
             "tensor_parallelism_degree": tensor_parallelism_degree,
@@ -181,11 +187,11 @@ def init(
             "use_4bit_quantization": use_4bit_quantization,
             "use_8bit_quantization": use_8bit_quantization,
             "enable_peft": enable_peft,
-            "peft_activation_reserve_space_size": peft_activation_reserve_space_size,
             "profiling": profiling,
             "benchmarking": benchmarking,
             "inference_debugging": inference_debugging,
             "fusion": fusion,
+            "log_instance_cration": log_instance_cration,
         }
 
     # Check that mandatory configs are present
@@ -198,12 +204,12 @@ def init(
 
     # Sanity check parameters
     positive_int_params = required_keys + [
+        "cpu_memory_per_node",
         "legion_utility_processors",
         "data_parallelism_degree",
         "tensor_parallelism_degree",
         "pipeline_parallelism_degree",
         "offload_reserve_space_size",
-        "peft_activation_reserve_space_size",
     ]
     for param in positive_int_params:
         __check_positive_int(configs_dict, param)
@@ -211,6 +217,8 @@ def init(
     # Set default values
     if configs_dict.get("num_cpus", None) is None:
         configs_dict["num_cpus"] = 4
+    if configs_dict.get("cpu_memory_per_node", None) is None:
+        configs_dict["cpu_memory_per_node"] = 1024
     if configs_dict.get("legion_utility_processors", None) is None:
         configs_dict["legion_utility_processors"] = 8
     if configs_dict.get("data_parallelism_degree", None) is None:
@@ -229,8 +237,6 @@ def init(
         configs_dict["use_8bit_quantization"] = False
     if configs_dict.get("enable_peft", None) is None:
         configs_dict["enable_peft"] = False
-    if configs_dict.get("peft_activation_reserve_space_size", None) is None:
-        configs_dict["peft_activation_reserve_space_size"] = 8 * 1024**3
     if configs_dict.get("profiling", None) is None:
         configs_dict["profiling"] = False
     if configs_dict.get("benchmarking", None) is None:
@@ -239,5 +245,7 @@ def init(
         configs_dict["inference_debugging"] = False
     if configs_dict.get("fusion", None) is None:
         configs_dict["fusion"] = True
+    if configs_dict.get("log_instance_cration", None) is None:
+        configs_dict["log_instance_cration"] = False
 
     init_flexflow_runtime(configs_dict)

@@ -257,6 +257,17 @@ class LLM:
         else:
             raise ValueError(f"Invalid resource type {resource_type}")
 
+    def __is_empty_dir(self, folder: str) -> bool:
+        """Check whether a folder only contains the rev_sha.txt file
+        Args:
+            folder (str): Path to the folder to check
+        Returns:
+            bool: True if the folder is empty, False otherwise
+        """
+        if not os.path.isdir(folder) or not os.path.exists(folder):
+            return True
+        return len(os.listdir(folder)) == 1 and "rev_sha.txt" in os.listdir(folder)
+
     def __need_cache_refresh(
         self, model_name: str, resource_type: CachedResourceType
     ) -> bool:
@@ -271,8 +282,15 @@ class LLM:
             bool: True if the weights or tokenizer need a refresh, False otherwise
         """
         resource_path = self.__get_resource_path(model_name, resource_type)
-        ff_revision, latest_revision = self.__get_revision_hashes(self.model_name, resource_path)
-        if self.refresh_cache or not os.path.exists(resource_path) or ff_revision != latest_revision:
+        ff_revision, latest_revision = self.__get_revision_hashes(
+            self.model_name, resource_path
+        )
+        if (
+            self.refresh_cache
+            or not os.path.exists(resource_path)
+            or self.__is_empty_dir(resource_path)
+            or ff_revision != latest_revision
+        ):
             print(
                 f"Refreshing {resource_type} in cache for model {model_name} at path {resource_path} ..."
             )
@@ -290,8 +308,13 @@ class LLM:
         If not, or if the refresh_cache parameter is set to True, download new weights and convert them.
         """
 
-        # TODO: edit this to download the weights using snapshot_download and convert them to FlexFlow format without loading them to GPU
         def download_and_convert_llm_weights(model_name):
+            num_cores = os.cpu_count() - 1 if os.cpu_count() > 1 else 1
+            snapshot_download(
+                repo_id=model_name,
+                allow_patterns="*.safetensors",
+                max_workers=min(30, num_cores),
+            )
             hf_model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 trust_remote_code=True,
@@ -446,6 +469,7 @@ class LLM:
         max_tokens_per_batch: int = 64,
         max_concurrent_adapters: int = 1,
         enable_peft_finetuning: bool = False,
+        num_bwd_layers_per_ft_step: int = -1,
         ssms: list = [],
     ):
         """Compile the LLM for inference and load the weights into memory
@@ -462,6 +486,8 @@ class LLM:
         :type max_concurrent_adapters: int, optional
         :param enable_peft_finetuning: Whether to enable support for PEFT fine-tuning, defaults to False
         :type enable_peft_finetuning: bool, optional
+        :param num_bwd_layers_per_ft_step: The number of backward layers to run per finetuning step, defaults to -1 (i.e. all layers)
+        :type num_bwd_layers_per_ft_step: int, optional
         :param ssms: The SSMs to use when operating in speculative inference mode, defaults to []
         :type ssms: list, optional
         """
@@ -481,14 +507,24 @@ class LLM:
             mode = InferenceMode.INC_DECODING_MODE
 
         self.max_seq_length = max_seq_length
+        self.ffconfig.enable_peft_finetuning = enable_peft_finetuning
 
         # Create request manager and set serving configuration
         self.rm = RequestManager()
         self.rm.set_max_requests_per_batch(max_requests_per_batch)
         self.rm.set_max_tokens_per_batch(max_tokens_per_batch)
+        self.rm.set_max_spec_tree_token_num(20)
         self.rm.set_max_sequence_length(max_seq_length)
         self.rm.set_max_concurrent_adapters(max_concurrent_adapters)
         self.rm.set_enable_peft_finetuning(enable_peft_finetuning)
+        self.rm.set_num_transformers_layers(self.hf_config.num_hidden_layers)
+        if num_bwd_layers_per_ft_step != -1:
+            self.rm.set_num_layers_per_finetuning_step(num_bwd_layers_per_ft_step)
+        else:
+            self.rm.set_num_layers_per_finetuning_step(self.hf_config.num_hidden_layers)
+
+        # Create file data loader, load weights into tensors
+        model_configs = self.config_class(self.hf_config)
 
         # Instantiate the relevant model
         self.model = self.model_class(
@@ -508,15 +544,6 @@ class LLM:
 
         # Download the weights from huggingface (if needed)
         self.download_hf_weights_if_needed()
-
-        # Create file data loader, load weights into tensors
-        model_configs = self.config_class(self.hf_config)
-
-        self.rm.set_max_spec_tree_token_num(
-            model_configs.max_spec_tree_token_num
-            if "max_spec_tree_token_num" in model_configs.__dict__
-            else 20
-        )
 
         weights_path = self.__get_resource_path(
             self.model_name, CachedResourceType.WEIGHTS
@@ -759,6 +786,7 @@ class SSM(LLM):
         max_tokens_per_batch: int = 2048,
         max_concurrent_adapters: int = 1,
         enable_peft_finetuning: bool = False,
+        num_bwd_layers_per_ft_step: int = -1,
         ssms: list = [],
     ):
         """Compile the SSM for inference and load the weights into memory
@@ -774,6 +802,8 @@ class SSM(LLM):
         :type max_concurrent_adapters: int, optional
         :param enable_peft_finetuning: Whether to enable support for PEFT fine-tuning, defaults to False
         :type enable_peft_finetuning: bool, optional
+        :param num_bwd_layers_per_ft_step: The number of backward layers to run per finetuning step, defaults to -1 (i.e. all layers)
+        :type num_bwd_layers_per_ft_step: int, optional
         :param ssms: The SSMs to use when operating in speculative inference mode, defaults to []
         :type ssms: list, optional
         """
@@ -784,5 +814,6 @@ class SSM(LLM):
             max_tokens_per_batch,
             max_concurrent_adapters,
             enable_peft_finetuning,
+            num_bwd_layers_per_ft_step,
             ssms,
         )

@@ -16,7 +16,9 @@
 
 // #include "file_loader.h"
 #include "flexflow/batch_config.h"
+#include "flexflow/ffconst_utils.h"
 #include "flexflow/inference.h"
+#include "flexflow/page_manager.h"
 #include "flexflow/request_manager.h"
 #include <nlohmann/json.hpp>
 #include <string>
@@ -35,11 +37,11 @@ public:
           config_file >> model_config;
           do_layer_norm_before = model_config["do_layer_norm_before"];
           dropout = model_config["dropout"];
-          enable_bias = model_config["enable_bias"];
+          enable_bias = model_config.value("enable_bias", true);
           ffn_dim = model_config["ffn_dim"];
           hidden_size = model_config["hidden_size"];
           layer_norm_elementwise_affine =
-              model_config["layer_norm_elementwise_affine"];
+              model_config.value("layer_norm_elementwise_affine", true);
           max_position_embeddings = model_config["max_position_embeddings"];
           num_attention_heads = model_config["num_attention_heads"];
           num_hidden_layers = model_config["num_hidden_layers"];

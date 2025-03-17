@@ -28,12 +28,13 @@ using namespace FlexFlow;
 using namespace Legion;
 using json = nlohmann::json;
 
-Legion::Logger log_app("llama");
+Legion::Logger log_app("incr_dec");
 
 struct FilePaths {
   std::string cache_folder_path;
   std::string prompt_file_path;
   std::string output_file_path;
+  std::string profiling_folder_path;
 };
 
 void parse_input_args(char **argv,
@@ -47,7 +48,10 @@ void parse_input_args(char **argv,
                       float &topp,
                       int &max_requests_per_batch,
                       int &max_tokens_per_batch,
-                      int &max_sequence_length) {
+                      int &max_sequence_length,
+                      int &num_kv_cache_slots,
+                      int &max_length,
+                      bool &run_warmup) {
   for (int i = 1; i < argc; i++) {
     // llm model type
     if (!strcmp(argv[i], "-llm-model")) {
@@ -70,6 +74,11 @@ void parse_input_args(char **argv,
     // output file
     if (!strcmp(argv[i], "-output-file")) {
       paths.output_file_path = std::string(argv[++i]);
+      continue;
+    }
+    // folder for profiling data (optional)
+    if (!strcmp(argv[i], "-profiling-folder")) {
+      paths.profiling_folder_path = std::string(argv[++i]);
       continue;
     }
     if (!strcmp(argv[i], "--use-full-precision")) {
@@ -101,8 +110,24 @@ void parse_input_args(char **argv,
       max_tokens_per_batch = std::stoi(argv[++i]);
       continue;
     }
+    // max allowed sequence length
     if (!strcmp(argv[i], "--max-sequence-length")) {
       max_sequence_length = std::stoi(argv[++i]);
+      continue;
+    }
+    // num kv cache slots (i.e. number of tokens across all requests)
+    if (!strcmp(argv[i], "--num-kv-cache-slots")) {
+      num_kv_cache_slots = std::stoi(argv[++i]);
+      continue;
+    }
+    // max length before stopping if we haven't reached the EOS
+    if (!strcmp(argv[i], "--max-length")) {
+      max_length = std::stoi(argv[++i]);
+      continue;
+    }
+    // whether to run warmup
+    if (!strcmp(argv[i], "--warmup")) {
+      run_warmup = true;
       continue;
     }
   }
@@ -116,6 +141,93 @@ void parse_input_args(char **argv,
   wordexp(paths.cache_folder_path.c_str(), &p, 0);
   paths.cache_folder_path = p.we_wordv[0];
   wordfree(&p);
+}
+
+std::vector<Request> make_warmup_requests(int num_requests) {
+  std::vector<Request> warmup_requests;
+  for (int i = 0; i < num_requests; i++) {
+    Request inference_req;
+    inference_req.benchmarking_tokens = 512;
+    inference_req.max_new_tokens = 30;
+    inference_req.warmup = true;
+    warmup_requests.push_back(inference_req);
+  }
+  return warmup_requests;
+}
+
+std::vector<Request> load_prompt_list(nlohmann::ordered_json prompt_json,
+                                      int max_length) {
+  int total_num_requests = 0;
+  std::vector<Request> requests;
+  for (auto &prompt : prompt_json) {
+    std::string text = prompt.get<std::string>();
+    printf("Prompt[%d]: %s\n", total_num_requests, text.c_str());
+    Request inference_req;
+    inference_req.prompt = text;
+    inference_req.max_length = max_length;
+    requests.push_back(inference_req);
+    total_num_requests++;
+  }
+  return requests;
+}
+
+std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
+                                bool benchmarking = false) {
+  std::vector<Request> requests;
+  auto &metadata = prompt_json["metadata"];
+  for (auto &entry : prompt_json["entries"]) {
+    int prompt_length = entry["prompt_length"];
+    int response_length = entry["response_length"];
+    std::string text = entry["prompt"];
+
+    Request inference_req;
+    if (benchmarking) {
+      inference_req.benchmarking_tokens = prompt_length;
+      // inference_req.add_special_tokens = false;
+    } else {
+      inference_req.prompt = text;
+    }
+    inference_req.max_new_tokens = response_length;
+    requests.push_back(inference_req);
+  }
+  return requests;
+}
+
+std::vector<Request> load_requests(std::string prompt_file_path,
+                                   int max_length_if_needed) {
+  std::ifstream file_handle(prompt_file_path);
+  if (!file_handle.good()) {
+    std::cerr << "Error opening prompt file " << prompt_file_path << std::endl;
+    std::cerr << "Current working directory: "
+              << std::filesystem::current_path() << std::endl;
+  }
+  assert(file_handle.good() && "Error opening prompt file!");
+  nlohmann::ordered_json prompt_json;
+  try {
+    prompt_json = nlohmann::ordered_json::parse(file_handle,
+                                                /*parser_callback_t */ nullptr,
+                                                /*allow_exceptions */ true,
+                                                /*ignore_comments */ true);
+  } catch (json::parse_error const &e) {
+    std::cerr << "JSON Parsing Error: " << e.what() << std::endl;
+    assert(false);
+  }
+  file_handle.close();
+  if (prompt_json.empty()) {
+    std::cerr << "Error: JSON file is empty!" << std::endl;
+    assert(false);
+  } else if (prompt_json.is_null()) {
+    std::cerr << "Error: JSON file is null!" << std::endl;
+    assert(false);
+  } else if (prompt_json.is_array()) {
+    return load_prompt_list(prompt_json, max_length_if_needed);
+  } else if (prompt_json.is_object()) {
+    return load_trace(prompt_json);
+  } else {
+    std::cerr << "JSON is neither an array nor an object!" << std::endl;
+    assert(false);
+  }
+  return {};
 }
 
 void FlexFlow::top_level_task(Task const *task,
@@ -133,9 +245,12 @@ void FlexFlow::top_level_task(Task const *task,
   bool do_sample = false;
   float temperature = 0.0f;
   float topp = 0.0f;
-  int max_requests_per_batch = 8;
-  int max_tokens_per_batch = 128;
+  int max_requests_per_batch = 4;
+  int max_tokens_per_batch = 64;
   int max_sequence_length = 256;
+  int max_length = 128;
+  int num_kv_cache_slots = -1;
+  bool run_warmup = false;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -151,7 +266,14 @@ void FlexFlow::top_level_task(Task const *task,
                    topp,
                    max_requests_per_batch,
                    max_tokens_per_batch,
-                   max_sequence_length);
+                   max_sequence_length,
+                   num_kv_cache_slots,
+                   max_length,
+                   run_warmup);
+
+  if (num_kv_cache_slots == -1) {
+    num_kv_cache_slots = max_sequence_length * max_requests_per_batch;
+  }
 
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
@@ -227,6 +349,9 @@ void FlexFlow::top_level_task(Task const *task,
   rm->register_output_filepath(file_paths.output_file_path);
 
   FFModel model(ffconfig, ffconfig.cpu_offload);
+  // set amount of kv cache needed
+  model.set_num_kv_cache_pages(
+      compute_num_kv_cache_pages_needed(num_kv_cache_slots, 1, false));
   if (model_type == ModelType::LLAMA) {
     LLAMA::create_llama_model(model,
                               config_filepath,
@@ -266,28 +391,18 @@ void FlexFlow::top_level_task(Task const *task,
 
   rm->start_background_server(&model);
 
-  int total_num_requests = 0;
-  {
-    using json = nlohmann::json;
-    std::ifstream file_handle(file_paths.prompt_file_path);
-    assert(file_handle.good() && "Prompt file does not exist.");
-    json prompt_json = json::parse(file_handle,
-                                   /*parser_callback_t */ nullptr,
-                                   /*allow_exceptions */ true,
-                                   /*ignore_comments */ true);
-
-    std::vector<Request> requests;
-    for (auto &prompt : prompt_json) {
-      std::string text = prompt.get<std::string>();
-      printf("Prompt[%d]: %s\n", total_num_requests, text.c_str());
-      Request inference_req;
-      inference_req.prompt = text;
-      inference_req.max_length = 128;
-      requests.push_back(inference_req);
-      total_num_requests++;
-    }
-    std::vector<GenerationResult> result = model.generate(requests);
+  if (run_warmup) {
+    std::cout << "----------warmup started--------------" << std::endl;
+    std::vector<Request> warmup_requests = make_warmup_requests(10);
+    std::vector<GenerationResult> warmup_result =
+        model.generate(warmup_requests);
+    std::cout << "----------warmup finished--------------" << std::endl;
   }
+  std::cout << "----------inference started--------------" << std::endl;
+  std::vector<Request> requests =
+      load_requests(file_paths.prompt_file_path, max_length);
+  std::vector<GenerationResult> result = model.generate(requests);
+  std::cout << "----------inference finished--------------" << std::endl;
 
   // terminate the request manager by stopping the background thread
   rm->terminate_background_server();
@@ -298,10 +413,29 @@ void FlexFlow::top_level_task(Task const *task,
     future.get_void_result();
   }
 
-  // float* data
-  std::cout << "----------inference finished--------------" << std::endl;
-
-  // free tokenizer space in memory
+  if (!file_paths.profiling_folder_path.empty()) {
+    std::cout << "Saving profiling info..." << std::endl;
+    std::string dataset_name;
+    // set dataset name to "wildchat" if the prompt file path contains
+    // "wildchat"
+    if (file_paths.prompt_file_path.find("wildchat") != std::string::npos) {
+      dataset_name = "wildchat";
+    } else if (file_paths.prompt_file_path.find("sharegpt") !=
+               std::string::npos) {
+      dataset_name = "sharegpt";
+    } else {
+      dataset_name = "unknown";
+    }
+    rm->save_profiling_info_to_csv(file_paths.profiling_folder_path,
+                                   dataset_name,
+                                   llm_model_name,
+                                   model.config.tensor_parallelism_degree,
+                                   max_requests_per_batch,
+                                   max_tokens_per_batch,
+                                   num_kv_cache_slots,
+                                   0.0,                  // arrival rate
+                                   run_warmup ? 10 : 0); // num_warmup_requests
+  }
 }
 
 void FlexFlow::register_custom_tasks() {}

@@ -16,9 +16,7 @@
 #include "flexflow/flexflow_c.h"
 #include "flexflow/dataloader.h"
 #include "flexflow/mapper.h"
-#ifdef FF_BUILD_INFERENCE
 #include "flexflow/request_manager.h"
-#endif
 #include "flexflow/utils/file_loader.h"
 
 using namespace Legion;
@@ -60,7 +58,6 @@ public:
   FF_NEW_OPAQUE_WRAPPER(flexflow_dlrm_config_t, DLRMConfig *);
   FF_NEW_OPAQUE_WRAPPER(flexflow_single_dataloader_t, SingleDataLoader *);
   // inference
-#ifdef FF_BUILD_INFERENCE
   FF_NEW_OPAQUE_WRAPPER(flexflow_batch_config_t, BatchConfig *);
   FF_NEW_OPAQUE_WRAPPER(flexflow_tree_verify_batch_config_t,
                         TreeVerifyBatchConfig *);
@@ -77,7 +74,7 @@ public:
   //                       LoraAdamOptimizerConfig *);
   FF_NEW_OPAQUE_WRAPPER(flexflow_lora_linear_config_t, LoraLinearConfig *);
   FF_NEW_OPAQUE_WRAPPER(flexflow_peft_model_id_t, PEFTModelID *);
-#endif
+  FF_NEW_OPAQUE_WRAPPER(flexflow_page_manager_t, PageManager *);
 };
 
 Logger ffc_log("flexflow_c");
@@ -180,6 +177,15 @@ void flexflow_config_set_pipeline_parallelism_degree(flexflow_config_t handle_,
 bool flexflow_config_get_enable_peft(flexflow_config_t handle_) {
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
   return handle->enable_peft;
+}
+bool flexflow_config_get_enable_peft_finetuning(flexflow_config_t handle_) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->enable_peft_finetuning;
+}
+void flexflow_config_set_enable_peft_finetuning(flexflow_config_t handle_,
+                                                bool value) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->enable_peft_finetuning = value;
 }
 
 int flexflow_config_get_python_data_loader_type(flexflow_config_t handle_) {
@@ -1210,7 +1216,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -1242,7 +1249,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention(
                                             original_max_position_embeddings);
   Tensor tensor = handle->inc_multihead_self_attention(input,
                                                        embed_dim,
-                                                       num_heads,
+                                                       num_q_heads,
+                                                       num_kv_heads,
                                                        kdim,
                                                        vdim,
                                                        dropout,
@@ -1262,7 +1270,8 @@ flexflow_tensor_t flexflow_model_add_spec_inc_multihead_self_attention(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -1295,7 +1304,8 @@ flexflow_tensor_t flexflow_model_add_spec_inc_multihead_self_attention(
   Tensor tensor =
       handle->spec_inc_multihead_self_attention(input,
                                                 embed_dim,
-                                                num_heads,
+                                                num_q_heads,
+                                                num_kv_heads,
                                                 kdim,
                                                 vdim,
                                                 dropout,
@@ -1315,7 +1325,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
     flexflow_model_t handle_,
     const flexflow_tensor_t input_,
     int embed_dim,
-    int num_heads,
+    int num_q_heads,
+    int num_kv_heads,
     int kdim,
     int vdim,
     float dropout,
@@ -1348,7 +1359,8 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
   Tensor tensor =
       handle->inc_multihead_self_attention_verify(input,
                                                   embed_dim,
-                                                  num_heads,
+                                                  num_q_heads,
+                                                  num_kv_heads,
                                                   kdim,
                                                   vdim,
                                                   dropout,
@@ -1361,170 +1373,6 @@ flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
                                                   qk_prod_scaling,
                                                   position_bias,
                                                   name);
-  return FFCObjectWrapper::wrap(tensor);
-}
-
-flexflow_tensor_t flexflow_model_add_inc_multiquery_self_attention(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  Tensor input = FFCObjectWrapper::unwrap(input_);
-  Initializer *kernel_initializer =
-      FFCObjectWrapper::unwrap(kernel_initializer_);
-  RotaryEmbeddingMeta rotary_embedding_meta(apply_rotary_embedding,
-                                            rope_theta,
-                                            rope_type,
-                                            rope_factor,
-                                            low_freq_factor,
-                                            high_freq_factor,
-                                            original_max_position_embeddings);
-  Tensor tensor = handle->inc_multiquery_self_attention(input,
-                                                        embed_dim,
-                                                        num_q_heads,
-                                                        num_kv_heads,
-                                                        kdim,
-                                                        vdim,
-                                                        dropout,
-                                                        add_zero_attn,
-                                                        data_type,
-                                                        kernel_initializer,
-                                                        rotary_embedding_meta,
-                                                        scaling_query,
-                                                        scaling_factor,
-                                                        qk_prod_scaling,
-                                                        position_bias,
-                                                        name);
-  return FFCObjectWrapper::wrap(tensor);
-}
-
-flexflow_tensor_t flexflow_model_add_spec_inc_multiquery_self_attention(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  Tensor input = FFCObjectWrapper::unwrap(input_);
-  Initializer *kernel_initializer =
-      FFCObjectWrapper::unwrap(kernel_initializer_);
-  RotaryEmbeddingMeta rotary_embedding_meta(apply_rotary_embedding,
-                                            rope_theta,
-                                            rope_type,
-                                            rope_factor,
-                                            low_freq_factor,
-                                            high_freq_factor,
-                                            original_max_position_embeddings);
-  Tensor tensor =
-      handle->spec_inc_multiquery_self_attention(input,
-                                                 embed_dim,
-                                                 num_q_heads,
-                                                 num_kv_heads,
-                                                 kdim,
-                                                 vdim,
-                                                 dropout,
-                                                 add_zero_attn,
-                                                 data_type,
-                                                 kernel_initializer,
-                                                 rotary_embedding_meta,
-                                                 scaling_query,
-                                                 scaling_factor,
-                                                 qk_prod_scaling,
-                                                 position_bias,
-                                                 name);
-  return FFCObjectWrapper::wrap(tensor);
-}
-
-flexflow_tensor_t flexflow_model_add_inc_multiquery_self_attention_verify(
-    flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
-    int embed_dim,
-    int num_q_heads,
-    int num_kv_heads,
-    int kdim,
-    int vdim,
-    float dropout,
-    bool add_zero_attn,
-    enum DataType data_type,
-    flexflow_initializer_t kernel_initializer_,
-    bool apply_rotary_embedding,
-    float rope_theta,
-    char const *rope_type,
-    float rope_factor,
-    float low_freq_factor,
-    float high_freq_factor,
-    int original_max_position_embeddings,
-    bool scaling_query,
-    float scaling_factor,
-    bool qk_prod_scaling,
-    bool position_bias,
-    char const *name) {
-  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  Tensor input = FFCObjectWrapper::unwrap(input_);
-  Initializer *kernel_initializer =
-      FFCObjectWrapper::unwrap(kernel_initializer_);
-  RotaryEmbeddingMeta rotary_embedding_meta(apply_rotary_embedding,
-                                            rope_theta,
-                                            rope_type,
-                                            rope_factor,
-                                            low_freq_factor,
-                                            high_freq_factor,
-                                            original_max_position_embeddings);
-  Tensor tensor =
-      handle->inc_multiquery_self_attention_verify(input,
-                                                   embed_dim,
-                                                   num_q_heads,
-                                                   num_kv_heads,
-                                                   kdim,
-                                                   vdim,
-                                                   dropout,
-                                                   add_zero_attn,
-                                                   data_type,
-                                                   kernel_initializer,
-                                                   rotary_embedding_meta,
-                                                   scaling_query,
-                                                   scaling_factor,
-                                                   qk_prod_scaling,
-                                                   position_bias,
-                                                   name);
   return FFCObjectWrapper::wrap(tensor);
 }
 
@@ -1612,7 +1460,6 @@ flexflow_tensor_t flexflow_model_add_argmax(flexflow_model_t handle_,
   return FFCObjectWrapper::wrap(tensor);
 }
 
-#ifdef FF_BUILD_INFERENCE
 void flexflow_model_add_lora_layers(flexflow_model_t handle_,
                                     int num_target_modules,
                                     char const **target_modules_) {
@@ -1642,7 +1489,6 @@ flexflow_peft_model_id_t flexflow_model_register_peft_adapter(
       peft_model_id);
   return FFCObjectWrapper::wrap(peft_model_id);
 }
-#endif
 
 void flexflow_model_set_sgd_optimizer(flexflow_model_t handle_,
                                       flexflow_sgd_optimizer_t optimizer_) {
@@ -1697,7 +1543,18 @@ void flexflow_model_set_transformer_layer_id(flexflow_model_t handle_, int id) {
   handle->set_transformer_layer_id(id);
 }
 
-#ifdef FF_BUILD_INFERENCE
+void flexflow_model_set_num_kv_cache_pages(flexflow_model_t handle_,
+                                           int num_kv_cache_pages) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_num_kv_cache_pages(num_kv_cache_pages);
+}
+
+int flexflow_compute_num_kv_cache_pages_needed(int max_seq_len,
+                                               int batch_size,
+                                               bool is_spec) {
+  return compute_num_kv_cache_pages_needed(max_seq_len, batch_size, is_spec);
+}
+
 void flexflow_model_generate(flexflow_model_t handle_,
                              int num_requests,
                              enum RequestType *request_types,
@@ -1746,8 +1603,9 @@ void flexflow_model_generate(flexflow_model_t handle_,
         fine_tuning_req.peft_model_id = *peft_model_id;
       }
       std::string const dataset_fp(dataset_filepaths[i]);
-      fine_tuning_req.dataset_filepath = dataset_fp;
-      fine_tuning_req.max_training_steps = training_steps[i];
+      fine_tuning_req.peft_finetuning_info.dataset_filepath = dataset_fp;
+      fine_tuning_req.peft_finetuning_info.max_training_epochs =
+          training_steps[i];
       requests.push_back(fine_tuning_req);
       DEBUG_PRINT("[Model] finetune[%d] %p %s %i %i %i %i",
                   i,
@@ -1777,10 +1635,11 @@ void flexflow_model_generate(flexflow_model_t handle_,
       if (max_lengths[i] >= 0) {
         assert(total_tokens <= max_lengths[i] || num_output_tokens == 0);
       }
-      // assert(results[i].output_tokens.size() <= max_seq_lengths[i] ||
-      //        results[i].output_tokens.size() ==
-      //        results[i].input_tokens.size());
       output_length_and_tokens[i][0] = results[i].output_tokens.size();
+      assert(results[i].output_tokens.size() <= max_lengths[i] + 100 &&
+             "Exceeding python buffer size for token ids");
+      assert(results[i].output_text.length() <= max_lengths[i] * 10 &&
+             "Exceeding python buffer size for output text");
       std::copy(results[i].output_tokens.begin(),
                 results[i].output_tokens.end(),
                 output_length_and_tokens[i] + 1);
@@ -1797,7 +1656,6 @@ void flexflow_model_generate(flexflow_model_t handle_,
     }
   }
 }
-#endif
 
 void flexflow_model_set_position_offset(flexflow_model_t handle_,
                                         int const offset) {
@@ -2685,8 +2543,6 @@ void flexflow_perform_registration(void) {
                                          true /*global*/);
 }
 
-#ifdef FF_BUILD_INFERENCE
-
 // -----------------------------------------------------------------------
 // BatchConfig
 // -----------------------------------------------------------------------
@@ -2757,11 +2613,23 @@ void flexflow_request_manager_set_max_requests_per_batch(
               max_num_requests);
 }
 
+int flexflow_request_manager_get_max_requests_per_batch(
+    flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->get_max_requests_per_batch();
+}
+
 void flexflow_request_manager_set_max_tokens_per_batch(
     flexflow_request_manager_t handle_, int max_num_tokens) {
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
   handle->set_max_tokens_per_batch(max_num_tokens);
   DEBUG_PRINT("[RequestManager] set max_tokens_per_batch %d", max_num_tokens);
+}
+
+int flexflow_request_manager_get_max_tokens_per_batch(
+    flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->get_max_tokens_per_batch();
 }
 
 void flexflow_request_manager_set_max_spec_tree_token_num(
@@ -2770,6 +2638,12 @@ void flexflow_request_manager_set_max_spec_tree_token_num(
   handle->set_max_spec_tree_token_num(max_num_tokens);
   DEBUG_PRINT("[RequestManager] set max_spec_tree_token_num %d",
               max_num_tokens);
+}
+
+int flexflow_request_manager_get_max_spec_tree_token_num(
+    flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->get_max_spec_tree_token_num();
 }
 
 void flexflow_request_manager_set_max_sequence_length(
@@ -2799,6 +2673,22 @@ void flexflow_request_manager_set_enable_peft_finetuning(
   handle->set_enable_peft_finetuning(enable_peft_finetuning_);
   DEBUG_PRINT("[RequestManager] set_enable_peft_finetuning %d",
               enable_peft_finetuning_);
+}
+
+void flexflow_request_manager_set_num_transformers_layers(
+    flexflow_request_manager_t handle_, int num_transformers_layers_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_num_transformer_layers(num_transformers_layers_);
+  DEBUG_PRINT("[RequestManager] set num_transformers_layers %d",
+              num_transformers_layers_);
+}
+
+void flexflow_request_manager_set_num_layers_per_finetuning_step(
+    flexflow_request_manager_t handle_, int num_layers_per_finetuning_step_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_num_layers_per_finetuning_step(num_layers_per_finetuning_step_);
+  DEBUG_PRINT("[RequestManager] set num layers per finetuning step %d",
+              num_layers_per_finetuning_step_);
 }
 
 void flexflow_request_manager_register_tokenizer(
@@ -2856,6 +2746,33 @@ void flexflow_request_manager_terminate_background_server(
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
   DEBUG_PRINT("[RequestManager] terminate background server %p", handle);
   handle->terminate_background_server();
+}
+
+// -----------------------------------------------------------------------
+// PageManager
+// -----------------------------------------------------------------------
+
+flexflow_page_manager_t
+    flexflow_page_manager_get_page_manager(int num_total_pages) {
+  assert(num_total_pages);
+  PageManager *pm = PageManager::get_page_manager(num_total_pages);
+  DEBUG_PRINT("[PageManager] get %p", pm);
+  return FFCObjectWrapper::wrap(pm);
+}
+
+int flexflow_page_manager_get_tot_num_pages(flexflow_page_manager_t handle_) {
+  PageManager *handle = FFCObjectWrapper::unwrap(handle_);
+  int num_pages = handle->get_tot_num_pages();
+  DEBUG_PRINT("[PageManager] %p get_tot_num_pages %d", handle, num_pages);
+  return num_pages;
+}
+
+int flexflow_page_manager_get_tokens_per_page(flexflow_page_manager_t handle_) {
+  PageManager *handle = FFCObjectWrapper::unwrap(handle_);
+  int tokens_per_page = handle->get_tokens_per_page();
+  DEBUG_PRINT(
+      "[PageManager] %p get_tokens_per_page %d", handle, tokens_per_page);
+  return tokens_per_page;
 }
 
 // -----------------------------------------------------------------------
@@ -3176,5 +3093,3 @@ void flexflow_peft_model_id_destroy(flexflow_peft_model_id_t handle_) {
   DEBUG_PRINT("[PEFTModelID] delete %p", peft_model_id);
   delete peft_model_id;
 }
-
-#endif

@@ -74,7 +74,7 @@ __global__ void
 template <typename DT>
 __global__ void reluBackward(DT *grad_ptr, const DT *output, size_t n) {
   CUDA_KERNEL_LOOP(i, n) {
-    grad_ptr[i] = (output[i] > 0.0f) ? grad_ptr[i] : 0;
+    grad_ptr[i] = (output[i] > (DT)0.0f) ? grad_ptr[i] : (DT)0;
   }
 }
 
@@ -83,7 +83,11 @@ __host__ void relu_backward_kernel(DataType data_type,
                                    void const *output_ptr,
                                    size_t output_size,
                                    cudaStream_t stream) {
-  if (data_type == DT_FLOAT) {
+  if (data_type == DT_HALF) {
+    reluBackward<half>
+        <<<GET_BLOCKS(output_size), CUDA_NUM_THREADS, 0, stream>>>(
+            (half *)output_grad_ptr, (half const *)output_ptr, output_size);
+  } else if (data_type == DT_FLOAT) {
     reluBackward<float>
         <<<GET_BLOCKS(output_size), CUDA_NUM_THREADS, 0, stream>>>(
             (float *)output_grad_ptr, (float const *)output_ptr, output_size);

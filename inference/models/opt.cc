@@ -35,21 +35,20 @@ void OPT::create_opt_model(FFModel &ff,
                     "divisible by the tensor parallelism degree");
   }
 
-  std::unordered_map<std::string, Layer *> weights_layers;
-
   //------------------------------ build the model --------------------------
   Tensor input;
   Tensor position_input;
   ff.set_position_offset(2);
-  {
-    int const token_dims[] = {
-        (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE)
-            ? BatchConfig::max_verify_tokens_per_batch()
-            : BatchConfig::max_tokens_per_batch(),
-        1};
-    input = ff.create_tensor<2>(token_dims, DT_INT32);
-    position_input = ff.create_tensor<2>(token_dims, DT_INT32);
+
+  int batch_tensor_num_tokens = BatchConfig::max_tokens_per_batch();
+  if (mode == TREE_VERIFY_MODE || mode == BEAM_SEARCH_MODE) {
+    batch_tensor_num_tokens = BatchConfig::max_verify_tokens_per_batch();
+  } else if (ff.config.enable_peft_finetuning) {
+    batch_tensor_num_tokens = BatchConfig::max_sequence_length();
   }
+  int const token_dims[] = {batch_tensor_num_tokens, 1};
+  input = ff.create_tensor<2>(token_dims, DT_INT32);
+  position_input = ff.create_tensor<2>(token_dims, DT_INT32);
 
   Initializer *embed_init = new UniformInitializer(std::rand(), 0, 0);
   std::vector<int> axes = {0};
@@ -124,6 +123,7 @@ void OPT::create_opt_model(FFModel &ff,
             qkv_proj,
             opt_config.hidden_size,
             opt_config.num_attention_heads,
+            opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,
             0.0f,    /*dropout*/
@@ -146,6 +146,7 @@ void OPT::create_opt_model(FFModel &ff,
             qkv_proj,
             opt_config.hidden_size,
             opt_config.num_attention_heads,
+            opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,
             0.0f,    /*dropout*/
@@ -167,6 +168,7 @@ void OPT::create_opt_model(FFModel &ff,
         o_proj = ff.inc_multihead_self_attention(
             qkv_proj,
             opt_config.hidden_size,
+            opt_config.num_attention_heads,
             opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,
             opt_config.hidden_size / opt_config.num_attention_heads,

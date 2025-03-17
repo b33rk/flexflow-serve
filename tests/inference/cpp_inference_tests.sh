@@ -2,258 +2,171 @@
 set -x
 set -e
 
-# Cd into directory holding this script
-cd "${BASH_SOURCE[0]%/*}"
+# Cd into root directory of repo
+cd "${BASH_SOURCE[0]%/*}/../.."
 
-###############################################################################################
-############################ Speculative inference tests ######################################
-###############################################################################################
+# Function to launch specinfer with flags from a JSON config file.
+run_cpp_inference() {
+  local config_file="$1"
 
-# LLAMA
-../../build/inference/spec_infer/spec_infer -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model meta-llama/Llama-2-7b-hf -ssm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/spec_inference_llama.txt -pipeline-parallelism-degree 4
-# LLAMA (half precision)
-../../build/inference/spec_infer/spec_infer -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model meta-llama/Llama-2-7b-hf -ssm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/spec_inference_llama_half.txt -pipeline-parallelism-degree 4
+  # Check that a config file was provided and exists
+  if [[ -z "$config_file" ]]; then
+    echo "Usage: launch_specinfer <config_file.json>"
+    return 1
+  fi
+  if [[ ! -f "$config_file" ]]; then
+    echo "Config file not found: $config_file"
+    return 1
+  fi
 
-# OPT
-../../build/inference/spec_infer/spec_infer -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model facebook/opt-6.7b -ssm-model facebook/opt-125m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/spec_inference_opt.txt -pipeline-parallelism-degree 4
-# OPT (half precision)
-../../build/inference/spec_infer/spec_infer -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model facebook/opt-6.7b -ssm-model facebook/opt-125m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/spec_inference_opt_half.txt -pipeline-parallelism-degree 4
+  # Check for mandatory keys in the config file (including model_name)
+  for req in num_gpus memory_per_gpu zero_copy_memory_per_node llm_model; do
+    if ! jq -e --arg key "$req" 'has($key)' "$config_file" >/dev/null; then
+      echo "Error: Missing required parameter: $req"
+      return 1
+    fi
+  done
 
-# Tensor parallelism tests
-if [ "$TENSOR_PARALLELISM_TESTS" = "ON" ]; then
-    # LLAMA
-    ../../build/inference/spec_infer/spec_infer -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model meta-llama/Llama-2-7b-hf -ssm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/spec_inference_llama_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-    # LLAMA (half precision)
-    ../../build/inference/spec_infer/spec_infer -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model meta-llama/Llama-2-7b-hf -ssm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/spec_inference_llama_half_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-    
-    # OPT
-    ../../build/inference/spec_infer/spec_infer -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model facebook/opt-6.7b -ssm-model facebook/opt-125m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/spec_inference_opt_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-    # OPT (half precision)
-    ../../build/inference/spec_infer/spec_infer -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model facebook/opt-6.7b -ssm-model facebook/opt-125m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/spec_inference_opt_half_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-fi
+  # Download the model using the model_name key
+  llm_model=$(jq -r '.llm_model' "$config_file")
+  echo "Downloading model: $llm_model"
+  if ! python3 ./inference/utils/download_hf_model.py "$llm_model" --half-precision-only; then
+    echo "Error: Failed to download model $llm_model"
+    return 1
+  fi
 
-###############################################################################################
-############################ Incremental decoding tests #######################################
-###############################################################################################
+  # Declare an associative array mapping config keys to system flags
+  declare -A ff_arg_to_sysarg=(
+    ["num_gpus"]="-ll:gpu"
+    ["memory_per_gpu"]="-ll:fsize"
+    ["zero_copy_memory_per_node"]="-ll:zsize"
+    ["cpu_memory_per_node"]="-ll:csize"
+    ["num_cpus"]="-ll:cpu"
+    ["legion_utility_processors"]="-ll:util"
+    ["data_parallelism_degree"]="-data-parallelism-degree"
+    ["tensor_parallelism_degree"]="-tensor-parallelism-degree"
+    ["pipeline_parallelism_degree"]="-pipeline-parallelism-degree"
+    ["offload"]="-offload"
+    ["offload_reserve_space_size"]="-offload-reserve-space-size"
+    ["use_4bit_quantization"]="--4bit-quantization"
+    ["use_8bit_quantization"]="--8bit-quantization"
+    ["enable_peft"]="-enable-peft"
+    ["profiling"]="--profiling"
+    ["benchmarking"]="--benchmarking"
+    ["inference_debugging"]="--inference-debugging"
+    ["fusion"]="--fusion"
+    ["llm_model"]="-llm-model"
+    # ["cache_path"]="-cache-folder"
+    ["full_precision"]="--use-full-precision"
+    ["prompt"]="-prompt"
+    ["output_file"]="-output-file"
+    ["max_seq_length"]="--max-sequence-length"
+    ["max_requests_per_batch"]="--max-requests-per-batch"
+    ["max_length"]="--max-length"
+    ["max_tokens_per_batch"]="--max-tokens-per-batch"
+    ["log_instance_creation"]="--log-instance-creation"
+    ["disable_control_replication"]="--disable-control-replication"
+    ["dataset"]="--dataset"
+    ["enable_inplace_optimizations"]="--enable-inplace-optimization"
+  )
 
-# LLAMA (small model)
-../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_160M.txt -pipeline-parallelism-degree 4
+  # Build the command line arguments array
+  args=()
 
-../../build/inference/incr_decoding/incr_decoding -ll:gpu 1 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_160M.txt -pipeline-parallelism-degree 1
+  # Process keys in the order they appear in the JSON file.
+  # Use jq to output tab-separated key-value pairs.
+  while IFS=$'\t' read -r key value; do
+    # Skip "model_name" (already used for downloading).
+    if [[ "$key" == "model_name" ]]; then
+      continue
+    fi
 
-# LLAMA (small model, half precision)
-../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_160M_half.txt -pipeline-parallelism-degree 4
-
-# LLAMA (big model)
-../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model meta-llama/Llama-2-7b-hf -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_2_7B.txt -pipeline-parallelism-degree 4
-# LLAMA (big model, half precision)
-../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model meta-llama/Llama-2-7b-hf -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_2_7B_half.txt -pipeline-parallelism-degree 4
-
-# OPT (small model)
-../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model facebook/opt-125m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_opt_125M.txt -pipeline-parallelism-degree 4
-# OPT (small model, half precision)
-../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model facebook/opt-125m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_opt_125M_half.txt -pipeline-parallelism-degree 4
-
-# OPT (big model)
-../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model facebook/opt-6.7b -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_opt_6B.txt -pipeline-parallelism-degree 4
-# OPT (big model, half precision)
-../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model facebook/opt-6.7b -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_opt_6B_half.txt -pipeline-parallelism-degree 4
-
-# Falcon (full precision)
-../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 40000 --fusion --use-full-precision -llm-model tiiuae/falcon-7b -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_falcon_7B.txt -pipeline-parallelism-degree 4
-# Falcon (half precision)
-# ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model tiiuae/falcon-7b -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_falcon_7B.txt -pipeline-parallelism-degree 4
-
-# # StarCoder (full precision)
-# ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model bigcode/starcoderbase-7b -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_starcoder_7B.txt -pipeline-parallelism-degree 4
-# # StarCoder (half precision)
-# ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model bigcode/starcoderbase-7b -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_starcoder_7B_half.txt -pipeline-parallelism-degree 4
-
-# Tensor parallelism tests
-if [ "$TENSOR_PARALLELISM_TESTS" = "ON" ]; then
-    # LLAMA (small model)
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_160M_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_160M_tp4.txt -pipeline-parallelism-degree 1 -tensor-parallelism-degree 4
-    # LLAMA (small model, half precision)
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_160M_half_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model JackFram/llama-160m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_160M_half_tp4.txt -pipeline-parallelism-degree 1 -tensor-parallelism-degree 4
-
-    # LLAMA (big model)
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model meta-llama/Llama-2-7b-hf -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_2_7B_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-    # LLAMA (big model, half precision)
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model meta-llama/Llama-2-7b-hf -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_llama_2_7B_half_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-
-    # OPT (small model)
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model facebook/opt-125m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_opt_125M_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model facebook/opt-125m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_opt_125M_tp4.txt -pipeline-parallelism-degree 1 -tensor-parallelism-degree 4
-    # OPT (small model, half precision)
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model facebook/opt-125m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_opt_125M_half_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model facebook/opt-125m -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_opt_125M_half_tp.txt -pipeline-parallelism-degree 1 -tensor-parallelism-degree 4
-
-    # OPT (big model)
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion --use-full-precision -llm-model facebook/opt-6.7b -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_opt_6B_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-    # OPT (big model, half precision)
-    ../../build/inference/incr_decoding/incr_decoding -ll:cpu 4 -ll:util 4 -ll:gpu 4 -ll:fsize 14000 -ll:zsize 30000 --fusion -llm-model facebook/opt-6.7b -prompt ../../inference/prompt/test.json -output-file ../../inference/output/incr_decoding_opt_6B_half_tp.txt -pipeline-parallelism-degree 2 -tensor-parallelism-degree 2
-fi
-
-###############################################################################################
-############################### Alignment and Speed tests #####################################
-###############################################################################################
-
-##################################### Helper functions #######################################
-function check_partial_token_match {
-    local file1="$1"
-    local file2="$2"
-    local num_tokens_to_match=30
-
-    # Read the second line of the first file
-    third_line=$(sed -n '3p' "$file1")
-    read -r line1 <<< "$third_line"
-    tokens1=${line1#*: }
-    IFS=',' read -ra arr1 <<< "$tokens1"
-
-    # Read the second line of the second file
-    third_line=$(sed -n '3p' "$file2")
-    read -r line2 <<< "$third_line"
-    tokens2=${line2#*: }
-    IFS=',' read -ra arr2 <<< "$tokens2"
-
-    # Compare the first few integers in the two lists
-    for ((i = 0; i < num_tokens_to_match; i++)); do
-        if [[ "${arr1[$i]}" != "${arr2[$i]}" ]]; then
-            echo "The first $num_tokens_to_match tokens in files $file1 and $file2 are not identical."
-            exit 1
+    # Process the "ssms" block specially.
+    if [[ "$key" == "ssms" ]]; then
+      # For each element in the "ssms" array, download and add the -ssm-model flag.
+      ssm_models=$(jq -r '.ssms[] | .ssm_model' "$config_file")
+      for ssm_model in $ssm_models; do
+        echo "Downloading ssm_model: $ssm_model"
+        if ! python3 ./inference/utils/download_hf_model.py "$ssm_model" --half-precision-only; then
+          echo "Error: Failed to download ssm_model $ssm_model"
+          return 1
         fi
-    done
-    #echo "The first $num_tokens_to_match integers are identical."
+        args+=("-ssm-model" "$ssm_model")
+      done
+      continue
+    fi
+
+    # If the key is recognized in the mapping, add the corresponding flag.
+    if [[ -n "${ff_arg_to_sysarg[$key]}" ]]; then
+      flag="${ff_arg_to_sysarg[$key]}"
+      if [[ "$value" == "true" ]]; then
+        args+=("$flag")
+      elif [[ "$value" == "false" ]]; then
+        continue
+      else
+        args+=("$flag" "$value")
+      fi
+    fi
+  done < <(jq -r 'to_entries[] | "\(.key)\t\(.value|tostring)"' "$config_file")
+
+  # Determine which executable to run based on file contents:
+  # Use ./incr_dec if the file contains "incr_dec", else if "spec_infer" is found use ./specinfer.
+  if [[ $config_file == *"incr_dec"* ]]; then
+    executable="./build/inference/incr_decoding/incr_decoding"
+  elif [[ $config_file == *"spec_infer"* ]]; then  
+    executable="./build/inference/spec_infer/spec_infer"
+  else
+    echo "Error: Config file does not specify a valid mode (incr_dec or spec_infer)"
+    return 1
+  fi
+
+  # Launch the chosen program with the constructed arguments
+  $executable "${args[@]}"
 }
 
-function compare_speed_spec_infer_incr_decoding {
-    local incrDec_file="$1"
-    local specInf_file="$2"
 
-    # Read the float numbers from the first line of the files
-    incrDec=$(sed -n '1 s/end-to-end latency: \(.*\)/\1/p' "$incrDec_file")
-    specInf=$(sed -n '1 s/end-to-end latency: \(.*\)/\1/p' "$specInf_file")
+############## Create prompt ################################
+# Clean up before test
+rm -rf inference/prompt inference/output inference/inf_test_configs || true
+# Create test prompt file
+mkdir -p ./inference/prompt
+echo '["Three tips for staying healthy are: "]' > ./inference/prompt/test.json
+# Create output folder
+mkdir -p ./inference/output
 
-    if ! command -v bc &> /dev/null; then
-        echo "bc is not installed. Installing..."
-        sudo apt-get install -y bc
-    fi
-    
-    # Perform the comparison
-    threshold=$(bc <<< "$specInf * 1.5")
-    if (( $(echo "$incrDec >= $threshold" | bc -l) )); then
-        #echo "The latency in $specInf_file is at least 1.5x smaller than the latency from $incrDec_file."
-        :
-    else
-        echo "Error: The latency in $specInf_file is not at least 1.5x smaller than the latency in $incrDec_file!"
-        exit 1
-    fi
-}
+############## Run inference in flexflow-serve ##############
 
-function compare_decoding_steps_spec_infer_incr_decoding {
-    local incrDec_file="$1"
-    local specInf_file="$2"
+echo "Running inference in flexflow-serve (C++)..."
 
-    # Read the number of decoding steps from the second line of the files
-    second_line=$(sed -n '2p' "$incrDec_file")
-    read -r line <<< "$second_line"
-    incrDec=${line#*: }
-    second_line=$(sed -n '2p' "$specInf_file")
-    read -r line <<< "$second_line"
-    specInf=${line#*: }
+# Generate test configs
+python ./tests/inference/generate_inf_test_configs.py
 
-    if ! command -v bc &> /dev/null; then
-        echo "bc is not installed. Installing..."
-        sudo apt-get install -y bc
-    fi
-    
-    # Perform the comparison
-    threshold=$(bc <<< "$specInf * 1.5")
-    if (( $(echo "$incrDec >= $threshold" | bc -l) )); then
-        #echo "The decoding steps in $specInf_file are at least 1.5x less than those in $incrDec_file."
-        :
-    else
-        echo "Error: The decoding steps in $specInf_file are not at least 1.5x less than those in $incrDec_file!"
-        exit 1
-    fi
-}
+# Loop through .json files in the ./inference/inf_test_configs dir 
+for file in ./inference/inf_test_configs/*.json; do
+    # Run script
+    run_cpp_inference "$file"
+done
 
-############ Alignment between speculative inference and incremental decoding #################
-# Full precision
-diff <(tail -n +3 "../../inference/output/incr_decoding_llama_2_7B.txt") <(tail -n +3 "../../inference/output/spec_inference_llama.txt")
-diff <(tail -n +3 "../../inference/output/incr_decoding_opt_6B.txt")   <(tail -n +3 "../../inference/output/spec_inference_opt.txt")
-# Half precision
-check_partial_token_match "../../inference/output/incr_decoding_llama_2_7B_half.txt" "../../inference/output/spec_inference_llama_half.txt"
-check_partial_token_match "../../inference/output/incr_decoding_opt_6B_half.txt" "../../inference/output/spec_inference_opt_half.txt"
+##############  Run inference in HuggingFace ##############
 
-# Speed test: speculative inference should be at very least 1.5x faster than incremental decoding
-# Full precision
-#compare_speed_spec_infer_incr_decoding "../../inference/output/incr_decoding_llama_2_7B.txt" "../../inference/output/spec_inference_llama.txt"
-#compare_speed_spec_infer_incr_decoding "../../inference/output/incr_decoding_opt_6B.txt" "../../inference/output/spec_inference_opt.txt"
-compare_decoding_steps_spec_infer_incr_decoding "../../inference/output/incr_decoding_llama_2_7B.txt" "../../inference/output/spec_inference_llama.txt"
-compare_decoding_steps_spec_infer_incr_decoding "../../inference/output/incr_decoding_opt_6B.txt" "../../inference/output/spec_inference_opt.txt"
-# Half precision
-#compare_speed_spec_infer_incr_decoding "../../inference/output/incr_decoding_llama_2_7B_half.txt" "../../inference/output/spec_inference_llama_half.txt"
-#compare_speed_spec_infer_incr_decoding "../../inference/output/incr_decoding_opt_6B_half.txt" "../../inference/output/spec_inference_opt_half.txt"
-compare_decoding_steps_spec_infer_incr_decoding "../../inference/output/incr_decoding_llama_2_7B_half.txt" "../../inference/output/spec_inference_llama_half.txt"
-compare_decoding_steps_spec_infer_incr_decoding "../../inference/output/incr_decoding_opt_6B_half.txt" "../../inference/output/spec_inference_opt_half.txt"
+echo "Running inference in huggingface..."
 
-############ Alignment between tensor model parallelism and pipeline parallelism only #################
-if [ "$TENSOR_PARALLELISM_TESTS" = "ON" ]; then
-    diff <(tail -n +3 "../../inference/output/spec_inference_llama_tp.txt") <(tail -n +3 "../../inference/output/spec_inference_llama.txt")
-    diff <(tail -n +3 "../../inference/output/spec_inference_opt_tp.txt")  <(tail -n +3 "../../inference/output/spec_inference_opt.txt")
-    check_partial_token_match "../../inference/output/spec_inference_llama_half_tp.txt" "../../inference/output/spec_inference_llama_half.txt"
-    check_partial_token_match "../../inference/output/spec_inference_opt_half_tp.txt" "../../inference/output/spec_inference_opt_half.txt"
-    diff <(tail -n +3 "../../inference/output/incr_decoding_llama_160M_tp.txt") <(tail -n +3 "../../inference/output/incr_decoding_llama_160M.txt")
-    check_partial_token_match "../../inference/output/incr_decoding_llama_160M_half_tp.txt" "../../inference/output/incr_decoding_llama_160M_half.txt"
-    diff <(tail -n +3 "../../inference/output/incr_decoding_llama_2_7B_tp.txt") <(tail -n +3 "../../inference/output/incr_decoding_llama_2_7B.txt")
-    check_partial_token_match "../../inference/output/incr_decoding_llama_2_7B_half_tp.txt" "../../inference/output/incr_decoding_llama_2_7B_half.txt"
-    diff <(tail -n +3 "../../inference/output/incr_decoding_opt_125M_tp.txt") <(tail -n +3 "../../inference/output/incr_decoding_opt_125M.txt")
-    check_partial_token_match "../../inference/output/incr_decoding_opt_125M_half_tp.txt" "../../inference/output/incr_decoding_opt_125M_half.txt"
-    diff <(tail -n +3 "../../inference/output/incr_decoding_opt_6B_tp.txt") <(tail -n +3 "../../inference/output/incr_decoding_opt_6B.txt")
-    check_partial_token_match "../../inference/output/incr_decoding_opt_6B_half_tp.txt" "../../inference/output/incr_decoding_opt_6B_half.txt"
-fi
+model_names=(
+    "meta-llama/Llama-3.1-8B-Instruct"
+    "meta-llama/Llama-3.2-1B-Instruct"
+    "facebook/opt-6.7b"
+    "facebook/opt-125m"
+)
+for model_name in "${model_names[@]}"; do
+    # set model_name_ to the content of model_name after the first "/", transformed into lowercase
+    model_name_=$(echo "$model_name" | cut -d'/' -f2 | tr '[:upper:]' '[:lower:]')
+    python ./tests/inference/huggingface_inference.py \
+        --model-name "$model_name" \
+        --max-length 255 \
+        --prompt-file "${PWD}/inference/prompt/test.json" \
+        --output-file "${PWD}/inference/output/huggingface_$model_name_.json"
+done
 
-######################### Alignment tests with HuggingFace ####################################
-
-# LLAMA (small model, full precision)
-python3 ./huggingface_inference.py --model-name "JackFram/llama-160m" --use-full-precision --prompt-file "../../inference/prompt/test.json" --output-file "../../inference/output/huggingface_llama_160M.txt" --gpu
-
-# LLAMA (small model, half precision)
-python3 ./huggingface_inference.py --model-name "JackFram/llama-160m" --prompt-file "../../inference/prompt/test.json" --output-file "../../inference/output/huggingface_llama_160M_half.txt" --gpu
-
-# LLAMA (big model, full precision)
-python3 ./huggingface_inference.py --model-name "meta-llama/Llama-2-7b-hf" --use-full-precision --prompt-file "../../inference/prompt/test.json" --output-file "../../inference/output/huggingface_llama_2_7B.txt"
-
-# LLAMA (big model, half precision)
-python3 ./huggingface_inference.py --model-name "meta-llama/Llama-2-7b-hf" --prompt-file "../../inference/prompt/test.json" --output-file "../../inference/output/huggingface_llama_2_7B_half.txt" --gpu
-
-# OPT (small model, full precision)
-python3 ./huggingface_inference.py --model-name "facebook/opt-125m" --use-full-precision --prompt-file "../../inference/prompt/test.json" --output-file "../../inference/output/huggingface_opt_125M.txt" --gpu --max-length 128
-
-# OPT (small model, half precision)
-python3 ./huggingface_inference.py --model-name "facebook/opt-125m" --prompt-file "../../inference/prompt/test.json" --output-file "../../inference/output/huggingface_opt_125M_half.txt" --gpu --max-length 128
-
-# OPT (big model, full precision)
-python3 ./huggingface_inference.py --model-name "facebook/opt-6.7b" --use-full-precision --prompt-file "../../inference/prompt/test.json" --output-file "../../inference/output/huggingface_opt_6B.txt" --max-length 128
-
-# OPT (big model, half precision)
-# python3 ./huggingface_inference.py --model-name "facebook/opt-6.7b" --prompt-file "../../inference/prompt/test.json" --output-file "../../inference/output/huggingface_opt_6B_half.txt" --gpu --max-length 128
-
-# Falcon (full precision)
-python3 ./huggingface_inference.py --model-name "tiiuae/falcon-7b" --use-full-precision --prompt-file "../../inference/prompt/test.json" --output-file "../../inference/output/huggingface_falcon_7B.txt" --max-length 128
-
-
-diff "../../inference/output/huggingface_llama_160M.txt" <(tail -n +4 "../../inference/output/incr_decoding_llama_160M.txt")
-diff <( < ../../inference/output/huggingface_llama_160M_half.txt tr -s '[:space:]' '\n' | head -n 20) <(tail -n +4 "../../inference/output/incr_decoding_llama_160M_half.txt" | tr -s '[:space:]' '\n' | head -n 20)
-diff "../../inference/output/huggingface_llama_2_7B.txt" <(tail -n +4 "../../inference/output/incr_decoding_llama_2_7B.txt")
-diff <( < ../../inference/output/huggingface_llama_2_7B_half.txt tr -s '[:space:]' '\n' | head -n 20) <(tail -n +4 "../../inference/output/incr_decoding_llama_2_7B_half.txt" | tr -s '[:space:]' '\n' | head -n 20)
-
-diff "../../inference/output/huggingface_opt_125M.txt" <(tail -n +4 "../../inference/output/incr_decoding_opt_125M.txt")
-diff <( < ../../inference/output/huggingface_opt_125M_half.txt tr -s '[:space:]' '\n' | head -n 20) <(tail -n +4 "../../inference/output/incr_decoding_opt_125M_half.txt" | tr -s '[:space:]' '\n' | head -n 20)
-diff "../../inference/output/huggingface_opt_6B.txt" <(tail -n +4 "../../inference/output/incr_decoding_opt_6B.txt")
-# diff "../../inference/output/huggingface_opt_6B_half.txt" <(tail -n +4 "../../inference/output/incr_decoding_opt_6B_half.txt")
-diff "../../inference/output/huggingface_falcon_7B.txt" <(tail -n +4 "../../inference/output/incr_decoding_falcon_7B.txt")
-
+##############  Check alignment between results ##############
+echo "Checking alignment of results..."
+pytest -v ./tests/inference/test_inference_output.py

@@ -123,8 +123,7 @@ def get_configs():
             "offload_reserve_space_size": 8 * 1024, # 8GB
             "use_4bit_quantization": False,
             "use_8bit_quantization": False,
-            "enable_peft": True,
-            "peft_activation_reserve_space_size": 1024, # 1GB
+            "enable_peft": False,
             "profiling": False,
             "benchmarking": False,
             "inference_debugging": False,

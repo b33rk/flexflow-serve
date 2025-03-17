@@ -130,7 +130,6 @@ setup(
     package_data={"flexflow": files},
     zip_safe=False,
     install_requires=requirements,
-    scripts=['python/flexflow/flexflow_python'],
     ext_modules=[
         CMakeExtension(
             name="flexflow",

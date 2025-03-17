@@ -380,9 +380,9 @@ void InferenceManager::init_operators_inference(FFModel *model) {
   }
 }
 
-FutureMap InferenceManager::inference(FFModel *model,
-                                      int index,
-                                      BatchConfig const &bc) {
+InferenceResultFuture InferenceManager::inference(FFModel *model,
+                                                  int index,
+                                                  BatchConfig const &bc) {
   if (bc.get_mode() == INC_DECODING_MODE) {
     BatchConfigFuture bcf = Future::from_value<BatchConfig>(bc);
     return inference(model, index, bcf);
@@ -405,15 +405,15 @@ FutureMap InferenceManager::inference(FFModel *model,
   }
 }
 
-FutureMap InferenceManager::inference(FFModel *model,
-                                      int index,
-                                      BatchConfigFuture const &bc) {
+InferenceResultFuture InferenceManager::inference(FFModel *model,
+                                                  int index,
+                                                  BatchConfigFuture const &bc) {
   // log_inf_mgr.print("mode(%d) num_active_infr_tokens(%d)
   // num_active_requests(%d)",
   //                   bc.get_mode(),
-  //                   bc.num_active_infr_tokens(),
+  //                   bc.num_active_tokens(),
   //                   bc.num_active_requests());
-  //  assert(bc.num_active_infr_tokens() > 0 && bc.num_active_requests() > 0);
+  //  assert(bc.num_active_tokens() > 0 && bc.num_active_requests() > 0);
   //  We currently assume that the index-th batch will be placed
   //  on the device_index-th device (except for the experts layers)
   int batch_index = index % model->config.data_parallelism_degree;
@@ -464,12 +464,13 @@ FutureMap InferenceManager::inference(FFModel *model,
     }
     fm = op->inference(*model, bc, inputs, outputs);
   }
-  return fm;
+  assert(fm.get_future_map_domain().get_volume() == 1);
+  InferenceResultFuture irf = fm.get_future(0);
+  return irf;
 };
 
-void InferenceManager::peft_bwd(FFModel *model,
-                                int index,
-                                BatchConfigFuture const &bc) {
+std::vector<FinetuningBwdFuture> InferenceManager::peft_bwd(
+    FFModel *model, int index, BatchConfigFuture const &bc) {
   int batch_index = index % model->config.data_parallelism_degree;
   FutureMap fm;
   bool found_input_operator = false;
@@ -510,8 +511,15 @@ void InferenceManager::peft_bwd(FFModel *model,
       outputs[i] = tensor_buffer[op->outputs[i]][batch_index];
       assert(outputs[i]->parallel_is != IndexSpace::NO_SPACE);
     }
-    op->peft_bwd(*model, bc, inputs, outputs);
+    fm = op->peft_bwd(*model, bc, inputs, outputs);
   }
+  assert(fm.get_future_map_domain().get_volume() ==
+         model->config.tensor_parallelism_degree);
+  std::vector<FinetuningBwdFuture> irf;
+  for (int i = 0; i < model->config.tensor_parallelism_degree; i++) {
+    irf.push_back(fm.get_future(i));
+  }
+  return irf;
 };
 
 void InferenceManager::load_input_tokens_from_batch_config(
@@ -625,6 +633,14 @@ void FFModel::set_transformer_layer_id(int id) {
          (id == 0 && current_transformer_layer_id == 0));
   current_transformer_layer_id = id;
   assert(id < MAX_NUM_TRANSFORMER_LAYERS);
+}
+
+void FFModel::set_num_kv_cache_pages(int num_kv_cache_pages_) {
+  num_kv_cache_pages = num_kv_cache_pages_;
+}
+
+int FFModel::get_num_kv_cache_pages() const {
+  return num_kv_cache_pages;
 }
 
 void FFModel::set_position_offset(int offset) {
@@ -786,6 +802,7 @@ void FFModel::compile_inference() {
         operators[l]->op_type == OP_PARALLEL_IDENTITY ||
         operators[l]->op_type == OP_LORA || operators[l]->op_type == OP_FUSED) {
       MachineView view = operators[l]->outputs[0]->machine_view;
+      // inference
       if (view_hash_to_nccl_comms.find(view.hash()) ==
           view_hash_to_nccl_comms.end()) {
         TaskLauncher launcher(NCCL_GETUNIQUEID_TASK_ID, TaskArgument(NULL, 0));
@@ -813,6 +830,35 @@ void FFModel::compile_inference() {
           nccl_comms[idx] = fm.get_result<ncclComm_t>(*it);
         }
         view_hash_to_nccl_comms[view.hash()] = nccl_comms;
+      }
+      // peft
+      if (view_hash_to_nccl_comms_peft.find(view.hash()) ==
+          view_hash_to_nccl_comms_peft.end()) {
+        TaskLauncher launcher(NCCL_GETUNIQUEID_TASK_ID, TaskArgument(NULL, 0));
+        Future future = runtime->execute_task(ctx, launcher);
+        ncclUniqueId ncclId = future.get_result<ncclUniqueId>();
+        IndexSpace task_is = get_or_create_task_is(view);
+        ArgumentMap argmap;
+        IndexLauncher index_launcher(
+            NCCL_INIT_COMMS_TASK_ID,
+            task_is,
+            TaskArgument(&ncclId, sizeof(ncclUniqueId)),
+            argmap,
+            Predicate::TRUE_PRED,
+            false /*must*/,
+            0 /*mapper_id*/,
+            view.hash() /*MappingTagID*/);
+        index_launcher.concurrent = true;
+        FutureMap fm = runtime->execute_index_space(ctx, index_launcher);
+        fm.wait_all_results();
+        int idx = 0;
+        Domain task_domain = runtime->get_index_space_domain(ctx, task_is);
+        ncclComm_t *nccl_comms_peft =
+            (ncclComm_t *)malloc(sizeof(ncclComm_t) * task_domain.get_volume());
+        for (Domain::DomainPointIterator it(task_domain); it; it++, idx++) {
+          nccl_comms_peft[idx] = fm.get_result<ncclComm_t>(*it);
+        }
+        view_hash_to_nccl_comms_peft[view.hash()] = nccl_comms_peft;
       }
     }
   }
