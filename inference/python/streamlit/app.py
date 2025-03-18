@@ -122,7 +122,6 @@ with st.sidebar:
         st.header("🏋️‍♂️ LoRA Finetuning")
         
         # Hugging Face token input
-        # hf_token = st.text_input("Enter your Hugging Face token:", type="password")
         if 'hf_token' in st.session_state.keys():
             st.success('HF token already provided!', icon='✅')
             hf_token = st.session_state.hf_token
@@ -168,44 +167,58 @@ with st.sidebar:
             split_select = split_placeholder.selectbox("Select dataset split:", ["..."], disabled=True)
             column_select = column_placeholder.selectbox("Select column for finetuning:", ["..."], disabled=True)
 
-            print("dataset: " + str(st.session_state.selected_dataset))
-            print(dataset_name)
             if dataset_name and dataset_name != st.session_state.selected_dataset:
                 st.session_state.selected_dataset = dataset_name
                 # Get config names
                 response = requests.get(f"{GET_DATASET_CONFIGS_URL}?dataset_name={dataset_name}")
+                result = response.json()
+                st.session_state.selected_config = None # Reset selected_config
                 if response.status_code == 200: # Get config_names
-                    st.session_state.config_names = response.json()["config_names"]
-                    st.session_state.selected_config = None
+                    st.session_state.config_names = result["config_names"]
+                else:
+                    st.session_state.config_names = None
+                    config_select = config_placeholder.selectbox("Select config name:", ["Error"], disabled=True)
+                    st.error(f"{result['detail']}")
+            selected_config = []
+            if "config_names" in st.session_state and st.session_state["config_names"]:
+                selected_config = config_placeholder.selectbox("Select config name:", st.session_state.config_names, disabled=False)
             
-            selected_config = config_placeholder.selectbox("Select config name:", st.session_state.config_names, disabled=False) if "config_names" in st.session_state else None
-            
-            print("session: " + str(st.session_state.selected_config))
-            print(selected_config)
-            if selected_config and selected_config != st.session_state.selected_config:
+            if dataset_name and selected_config != st.session_state.selected_config:
                 st.session_state.selected_config = selected_config
                 split_url = f"{GET_DATASET_SPLITS_URL}?dataset_name={dataset_name}"
                 if selected_config:  # Ensure config_name is added only if it's not None
                     split_url += f"&config_name={selected_config}"
                 # Get splits
                 response = requests.get(split_url)
+                result = response.json()
+                st.session_state.selected_split = None 
                 if response.status_code == 200:
-                    st.session_state.splits = response.json()["splits"]
-                    st.session_state.selected_split = None 
-            
-            selected_split = split_placeholder.selectbox("Select dataset split:", st.session_state.splits, disabled=False) if "splits" in st.session_state else None
+                    st.session_state.splits = result["splits"]
+                else:
+                    st.session_state.splits = None
+                    split_select = split_placeholder.selectbox("Select dataset split:", ["Error"], disabled=True)
+                    st.error(f"{result['detail']}")
+            selected_split = []
+            if "splits" in st.session_state and st.session_state["splits"]:
+                selected_split = split_placeholder.selectbox("Select dataset split:", st.session_state.splits, disabled=False) if "splits" in st.session_state else None
 
-            if selected_split and selected_split != st.session_state.selected_split:
+            if dataset_name and selected_split != st.session_state.selected_split:
                 st.session_state.selected_split = selected_split
                 columns_url = f"{GET_DATASET_COLUMNS_URL}?dataset_name={dataset_name}&split={selected_split}"
                 if selected_config:  # Add only if selected_config is not None
                     columns_url += f"&config_name={selected_config}"
                 # Get available columns
                 response = requests.get(columns_url)
+                result = response.json()
                 if response.status_code == 200:
-                    st.session_state.columns = response.json()["columns"]
-            
-            selected_column = column_placeholder.selectbox("Select column for finetuning:", st.session_state.columns, disabled=False) if "columns" in st.session_state else None
+                    st.session_state.columns = result["columns"]
+                else:
+                    st.session_state.columns = None
+                    column_select = column_placeholder.selectbox("Select column for finetuning:", ["Error"], disabled=True)
+                    st.error(f"Failed to get dataset columns: {result['detail']}")
+            selected_column = []
+            if "columns" in st.session_state and st.session_state["columns"]:
+                selected_column = column_placeholder.selectbox("Select column for finetuning:", st.session_state.columns, disabled=False) if "columns" in st.session_state else None
 
         # Finetuning parameters
         st.subheader("Finetuning parameters")
@@ -217,7 +230,7 @@ with st.sidebar:
         momentum = st.number_input("Momentum", min_value=0.0, max_value=1.0, value=0.0, step=0.01)
         weight_decay = st.number_input("Weight decay", min_value=0.0, max_value=1.0, value=0.0, step=0.01)
         nesterov = st.checkbox("Nesterov")
-        max_steps = st.number_input("Max steps", min_value=1000, max_value=100000, value=10000, step=1000)
+        max_training_epochs = st.number_input("Max training epochs", min_value=1, max_value=5000, value=10, step=50)
 
         # Upload model information
         st.subheader("Upload to Hugging Face")
@@ -249,7 +262,7 @@ with st.sidebar:
                     "momentum": momentum,
                     "weight_decay": weight_decay,
                     "nesterov": nesterov,
-                    "max_steps": max_steps,
+                    "max_training_epochs": max_training_epochs,
                 }
                 
                 if dataset_option == "Upload JSON":

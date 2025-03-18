@@ -51,14 +51,6 @@ class Message(BaseModel):
     role: str
     content: str
 
-
-# class ChatCompletionRequest(BaseModel):
-#     model: Optional[str] = "mock-gpt-model"
-#     messages: List[Message]
-#     max_tokens: Optional[int] = 512
-#     temperature: Optional[float] = 0.1
-#     stream: Optional[bool] = False
-
 # For inference request
 class ChatCompletionRequest(BaseModel):
     max_new_tokens: Optional[int] = 1024
@@ -83,7 +75,7 @@ class FinetuneRequest(BaseModel):
     momentum: float
     weight_decay: float
     nesterov: bool = False
-    max_steps: int = 10000
+    max_training_epochs: int = 2
 
 # For uploading model request
 class UploadModelRequest(BaseModel):
@@ -149,7 +141,6 @@ def get_configs():
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,
             "full_precision": False,
-            # "full_precision": True,
             "prompt": "",
             "output_file": "",
         }
@@ -420,8 +411,7 @@ async def finetune(request: FinetuneRequest):
             ff.RequestType.REQ_FINETUNING,
             peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
             dataset_filepath=file_path,
-            # max_training_steps=request.max_steps,
-            # max_training_steps=10,
+            max_training_epochs=request.max_training_epochs,
         )
 
         results = llm.generate(finetuning_request)
