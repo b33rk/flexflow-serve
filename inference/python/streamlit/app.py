@@ -62,6 +62,8 @@ def generate_llama3_response(prompt_input):
     else:
         return f"{result['detail']}"
 
+finetune_result = None
+
 # Sidebar
 with st.sidebar:
     st.title('🚀 FlexLLM Server')
@@ -147,51 +149,63 @@ with st.sidebar:
                 dataset = json.load(uploaded_file)
                 st.success("Dataset uploaded successfully!")
         else:
+            if "selected_dataset" not in st.session_state:
+                st.session_state.selected_dataset = None
+                st.session_state.selected_config = None
+                st.session_state.selected_split = None
+
             dataset_name = st.text_input(
                 "Enter Hugging Face dataset name:",
                 help="The dataset name should follow the format 'username/dataset-name'"
             )
-            selected_config = None
-            selected_split = None
-            selected_column = None
 
             # Initialize placeholders with disabled state
             config_placeholder = st.empty()
             split_placeholder = st.empty()
             column_placeholder = st.empty()
-
             # Disable UI elements initially
             config_select = config_placeholder.selectbox("Select config name:", ["..."], disabled=True)
             split_select = split_placeholder.selectbox("Select dataset split:", ["..."], disabled=True)
             column_select = column_placeholder.selectbox("Select column for finetuning:", ["..."], disabled=True)
 
-            if dataset_name:
+            print("dataset: " + str(st.session_state.selected_dataset))
+            print(dataset_name)
+            if dataset_name and dataset_name != st.session_state.selected_dataset:
+                st.session_state.selected_dataset = dataset_name
                 # Get config names
                 response = requests.get(f"{GET_DATASET_CONFIGS_URL}?dataset_name={dataset_name}")
                 if response.status_code == 200: # Get config_names
-                    config_names = response.json()["config_names"]
-                    
-                    selected_config = None
-                    if config_names:
-                        selected_config = config_placeholder.selectbox("Select config name:", config_names, disabled=False)
-                    split_url = f"{GET_DATASET_SPLITS_URL}?dataset_name={dataset_name}"
-                    if selected_config:  # Ensure config_name is added only if it's not None
-                        split_url += f"&config_name={selected_config}"
-                    # Get splits
-                    response = requests.get(split_url)
-                    if response.status_code == 200:
-                        splits = response.json()["splits"]
-                        selected_split = split_placeholder.selectbox("Select dataset split:", splits, disabled=False)
+                    st.session_state.config_names = response.json()["config_names"]
+                    st.session_state.selected_config = None
+            
+            selected_config = config_placeholder.selectbox("Select config name:", st.session_state.config_names, disabled=False) if "config_names" in st.session_state else None
+            
+            print("session: " + str(st.session_state.selected_config))
+            print(selected_config)
+            if selected_config and selected_config != st.session_state.selected_config:
+                st.session_state.selected_config = selected_config
+                split_url = f"{GET_DATASET_SPLITS_URL}?dataset_name={dataset_name}"
+                if selected_config:  # Ensure config_name is added only if it's not None
+                    split_url += f"&config_name={selected_config}"
+                # Get splits
+                response = requests.get(split_url)
+                if response.status_code == 200:
+                    st.session_state.splits = response.json()["splits"]
+                    st.session_state.selected_split = None 
+            
+            selected_split = split_placeholder.selectbox("Select dataset split:", st.session_state.splits, disabled=False) if "splits" in st.session_state else None
 
-                        if selected_split:
-                            columns_url = f"{GET_DATASET_COLUMNS_URL}?dataset_name={dataset_name}&split={selected_split}"
-                            if selected_config:  # Add only if selected_config is not None
-                                columns_url += f"&config_name={selected_config}"
-                            # Get available columns
-                            response = requests.get(columns_url)
-                            if response.status_code == 200:
-                                columns = response.json()["columns"]
-                                selected_column = column_placeholder.selectbox("Select column for finetuning:", columns, disabled=False)
+            if selected_split and selected_split != st.session_state.selected_split:
+                st.session_state.selected_split = selected_split
+                columns_url = f"{GET_DATASET_COLUMNS_URL}?dataset_name={dataset_name}&split={selected_split}"
+                if selected_config:  # Add only if selected_config is not None
+                    columns_url += f"&config_name={selected_config}"
+                # Get available columns
+                response = requests.get(columns_url)
+                if response.status_code == 200:
+                    st.session_state.columns = response.json()["columns"]
+            
+            selected_column = column_placeholder.selectbox("Select column for finetuning:", st.session_state.columns, disabled=False) if "columns" in st.session_state else None
 
         # Finetuning parameters
         st.subheader("Finetuning parameters")
@@ -256,12 +270,6 @@ with st.sidebar:
                 if finetune_response.status_code == 200:
                     st.success("Finetuning completed successfully!")
 
-                    # Print out the number of entries
-                    total_entries = finetune_result["total_entries"]
-                    remaining_entries = finetune_result["remaining_entries"]
-                    st.write(f"Dataset loaded: {total_entries} entries found.")
-                    st.write(f"{remaining_entries} entries remaining after filtering with max sequence length.")
-
                     # Start uploading model to hf
                     upload_request_data = {
                         "token": hf_token,
@@ -307,4 +315,9 @@ if page == "Chat":
         message = {"role": "assistant", "content": full_response}
         st.session_state.messages.append(message)
 elif page == "Finetune":
-    st.write("Use the sidebar to configure and start finetuning.")
+    # Print out the number of entries
+    if finetune_result and finetune_result.get("total_entries") and finetune_result.get("remaining_entries"):
+        st.write(f"Dataset loaded: {finetune_result['total_entries']} entries found.")
+        st.write(f"{finetune_result['remaining_entries']} entries remaining after filtering with max sequence length.")
+    else:
+        st.write("Use the sidebar to configure and start finetuning.")

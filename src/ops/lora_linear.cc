@@ -777,6 +777,19 @@ void Kernels::LoraLinear::save_peft_weights_if_needed(LoraLinearMeta *m,
     return;
   }
   if (bc->requestsInfo[i].optimizer_tasks.save_updated_weights) {
+    if (shard_id == 0) {
+      // Save LoRA config to file
+      std::string config_path = join_path({
+        lora_config.cache_folder,
+        "finetuned_models",
+        lora_config.peft_model_id,
+        "config",
+        "ff_config.json"
+      });
+      fs::create_directories(fs::path(config_path).parent_path());
+      lora_config.serialize_to_json_file(config_path);
+    }
+    
     std::string weight_export_folder = join_path({
         lora_config.cache_folder,
         "finetuned_models",
