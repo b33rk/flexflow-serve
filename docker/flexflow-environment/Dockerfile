@@ -115,6 +115,8 @@ RUN pip3 install tensorflow notebook
 # PEFT-related
 RUN pip3 install scipy bitsandbytes datasets accelerate loralib triton peft pytest
 RUN pip3 install streamlit
+# flash-attn
+RUN pip3 install flash-attn
 
 # Install Rust
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
