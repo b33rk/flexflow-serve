@@ -819,7 +819,7 @@ args = parser.parse_args()
 if __name__ == "__main__":
     hf_config = AutoConfig.from_pretrained(args.model_name)
     alignment_class = None
-    if hf_config.architectures[0] == "LlamaForCausalLM":
+    if hf_config.architectures[0] == "LlamaForCausalLM" or hf_config.architectures[0] == "Qwen2ForCausalLM" or hf_config.architectures[0] == "MistralForCausalLM":
         alignment_class = LlamaAlignmentTest(hf_config, tp_degree=args.tensor_parallelism_degree)
     elif hf_config.architectures[0] == "OPTForCausalLM":
         alignment_class = OPTAlignmentTest(hf_config, tp_degree=args.tensor_parallelism_degree)

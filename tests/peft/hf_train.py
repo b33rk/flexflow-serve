@@ -76,19 +76,10 @@ def main():
     )
 
     # Get Tokenizer
-    hf_config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-    hf_arch = getattr(hf_config, "architectures")[0]
-    if hf_arch == "LLaMAForCausalLM" or hf_arch == "LlamaForCausalLM":
-        tokenizer = LlamaTokenizer.from_pretrained(
-            model_name,
-            use_fast=True,
-            torch_dtype=torch.float32 if use_full_precision else torch.float16,
-        )
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            torch_dtype=torch.float32 if use_full_precision else torch.float16,
-        )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name,
+        torch_dtype=torch.float32 if use_full_precision else torch.float16,
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = "[PAD]"
         tokenizer.padding_side = "left"

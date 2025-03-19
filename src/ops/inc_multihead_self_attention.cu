@@ -39,16 +39,6 @@ namespace Kernels {
 namespace IncMultiHeadAttention {
 
 // flashinfer & paged attention
-// using flashinfer::BatchDecodeHandler;
-// using flashinfer::BatchDecodeWithPagedKVCacheWrapperDispatched;
-// using flashinfer::BatchPrefillHandler;
-// using flashinfer::BatchPrefillWithPagedKVCacheWrapperDispatched;
-// using flashinfer::LogitsPostHook;
-// using flashinfer::MaskMode;
-// using flashinfer::paged_kv_t;
-// using flashinfer::PageStorage;
-// using flashinfer::PosEncodingMode;
-// using flashinfer::QKVLayout;
 using namespace flashinfer;
 
 std::string get_fwd_dbg_folder(IncMultiHeadSelfAttentionMeta const *m,
