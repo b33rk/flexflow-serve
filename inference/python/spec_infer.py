@@ -133,17 +133,19 @@ def main():
     for ssm in ssms:
         ssm.compile(
             generation_config,
-            max_requests_per_batch = configs_dict.get("max_requests_per_batch", 4),
-            max_seq_length = configs_dict.get("max_seq_length", 256),
-            max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 64),
+            max_requests_per_batch=configs_dict.get("max_requests_per_batch", 4),
+            max_seq_length=configs_dict.get("max_seq_length", 256),
+            max_tokens_per_batch=configs_dict.get("max_tokens_per_batch", 64),
+            num_kv_cache_slots=configs_dict.get("num_kv_cache_slots", -1),
         )
 
     # Compile the LLM for inference and load the weights into memory
     llm.compile(
         generation_config,
-        max_requests_per_batch = configs_dict.get("max_requests_per_batch", 4),
-        max_seq_length = configs_dict.get("max_seq_length", 256),
-        max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 64),
+        max_requests_per_batch=configs_dict.get("max_requests_per_batch", 4),
+        max_seq_length=configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch=configs_dict.get("max_tokens_per_batch", 64),
+        num_kv_cache_slots=configs_dict.get("num_kv_cache_slots", -1),
         ssms=ssms,
     )
 

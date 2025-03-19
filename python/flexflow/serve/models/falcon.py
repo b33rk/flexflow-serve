@@ -65,21 +65,19 @@ class FalconConfig:
 class FlexFlowFalcon(FlexFlowModel):
     def __init__(
         self,
-        mode,
-        generation_config,
-        ffconfig,
-        hf_config,
-        data_type,
-        weights_filepath="",
-        tokenizer_filepath="",
+        ffmodel: FFModel,
+        mode: InferenceMode,
+        generation_config: GenerationConfig,
+        ffconfig: FFConfig,
+        hf_config: any,
+        data_type: DataType,
     ):
+        self.ffmodel = ffmodel
         self.mode = mode
         self.generation_config = generation_config
         self.ffconfig = ffconfig
         self.data_type = data_type
         self.falcon_config = FalconConfig(hf_config)
-        self.weights_filepath = weights_filepath
-        self.tokenizer_filepath = tokenizer_filepath
         self.maxint = 2**31 - 1
 
         # Sanity checks
@@ -94,31 +92,27 @@ class FlexFlowFalcon(FlexFlowModel):
             raise ValueError(
                 f"Number of q attention heads ({self.falcon_config.n_head}) is smaller, or not divisible by tensor parallelism degree ({self.ffconfig.tensor_parallelism_degree})"
             )
-
+        assert self.falcon_config.hidden_size % self.falcon_config.n_head == 0
+        self.head_dim = self.falcon_config.hidden_size // self.falcon_config.n_head
+        self.tot_num_heads = (
+            self.falcon_config.n_head + 2 * self.falcon_config.n_head_kv
+        )
         self.build_model()
 
     def build_model(self):
-        ffmodel = FFModel(self.ffconfig)
         is_spec = self.mode != InferenceMode.INC_DECODING_MODE
         self.rm = RequestManager()
-        self.max_requests_per_batch = self.rm.get_max_requests_per_batch()
-        self.max_sequence_length = self.rm.get_max_sequence_length()
-        self.max_tokens_per_batch = self.rm.get_max_tokens_per_batch()
+        batch_tensor_num_tokens = self.rm.get_max_tokens_per_batch()
         if is_spec:
-            self.max_tokens_per_batch += self.rm.get_max_spec_tree_token_num()
-            self.max_sequence_length += self.rm.get_max_spec_tree_token_num()
+            batch_tensor_num_tokens = self.rm.max_verify_tokens_per_batch()
+        elif self.ffconfig.enable_peft_finetuning:
+            batch_tensor_num_tokens = self.rm.get_max_sequence_length()
 
-        ffmodel.set_num_kv_cache_pages(
-            compute_num_kv_cache_pages_needed(
-                self.max_sequence_length, self.max_requests_per_batch, is_spec
-            )
-        )
-
-        tokens_dims = [self.max_tokens_per_batch, 1]
-        input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
+        tokens_dims = [batch_tensor_num_tokens, 1]
+        input_tensor = self.ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
 
         embed_init = UniformInitializer(random.randint(0, self.maxint), 0, 0)
-        token = ffmodel.embedding(
+        token = self.ffmodel.embedding(
             input_tensor,
             self.falcon_config.vocab_size,
             self.falcon_config.hidden_size,
@@ -133,10 +127,10 @@ class FlexFlowFalcon(FlexFlowModel):
         ]
 
         for i in range(self.falcon_config.n_layer):
-            ffmodel.set_transformer_layer_id(i)
+            self.ffmodel.set_transformer_layer_id(i)
 
             if i == 0:
-                att_norm = ffmodel.layer_norm(
+                att_norm = self.ffmodel.layer_norm(
                     token,
                     axes,
                     True,
@@ -144,7 +138,7 @@ class FlexFlowFalcon(FlexFlowModel):
                     name=f"layers.{i}.input_layernorm",
                 )
             else:
-                token, att_norm = ffmodel.residual_layer_norm(
+                token, att_norm = self.ffmodel.residual_layer_norm(
                     token,
                     mha,
                     mlp_output,
@@ -155,26 +149,22 @@ class FlexFlowFalcon(FlexFlowModel):
                     name=f"layers.{i}.input_layernorm",
                 )
 
-            assert self.falcon_config.hidden_size % self.falcon_config.n_head == 0
-            head_dim = self.falcon_config.hidden_size // self.falcon_config.n_head
-
-            qkv_proj = ffmodel.dense(
+            qkv_proj = self.ffmodel.dense(
                 att_norm,
-                head_dim
-                * (self.falcon_config.n_head + 2 * self.falcon_config.n_head_kv),
+                self.head_dim * self.tot_num_heads,
                 ActiMode.AC_MODE_NONE,
                 False,
                 name=f"layers.{i}.self_attention.qkv_proj",
             )
 
             if self.mode == InferenceMode.BEAM_SEARCH_MODE:
-                o_proj = ffmodel.spec_inc_multihead_self_attention(
+                o_proj = self.ffmodel.spec_inc_multihead_self_attention(
                     qkv_proj,
                     self.falcon_config.hidden_size,
                     self.falcon_config.n_head,
                     self.falcon_config.n_head_kv,
-                    head_dim,
-                    head_dim,
+                    self.head_dim,
+                    self.head_dim,
                     0.0,  # dropout
                     False,  # add_zero_attn
                     DataType.DT_NONE,  # data_type
@@ -183,13 +173,13 @@ class FlexFlowFalcon(FlexFlowModel):
                     name=f"layers.{i}.self_attention",
                 )
             elif self.mode == InferenceMode.TREE_VERIFY_MODE:
-                o_proj = ffmodel.inc_multihead_self_attention_verify(
+                o_proj = self.ffmodel.inc_multihead_self_attention_verify(
                     qkv_proj,
                     self.falcon_config.hidden_size,
                     self.falcon_config.n_head,
                     self.falcon_config.n_head_kv,
-                    self.falcon_config.hidden_size // self.falcon_config.n_head,
-                    self.falcon_config.hidden_size // self.falcon_config.n_head,
+                    self.head_dim,
+                    self.head_dim,
                     0.0,  # dropout
                     False,  # add_zero_attn
                     DataType.DT_NONE,  # data_type
@@ -198,13 +188,13 @@ class FlexFlowFalcon(FlexFlowModel):
                     name=f"layers.{i}.self_attention",
                 )
             elif self.mode == InferenceMode.INC_DECODING_MODE:
-                o_proj = ffmodel.inc_multihead_self_attention(
+                o_proj = self.ffmodel.inc_multihead_self_attention(
                     qkv_proj,
                     self.falcon_config.hidden_size,
                     self.falcon_config.n_head,
                     self.falcon_config.n_head_kv,
-                    self.falcon_config.hidden_size // self.falcon_config.n_head,
-                    self.falcon_config.hidden_size // self.falcon_config.n_head,
+                    self.head_dim,
+                    self.head_dim,
                     0.0,  # dropout
                     False,  # add_zero_attn
                     DataType.DT_NONE,  # data_type
@@ -215,7 +205,7 @@ class FlexFlowFalcon(FlexFlowModel):
             else:
                 assert False
 
-            mha = ffmodel.dense(
+            mha = self.ffmodel.dense(
                 o_proj,
                 self.falcon_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
@@ -223,15 +213,15 @@ class FlexFlowFalcon(FlexFlowModel):
                 name=f"layers.{i}.self_attention.o_proj",
             )
 
-            dense_h_to_4h = ffmodel.dense(
+            dense_h_to_4h = self.ffmodel.dense(
                 att_norm,
                 self.falcon_config.hidden_size * 4,
                 ActiMode.AC_MODE_NONE,
                 False,
                 name=f"layers.{i}.mlp.dense_h_to_4h",
             )
-            dense_h_to_4h = ffmodel.gelu(dense_h_to_4h)
-            mlp_output = ffmodel.dense(
+            dense_h_to_4h = self.ffmodel.gelu(dense_h_to_4h)
+            mlp_output = self.ffmodel.dense(
                 dense_h_to_4h,
                 self.falcon_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
@@ -239,7 +229,7 @@ class FlexFlowFalcon(FlexFlowModel):
                 name=f"layers.{i}.mlp.dense_4h_to_h",
             )
 
-        _, ln_f = ffmodel.residual_layer_norm(
+        _, ln_f = self.ffmodel.residual_layer_norm(
             token,
             mha,
             mlp_output,
@@ -249,7 +239,7 @@ class FlexFlowFalcon(FlexFlowModel):
             self.falcon_config.layer_norm_epsilon,
             name="ln_f",
         )
-        lm_head = ffmodel.dense(
+        lm_head = self.ffmodel.dense(
             ln_f,
             self.falcon_config.vocab_size,
             ActiMode.AC_MODE_NONE,
@@ -258,26 +248,24 @@ class FlexFlowFalcon(FlexFlowModel):
         )
 
         if self.mode == InferenceMode.BEAM_SEARCH_MODE:
-            softmax = ffmodel.softmax(lm_head, -1)
-            # output = ffmodel.beam_top_k(softmax, self.falcon_config.max_beam_width, False)
-            output = ffmodel.argmax(softmax, True)
+            softmax = self.ffmodel.softmax(lm_head, -1)
+            # output = self.ffmodel.beam_top_k(softmax, self.falcon_config.max_beam_width, False)
+            output = self.ffmodel.argmax(softmax, True)
         else:
             if self.generation_config.do_sample:
-                dense = ffmodel.scalar_true_divide(
+                dense = self.ffmodel.scalar_true_divide(
                     lm_head, self.generation_config.temperature, False
                 )
-                softmax = ffmodel.softmax(dense, -1)
-                output = ffmodel.sampling(softmax, self.generation_config.topp)
+                softmax = self.ffmodel.softmax(dense, -1)
+                output = self.ffmodel.sampling(softmax, self.generation_config.topp)
             else:
-                # output = ffmodel.arg_top_k(lm_head, 1, False)
-                softmax = ffmodel.softmax(lm_head, -1)
-                output = ffmodel.argmax(softmax, False)
+                # output = self.ffmodel.arg_top_k(lm_head, 1, False)
+                softmax = self.ffmodel.softmax(lm_head, -1)
+                output = self.ffmodel.argmax(softmax, False)
 
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
-            ffmodel.add_lora_layers(["dense_h_to_4h", "dense_4h_to_h"])
-
-        self.ffmodel = ffmodel
+            self.ffmodel.add_lora_layers(["dense_h_to_4h", "dense_4h_to_h"])
 
     # TODO: finish this
     def convert_hf_weight_name(name):

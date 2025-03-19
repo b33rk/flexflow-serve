@@ -36,21 +36,19 @@ class STARCODERConfig:
 class FlexFlowSTARCODER(FlexFlowModel):
     def __init__(
         self,
-        mode,
-        generation_config,
-        ffconfig,
-        hf_config,
-        data_type,
-        weights_filepath="",
-        tokenizer_filepath="",
+        ffmodel: FFModel,
+        mode: InferenceMode,
+        generation_config: GenerationConfig,
+        ffconfig: FFConfig,
+        hf_config: any,
+        data_type: DataType,
     ):
+        self.ffmodel = ffmodel
         self.mode = mode
         self.generation_config = generation_config
         self.ffconfig = ffconfig
         self.data_type = data_type
         self.starcoder_config = STARCODERConfig(hf_config)
-        self.weights_filepath = weights_filepath
-        self.tokenizer_filepath = tokenizer_filepath
         self.maxint = 2**31 - 1
 
         # Sanity checks
@@ -78,30 +76,21 @@ class FlexFlowSTARCODER(FlexFlowModel):
         self.build_model()
 
     def build_model(self):
-        ffmodel = FFModel(self.ffconfig)
-
         is_spec = self.mode != InferenceMode.INC_DECODING_MODE
         self.rm = RequestManager()
-        self.max_requests_per_batch = self.rm.get_max_requests_per_batch()
-        self.max_sequence_length = self.rm.get_max_sequence_length()
-        self.max_tokens_per_batch = self.rm.get_max_tokens_per_batch()
+        batch_tensor_num_tokens = self.rm.get_max_tokens_per_batch()
         if is_spec:
-            self.max_tokens_per_batch += self.rm.get_max_spec_tree_token_num()
-            self.max_sequence_length += self.rm.get_max_spec_tree_token_num()
+            batch_tensor_num_tokens = self.rm.max_verify_tokens_per_batch()
+        elif self.ffconfig.enable_peft_finetuning:
+            batch_tensor_num_tokens = self.rm.get_max_sequence_length()
 
-        ffmodel.set_num_kv_cache_pages(
-            compute_num_kv_cache_pages_needed(
-                self.max_sequence_length, self.max_requests_per_batch, is_spec
-            )
-        )
-
-        tokens_dims = [self.max_tokens_per_batch, 1]
-        input_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
-        position_tensor = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
+        tokens_dims = [batch_tensor_num_tokens, 1]
+        input_tensor = self.ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
+        position_tensor = self.ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
 
         embed_init = UniformInitializer(random.randint(0, self.maxint), 0, 0)
-        ffmodel.set_position_offset(0)
-        token = ffmodel.embedding(
+        self.ffmodel.set_position_offset(0)
+        token = self.ffmodel.embedding(
             input_tensor,
             self.starcoder_config.vocab_size,
             self.starcoder_config.hidden_size,
@@ -111,7 +100,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
             embed_init,
             name="wte",
         )
-        positional_embedding = ffmodel.embedding(
+        positional_embedding = self.ffmodel.embedding(
             position_tensor,
             self.starcoder_config.max_position_embeddings,
             self.starcoder_config.hidden_size,
@@ -127,9 +116,9 @@ class FlexFlowSTARCODER(FlexFlowModel):
         ]
 
         for i in range(self.starcoder_config.num_hidden_layers):
-            ffmodel.set_transformer_layer_id(i)
+            self.ffmodel.set_transformer_layer_id(i)
 
-            hidden_states, ln_1 = ffmodel.residual_layer_norm(
+            hidden_states, ln_1 = self.ffmodel.residual_layer_norm(
                 token if i == 0 else residual,
                 positional_embedding if i == 0 else c_proj,
                 None,
@@ -140,7 +129,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
                 name=f"layers.{i}.ln_1",
             )
 
-            qkv_proj = ffmodel.dense(
+            qkv_proj = self.ffmodel.dense(
                 ln_1,
                 3 * self.starcoder_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
@@ -149,7 +138,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
             )
 
             assert self.mode == InferenceMode.INC_DECODING_MODE
-            o_proj = ffmodel.inc_multihead_self_attention(
+            o_proj = self.ffmodel.inc_multihead_self_attention(
                 qkv_proj,
                 self.starcoder_config.hidden_size,
                 self.starcoder_config.num_attention_heads,
@@ -166,7 +155,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
                 name=f"layers.{i}.attn.c_attn",
             )
 
-            mha = ffmodel.dense(
+            mha = self.ffmodel.dense(
                 o_proj,
                 self.starcoder_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
@@ -174,7 +163,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
                 name=f"layers.{i}.self_attn.o_proj",
             )
 
-            residual, l2_norm = ffmodel.residual_layer_norm(
+            residual, l2_norm = self.ffmodel.residual_layer_norm(
                 hidden_states,
                 mha,
                 None,
@@ -188,15 +177,15 @@ class FlexFlowSTARCODER(FlexFlowModel):
 
             # mlp
 
-            c_fc = ffmodel.dense(
+            c_fc = self.ffmodel.dense(
                 l2_norm,
                 self.starcoder_config.intermediate_size,
                 ActiMode.AC_MODE_NONE,
                 True,
                 name=f"layers.{i}.mlp.c_fc",
             )
-            activation = ffmodel.gelu(c_fc, False)
-            c_proj = ffmodel.dense(
+            activation = self.ffmodel.gelu(c_fc, False)
+            c_proj = self.ffmodel.dense(
                 activation,
                 self.starcoder_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
@@ -204,7 +193,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
                 name=f"layers.{i}.mlp.c_proj",
             )
 
-        _, ln_f = ffmodel.residual_layer_norm(
+        _, ln_f = self.ffmodel.residual_layer_norm(
             residual,
             c_proj,
             None,
@@ -214,7 +203,7 @@ class FlexFlowSTARCODER(FlexFlowModel):
             self.starcoder_config.layer_norm_epsilon,
             name=f"ln_f",
         )
-        lm_head = ffmodel.dense(
+        lm_head = self.ffmodel.dense(
             ln_f,
             self.starcoder_config.vocab_size,
             ActiMode.AC_MODE_NONE,
@@ -223,20 +212,18 @@ class FlexFlowSTARCODER(FlexFlowModel):
         )
 
         if self.generation_config.do_sample:
-            dense = ffmodel.scalar_true_divide(
+            dense = self.ffmodel.scalar_true_divide(
                 lm_head, self.generation_config.temperature, False
             )
-            softmax = ffmodel.softmax(dense, -1)
-            output = ffmodel.sampling(softmax, self.generation_config.topp)
+            softmax = self.ffmodel.softmax(dense, -1)
+            output = self.ffmodel.sampling(softmax, self.generation_config.topp)
         else:
-            softmax = ffmodel.softmax(lm_head, -1)
-            output = ffmodel.argmax(softmax, False)
+            softmax = self.ffmodel.softmax(lm_head, -1)
+            output = self.ffmodel.argmax(softmax, False)
 
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
-            ffmodel.add_lora_layers(["c_fc", "c_proj"])
-
-        self.ffmodel = ffmodel
+            self.ffmodel.add_lora_layers(["c_fc", "c_proj"])
 
     def convert_hf_model(model, dst_folder):
         os.makedirs(dst_folder, exist_ok=True)

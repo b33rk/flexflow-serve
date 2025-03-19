@@ -110,11 +110,14 @@ def main():
     enable_peft_finetuning = len(configs.finetuning_dataset) > 0
     llm.compile(
         generation_config,
-        max_requests_per_batch = configs_dict.get("max_requests_per_batch", 1) + enable_peft_finetuning,
-        max_seq_length = configs_dict.get("max_seq_length", 256),
-        max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 128),
-        max_concurrent_adapters = configs_dict.get("max_concurrent_adapters", 1) + enable_peft_finetuning,
-        enable_peft_finetuning = enable_peft_finetuning,
+        max_requests_per_batch=configs_dict.get("max_requests_per_batch", 1)
+        + enable_peft_finetuning,
+        max_seq_length=configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch=configs_dict.get("max_tokens_per_batch", 128),
+        num_kv_cache_slots=configs_dict.get("num_kv_cache_slots", -1),
+        max_concurrent_adapters=configs_dict.get("max_concurrent_adapters", 1)
+        + enable_peft_finetuning,
+        enable_peft_finetuning=enable_peft_finetuning,
     )
 
     llm.start_server()

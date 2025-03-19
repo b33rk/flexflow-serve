@@ -32,22 +32,19 @@ class MPTConfig:
 class FlexFlowMPT(FlexFlowModel):
     def __init__(
         self,
-        mode,
-        generation_config,
-        ffconfig,
-        hf_config,
-        data_type,
-        max_tokens_per_batch,
-        weights_filepath="",
-        tokenizer_filepath="",
+        ffmodel: FFModel,
+        mode: InferenceMode,
+        generation_config: GenerationConfig,
+        ffconfig: FFConfig,
+        hf_config: any,
+        data_type: DataType,
     ):
+        self.ffmodel = ffmodel
         self.mode = mode
         self.generation_config = generation_config
         self.ffconfig = ffconfig
         self.data_type = data_type
         self.mpt_config = MPTConfig(hf_config)
-        self.weights_filepath = weights_filepath
-        self.tokenizer_filepath = tokenizer_filepath
         self.maxint = 2**31 - 1
 
         # Sanity checks
@@ -64,31 +61,28 @@ class FlexFlowMPT(FlexFlowModel):
             raise ValueError(
                 f"Number of attention heads ({self.mpt_config.n_heads}) is smaller, or not divisible by tensor parallelism degree ({self.ffconfig.tensor_parallelism_degree})"
             )
+
+        assert (
+            self.mpt_config.hidden_size % self.ffconfig.tensor_parallelism_degree == 0
+        )
+        self.head_dim = self.mpt_config.hidden_size // self.mpt_config.n_heads
+        self.tot_num_heads = 3 * self.mpt_config.n_heads
         self.build_model()
 
     def build_model(self):
-        ffmodel = FFModel(self.ffconfig)
-
         is_spec = self.mode != InferenceMode.INC_DECODING_MODE
         self.rm = RequestManager()
-        self.max_requests_per_batch = self.rm.get_max_requests_per_batch()
-        self.max_sequence_length = self.rm.get_max_sequence_length()
-        self.max_tokens_per_batch = self.rm.get_max_tokens_per_batch()
+        batch_tensor_num_tokens = self.rm.get_max_tokens_per_batch()
         if is_spec:
-            self.max_tokens_per_batch += self.rm.get_max_spec_tree_token_num()
-            self.max_sequence_length += self.rm.get_max_spec_tree_token_num()
+            batch_tensor_num_tokens = self.rm.max_verify_tokens_per_batch()
+        elif self.ffconfig.enable_peft_finetuning:
+            batch_tensor_num_tokens = self.rm.get_max_sequence_length()
 
-        ffmodel.set_num_kv_cache_pages(
-            compute_num_kv_cache_pages_needed(
-                self.max_sequence_length, self.max_requests_per_batch, is_spec
-            )
-        )
-
-        tokens_dims = [self.max_tokens_per_batch, 1]
-        input = ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
+        tokens_dims = [batch_tensor_num_tokens, 1]
+        input = self.ffmodel.create_tensor(tokens_dims, DataType.DT_INT32)
 
         embed_init = UniformInitializer(random.randint(0, self.maxint), 0, 0)
-        hidden_states = ffmodel.embedding(
+        hidden_states = self.ffmodel.embedding(
             input,
             self.mpt_config.vocab_size,
             self.mpt_config.hidden_size,
@@ -104,10 +98,10 @@ class FlexFlowMPT(FlexFlowModel):
         ]
 
         for i in range(self.mpt_config.n_layers):
-            ffmodel.set_transformer_layer_id(i)
+            self.ffmodel.set_transformer_layer_id(i)
 
             if i == 0:
-                layernorm_output = ffmodel.layer_norm(
+                layernorm_output = self.ffmodel.layer_norm(
                     hidden_states,
                     axes,
                     True,
@@ -116,7 +110,7 @@ class FlexFlowMPT(FlexFlowModel):
                     name=f"layers.{i}.norm_1",
                 )
             else:
-                hidden_states, layernorm_output = ffmodel.residual_layer_norm(
+                hidden_states, layernorm_output = self.ffmodel.residual_layer_norm(
                     intermediate_output,
                     hidden_states,
                     None,
@@ -128,70 +122,67 @@ class FlexFlowMPT(FlexFlowModel):
                     name=f"layers.{i}.norm_1",
                 )
 
-            qkv_proj = ffmodel.dense(
+            qkv_proj = self.ffmodel.dense(
                 layernorm_output,
-                3 * self.mpt_config.hidden_size,
+                self.head_dim * self.tot_num_heads,
                 ActiMode.AC_MODE_NONE,
                 False,
                 name=f"layers.{i}.attn.qkv_proj",
             )
 
             if self.mode == InferenceMode.BEAM_SEARCH_MODE:
-                o_proj = ffmodel.spec_inc_multihead_self_attention(
+                o_proj = self.ffmodel.spec_inc_multihead_self_attention(
                     qkv_proj,
                     self.mpt_config.hidden_size,
                     self.mpt_config.n_heads,
                     self.mpt_config.n_heads,
-                    self.mpt_config.hidden_size // self.mpt_config.n_heads,
-                    self.mpt_config.hidden_size // self.mpt_config.n_heads,
+                    self.head_dim,
+                    self.head_dim,
                     0.0,  # dropout
                     False,  # add_zero_attn
                     DataType.DT_NONE,  # data_type
                     None,  # kernel initializer
                     self.mpt_config.rotary_embedding_meta,
                     True,  # scaling_query
-                    (self.mpt_config.hidden_size / self.mpt_config.n_heads)
-                    ** (-0.5),  # scaling_factor
+                    self.head_dim ** (-0.5),  # scaling_factor
                     False,  # qk_prod_scaling
                     True,  # qk_prod_scaling
                     name=f"layers.{i}.attn",
                 )
             elif self.mode == InferenceMode.TREE_VERIFY_MODE:
-                o_proj = ffmodel.inc_multihead_self_attention_verify(
+                o_proj = self.ffmodel.inc_multihead_self_attention_verify(
                     qkv_proj,
                     self.mpt_config.hidden_size,
                     self.mpt_config.n_heads,
                     self.mpt_config.n_heads,
-                    self.mpt_config.hidden_size // self.mpt_config.n_heads,
-                    self.mpt_config.hidden_size // self.mpt_config.n_heads,
+                    self.head_dim,
+                    self.head_dim,
                     0.0,  # dropout
                     False,  # add_zero_attn
                     DataType.DT_NONE,  # data_type
                     None,  # kernel initializer
                     self.mpt_config.rotary_embedding_meta,
                     True,  # scaling_query
-                    (self.mpt_config.hidden_size / self.mpt_config.n_heads)
-                    ** (-0.5),  # scaling_factor
+                    self.head_dim ** (-0.5),  # scaling_factor
                     False,  # qk_prod_scaling
                     True,  # qk_prod_scaling
                     name=f"layers.{i}.attn",
                 )
             elif self.mode == InferenceMode.INC_DECODING_MODE:
-                o_proj = ffmodel.inc_multihead_self_attention(
+                o_proj = self.ffmodel.inc_multihead_self_attention(
                     qkv_proj,
                     self.mpt_config.hidden_size,
                     self.mpt_config.n_heads,
                     self.mpt_config.n_heads,
-                    self.mpt_config.hidden_size // self.mpt_config.n_heads,
-                    self.mpt_config.hidden_size // self.mpt_config.n_heads,
+                    self.head_dim,
+                    self.head_dim,
                     0.0,  # dropout
                     False,  # add_zero_attn
                     DataType.DT_NONE,  # data_type
                     None,  # kernel initializer
                     self.mpt_config.rotary_embedding_meta,
                     True,  # scaling_query
-                    (self.mpt_config.hidden_size / self.mpt_config.n_heads)
-                    ** (-0.5),  # scaling_factor
+                    self.head_dim ** (-0.5),  # scaling_factor
                     False,  # qk_prod_scaling
                     True,  # qk_prod_scaling
                     name=f"layers.{i}.attn",
@@ -199,7 +190,7 @@ class FlexFlowMPT(FlexFlowModel):
             else:
                 assert False
 
-            attn_outputs = ffmodel.dense(
+            attn_outputs = self.ffmodel.dense(
                 o_proj,
                 self.mpt_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
@@ -207,7 +198,7 @@ class FlexFlowMPT(FlexFlowModel):
                 name=f"layers.{i}.attn.o_proj",
             )
 
-            hidden_states, layernorm_output = ffmodel.residual_layer_norm(
+            hidden_states, layernorm_output = self.ffmodel.residual_layer_norm(
                 attn_outputs,
                 hidden_states,
                 None,
@@ -219,15 +210,15 @@ class FlexFlowMPT(FlexFlowModel):
                 name=f"layers.{i}.norm_2",
             )
             # mlp
-            layernorm_output = ffmodel.dense(
+            layernorm_output = self.ffmodel.dense(
                 layernorm_output,
                 4 * self.mpt_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
                 False,
                 name=f"layers.{i}.ffn.up_proj",
             )
-            layernorm_output = ffmodel.gelu(layernorm_output)
-            intermediate_output = ffmodel.dense(
+            layernorm_output = self.ffmodel.gelu(layernorm_output)
+            intermediate_output = self.ffmodel.dense(
                 layernorm_output,
                 self.mpt_config.hidden_size,
                 ActiMode.AC_MODE_NONE,
@@ -235,7 +226,7 @@ class FlexFlowMPT(FlexFlowModel):
                 name=f"layers.{i}.ffn.down_proj",
             )
 
-        _, all_final_norm = ffmodel.residual_layer_norm(
+        _, all_final_norm = self.ffmodel.residual_layer_norm(
             intermediate_output,
             hidden_states,
             None,
@@ -246,7 +237,7 @@ class FlexFlowMPT(FlexFlowModel):
             False,
             name=f"norm_f",
         )
-        lm_head = ffmodel.dense(
+        lm_head = self.ffmodel.dense(
             all_final_norm,
             self.mpt_config.vocab_size,
             ActiMode.AC_MODE_NONE,
@@ -255,20 +246,18 @@ class FlexFlowMPT(FlexFlowModel):
         )
 
         if self.generation_config.do_sample:
-            dense = ffmodel.scalar_true_divide(
+            dense = self.ffmodel.scalar_true_divide(
                 lm_head, self.generation_config.temperature, False
             )
-            softmax = ffmodel.softmax(dense, -1)
-            output = ffmodel.sampling(softmax, self.generation_config.topp)
+            softmax = self.ffmodel.softmax(dense, -1)
+            output = self.ffmodel.sampling(softmax, self.generation_config.topp)
         else:
-            softmax = ffmodel.softmax(lm_head, -1)
-            output = ffmodel.argmax(softmax, False)
+            softmax = self.ffmodel.softmax(lm_head, -1)
+            output = self.ffmodel.argmax(softmax, False)
 
         if self.ffconfig.enable_peft:
             # TODO: add attention projections
-            ffmodel.add_lora_layers(["up_proj", "down_proj"])
-
-        self.ffmodel = ffmodel
+            self.ffmodel.add_lora_layers(["up_proj", "down_proj"])
 
     # TODO: finish this
     def convert_hf_weight_name(name):

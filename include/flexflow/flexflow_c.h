@@ -972,6 +972,9 @@ void flexflow_request_manager_set_max_spec_tree_token_num(
 int flexflow_request_manager_get_max_spec_tree_token_num(
     flexflow_request_manager_t handle_);
 
+int flexflow_request_manager_get_max_verify_tokens_per_batch(
+    flexflow_request_manager_t handle_);
+
 void flexflow_request_manager_set_max_sequence_length(
     flexflow_request_manager_t handle_, int max_seq_length);
 
