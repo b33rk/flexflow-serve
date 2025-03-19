@@ -492,7 +492,7 @@ class LLM:
         else:
             assert type(self) == LLM
             mode = InferenceMode.INC_DECODING_MODE
-        is_spec = self.mode != InferenceMode.INC_DECODING_MODE
+        is_spec = mode != InferenceMode.INC_DECODING_MODE
         self.max_spec_tree_token_num = 20
 
         self.max_seq_length = max_seq_length
@@ -526,7 +526,7 @@ class LLM:
         # Instantiate the relevant model
         ffmodel = FFModel(self.ffconfig)
         ffmodel.set_num_kv_cache_pages(
-            compute_num_kv_cache_pages_needed(self.num_kv_cache_slots, is_spec)
+            compute_num_kv_cache_pages_needed(self.num_kv_cache_slots, 1, is_spec)
         )
         self.model = self.model_class(
             ffmodel,
