@@ -2,6 +2,12 @@
 // https://github.com/Dao-AILab/flash-attention/blob/main/csrc/flash_attn/flash_api.cpp
 
 #pragma once
+#include <cuda.h>
+#include <optional>
+#include <torch/extension.h>
+#include <torch/nn/functional.h>
+#include <torch/python.h>
+#include <vector>
 
 #ifdef OLD_GENERATOR_PATH
 #include <ATen/CUDAGeneratorImpl.h>
@@ -11,13 +17,6 @@
 
 #include <ATen/cuda/CUDAGraphsUtils.cuh> // For at::cuda::philox::unpack
 
-#include <c10/cuda/CUDAGuard.h>
-#include <c10/cuda/CUDAStream.h>
-#include <cuda_runtime.h>
-#include <torch/extension.h>
-#include <torch/torch.h>
-#include <type_traits>
-
 #define CHECK_DEVICE(x) TORCH_CHECK(x.is_cuda(), #x " must be on CUDA")
 #define CHECK_SHAPE(x, ...)                                                    \
   TORCH_CHECK(x.sizes() == torch::IntArrayRef({__VA_ARGS__}),                  \
@@ -25,11 +24,9 @@
 #define CHECK_CONTIGUOUS(x)                                                    \
   TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 
-// The flash-attn API should be under flash namespace for flash-attn >= 2.7.4
 namespace flash {
-// API-0: mha_fwd in `3rd_party/flash-attention/csrc/flash_attn/flash_api.cpp`
-// do not use this to get rid of at interface
-// ERROR: `mha_fwd` symbol not found
+// API-0: mha_fwd in
+// `3rd_party/flash-attention/csrc/flash_attn/flash_api.cpp`
 std::vector<at::Tensor> mha_fwd(
     at::Tensor
         &q, // batch_size x seqlen_q x num_heads x round_multiple(head_size, 8)
@@ -75,9 +72,7 @@ std::vector<at::Tensor> mha_bwd(
     bool const deterministic,
     std::optional<at::Generator> gen_,
     std::optional<at::Tensor> &rng_state);
-// API-1: run_mha_fwd and num_splits_heuristic (adapted from ZhiLight
-// open-source engine) plus: set_params_fprop (need for
-// `test/test_run_mha_fwd.cpp`)
+// API-1: run_mha_fwd and num_splits_heuristic
 
 constexpr int TOTAL_DIM = 0;
 constexpr int H_DIM = 1;
@@ -442,5 +437,14 @@ inline int get_num_sm(int device) {
   CHECK_CUDA(cudaDeviceGetAttribute(
       &multiprocessor_count, cudaDevAttrMultiProcessorCount, device));
   return multiprocessor_count;
+}
+
+inline std::tuple<int, int> get_compute_capability(int device) {
+  int capability_major, capability_minor;
+  CHECK_CUDA(cudaDeviceGetAttribute(
+      &capability_major, cudaDevAttrComputeCapabilityMajor, device));
+  CHECK_CUDA(cudaDeviceGetAttribute(
+      &capability_minor, cudaDevAttrComputeCapabilityMinor, device));
+  return {capability_major, capability_minor};
 }
 }; // namespace flash
