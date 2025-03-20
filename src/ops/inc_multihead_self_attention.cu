@@ -29,6 +29,9 @@
 
 #include "flexflow/flash_api.h"
 
+// only for debugging
+#include <torch/nn/functional.h>
+
 namespace FlexFlow {
 
 // declare Legion names
@@ -682,6 +685,8 @@ torch::Dtype getTorchDtype() {
 // TODO(yingyi): move to utils??
 // helper: create torch tensor from cuda data
 // only used in flash_compute_attention_kernel_peft & flash_peft_bwd_kernel
+// column-major: for shape (d0, d1, ..., d_{n-1}),
+// the strides are: {1, d0, d0*d1, ...}
 template <typename DT>
 torch::Tensor createTorchTensorFromCuda(void *cudaData,
                                         std::vector<int64_t> const &dims) {
@@ -717,6 +722,117 @@ void restoreTorchTensorToCuda(torch::Tensor &torch_tensor, DT *data_ptr) {
              tensor_data_ptr,
              torch_tensor.numel() * sizeof(DT),
              cudaMemcpyDeviceToDevice);
+}
+
+// flash attention fwd from torch (only for testing)
+void torch_attention_forward_matmul(
+    at::Tensor const &q, // shape: [batch_size, seqlen_q, num_heads, head_size]
+    at::Tensor const
+        &k, // shape: [batch_size, seqlen_k, num_heads_k, head_size]
+    at::Tensor const
+        &v, // shape: [batch_size, seqlen_k, num_heads_k, head_size]
+    at::Tensor const
+        &out, // shape: [batch_size, seqlen_q, num_heads, head_size]
+    at::Tensor const
+        &softmax_lse, // shape: [batch_size, num_heads, seqlen_q, 1]
+    float softmax_scale,
+    bool is_causal,
+    std::string const &torch_out_fpath,
+    std::string const &torch_softmax_lse_fpath) {
+
+  // Get shape
+  auto batch_size = q.size(0);
+  auto seqlen_q = q.size(1);
+  auto num_heads = q.size(2);
+  auto head_size = q.size(3);
+  auto seqlen_k = k.size(1);
+  auto num_heads_k = k.size(2);
+  assert(head_size == k.size(3));
+
+  // Clone input tensors to avoid modifying them
+  auto q_compute = q.clone();
+  auto k_compute = k.clone();
+  auto v_compute = v.clone();
+
+  // Permute Q, K, V to [batch_size, num_heads, seqlen, head_size]
+  q_compute = q_compute.permute({0, 2, 1, 3});
+  k_compute = k_compute.permute({0, 2, 1, 3});
+  v_compute = v_compute.permute({0, 2, 1, 3});
+
+  // Compute attention scores: q * k_t
+  // q: [batch_size, num_heads, seqlen_q, head_size]
+  // k: [batch_size, num_heads_k, seqlen_k, head_size]
+  // k_t: [batch_size, num_heads_k, head_size, seqlen_k]
+  auto k_t = k_compute.transpose(-2, -1);
+  // scores: [batch_size, num_heads, seqlen_q, seqlen_k]
+  auto scores = torch::matmul(q_compute, k_t) * softmax_scale;
+
+  // todo(yingyi): add alibi bias
+
+  // Apply causal mask if needed
+  if (is_causal) {
+    // Create a mask of shape [seqlen_q, seqlen_k] where upper-triangular
+    // elements are -inf
+    auto mask = torch::zeros({seqlen_q, seqlen_k}, q.options());
+    mask = torch::triu(mask, /*diagonal=*/1)
+               .masked_fill(
+                   torch::triu(torch::ones({seqlen_q, seqlen_k}, q.options()),
+                               1) == 1,
+                   -std::numeric_limits<float>::infinity());
+    // Expand mask to match batch and heads dimensions
+    scores = scores + mask.unsqueeze(0).unsqueeze(
+                          0); // [1, 1, seqlen_q, seqlen_k] broadcasted
+  }
+
+  // Scores shape: [batch_size, num_heads, seqlen_q, seqlen_k]
+  // Compute softmax
+  // if (is_causal) {
+  //   // get max values in scores
+  //   auto max_values = std::get<0>(scores.max(-1, true).values);
+  //   // get exp(score-max_score)
+  //   auto exp_scores = torch::exp(scores - max_values).exp();
+
+  // }
+
+  // Compute softmax
+  auto attn_weights = torch::softmax(scores, -1);
+
+  // Compute attention output
+  auto torch_out = torch::matmul(attn_weights, v_compute);
+
+  // Reorder torch_out to [batch_size, seqlen_q, num_heads, head_size]
+  torch_out = torch_out.permute({0, 2, 1, 3});
+
+  torch::save(torch_out, torch_out_fpath);
+  torch::save(softmax_lse, torch_softmax_lse_fpath);
+
+  // Print max differences for debugging
+  // compare out and torch_out
+  auto max_diff = (out - torch_out).abs().max().item<float>();
+  std::cout << "Max difference between Flash Attention and PyTorch attention "
+               "outputs: "
+            << max_diff << std::endl;
+
+  if (max_diff > 1e-3) {
+    std::cout << "Warning: Large difference detected in attention outputs!"
+              << std::endl;
+    // Print shapes for debugging
+    std::cout << "Shapes - Q: " << q.sizes() << ", K: " << k.sizes()
+              << ", V: " << v.sizes() << ", Out: " << out.sizes() << std::endl;
+  }
+
+  // compare softmax_lse and torch_softmax_lse
+  // auto max_diff_lse =
+  //     (softmax_lse - torch_softmax_lse).abs().max().item<float>();
+  // std::cout << "Max difference between Flash Attention and PyTorch attention
+  // "
+  //              "softmax_lse: "
+  //           << max_diff_lse << std::endl;
+  // if (max_diff_lse > 1e-3) {
+  //   std::cout << "Warning: Large difference detected in attention
+  //   softmax_lse!"
+  //             << std::endl;
+  // }
 }
 
 // TODO(yingyi): fwd implementation of flash-attn
@@ -789,9 +905,10 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
       m->num_q_heads,
       m->num_kv_heads);
   // end Step 0
+  // ========================================================================
 
-  // ================================================
   // Step 1: configure params for fwd
+  // ================================================
   // todo(gabriele): check if alibi_slopes_ generation is correct
   // Initialize alibi_slopes tensor for ALiBi position bias
   // The slopes should be consistent with `apply_position_bias_qkprd kernel`
@@ -986,6 +1103,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                           softcap);
 
   // Keep references to these tensors to extend their lifetime
+  // std::tie: unpack from the tuple (softmax_lse_accum, out_accum) by (a&, b&)
   at::Tensor softmax_lse_accum, out_accum;
   std::tie(softmax_lse_accum, out_accum) =
       flash::set_params_splitkv(fwd_params,
@@ -1038,6 +1156,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   }
 
   // Step 2: Handle the output tensor and cache softmax_lse for BWD
+  // ========================================================================
   // print out the shapes and values of the tensors
   if (m->inference_debugging) {
     // std::cout << "Output Tensor Shape: " << out.sizes() << std::endl;
@@ -1064,6 +1183,30 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   // same layout as out tensor (head_size, num_q_heads, num_new_tokens)
   memcpy(m->flash_attn_out, out.data_ptr(), out.numel() * sizeof(DT));
   // softmax_lse is saved in the data_ptr of softmax_lse tensor
+  // end step 2
+  // ========================================================================
+
+  // step 3: (optional, only for testing)
+  // invoke attention fwd from torch
+  // ========================================================================
+  if (m->inference_debugging) {
+    std::string torch_out_fpath =
+        get_peft_dbg_folder(m, shard_id) + ".torch_out.pt";
+    std::string torch_softmax_lse_fpath =
+        get_peft_dbg_folder(m, shard_id) + ".torch_softmax_lse.pt";
+
+    torch_attention_forward_matmul(q,
+                                   k,
+                                   v,
+                                   out,
+                                   softmax_lse,
+                                   softmax_scale,
+                                   is_causal,
+                                   torch_out_fpath,
+                                   torch_softmax_lse_fpath);
+  }
+  // end step 3
+  // ========================================================================
 }
 
 // only used by MPT model. https://arxiv.org/abs/2108.12409
@@ -2256,11 +2399,11 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
 
   if (m->inference_debugging) {
     // save result to file for checking
-    std::string filename =
+    std::string out_grad_filename =
         get_peft_dbg_folder(m, shard_id) + ".o_proj.input_gradient_0";
     save_tensor(output_grad_ptr,
                 m->vProjSize * m->num_q_heads * num_tokens,
-                filename.c_str());
+                out_grad_filename.c_str());
   }
   // end step 0
   // ================================================================
@@ -2284,6 +2427,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   float p_dropout = m->flash_attn_p_dropout;
   int window_size_left = m->flash_attn_window_size_left;
   int window_size_right = m->flash_attn_window_size_right;
+  bool is_causal = m->flash_attn_is_causal;
   float softcap = m->flash_attn_softcap;
   std::optional<at::Generator> gen_ = std::nullopt;
 
@@ -2579,6 +2723,30 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
 
   // end step 2
   // ================================================================
+
+  // step3: (optional, only for testing)
+  // invoke attention bwd from torch
+  // ========================================================================
+  if (m->inference_debugging) {
+    std::string torch_dq_fpath =
+        get_peft_dbg_folder(m, shard_id) + ".torch_dq.pt";
+    std::string torch_dk_fpath =
+        get_peft_dbg_folder(m, shard_id) + ".torch_dk.pt";
+    std::string torch_dv_fpath =
+        get_peft_dbg_folder(m, shard_id) + ".torch_dv.pt";
+
+    // todo(yingyi): add this bwd check
+    //   torch_attention_backward(
+    //       q, k, v, out, dout,
+    //       softmax_scale,
+    //       is_causal,
+    //       torch_dq_fpath,
+    //       torch_dk_fpath,
+    //       torch_dv_fpath);
+    // }
+    // end step 3
+    // ========================================================================
+  }
 }
 } // namespace IncMultiHeadAttention
 } // namespace Kernels
