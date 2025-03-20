@@ -117,6 +117,8 @@ RUN pip3 install scipy bitsandbytes datasets accelerate loralib triton peft pyte
 RUN pip3 install streamlit
 # flash-attn
 RUN pip3 install flash-attn
+# tf-keras
+RUN pip3 install tf-keras
 
 # Install Rust
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
