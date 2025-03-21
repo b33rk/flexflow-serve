@@ -26,10 +26,17 @@
 #include "flashinfer/prefill_attention_decl.cuh"
 #include "flexflow/page_manager.h"
 
+#ifndef USE_FLASH_ATTENTION
+#define USE_FLASH_ATTENTION 0
+#endif
+
+#if USE_FLASH_ATTENTION
+
 #include "flexflow/flash_api.h"
 
 // only for debugging
 #include <torch/nn/functional.h>
+#endif
 
 namespace FlexFlow {
 
@@ -660,6 +667,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   }
 }
 
+#if USE_FLASH_ATTENTION
 // TODO(gabriele): only support fp16 and bf16. Do we need to support 32?
 // helper: Convert flexflow datatype to torch datatype
 // only used in flash_compute_attention_kernel_peft
@@ -1624,6 +1632,8 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   // end step 3
   // ========================================================================
 }
+
+#endif
 
 // only used by MPT model. https://arxiv.org/abs/2108.12409
 template <typename DT>
@@ -2793,6 +2803,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   }
 }
 
+#if USE_FLASH_ATTENTION
 // todo(yingyi): replace with flash-attn
 template <typename DT>
 void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
@@ -2961,6 +2972,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   // end step 3
   // ========================================================================
 }
+#endif // USE_FLASH_ATTENTION
 } // namespace IncMultiHeadAttention
 } // namespace Kernels
 
@@ -3344,7 +3356,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       valueCachePeft = peft_mem_allocator.allocate_instance_untyped(
           peft_value_cache_size * size_of_dt);
 
-      // #if USE_FLASH_ATTENTION
+#if USE_FLASH_ATTENTION
       // todo(gabriele): review the allocation of flash-attn bwd context
       // flash-attn out: (head_size, num_q_heads, num_new_tokens)
       flash_attn_out = peft_mem_allocator.allocate_instance_untyped(
@@ -3363,7 +3375,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       flash_attn_rng_state_1 = 0;
       flash_attn_window_size_left = -1;
       flash_attn_window_size_right = -1;
-      // #endif
+#endif
     } else {
       keyCachePeft = valueCachePeft = nullptr;
     }

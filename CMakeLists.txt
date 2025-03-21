@@ -14,8 +14,9 @@ endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_LIST_DIR}/cmake)
 set(FLEXFLOW_ROOT ${CMAKE_CURRENT_LIST_DIR})
-set(CMAKE_CXX_FLAGS "-std=c++17 ${CMAKE_CXX_FLAGS} -fPIC -UNDEBUG")
-set(CMAKE_HIP_FLAGS "-std=c++17 ${CMAKE_HIP_FLAGS} -fPIC -UNDEBUG")
+# Use pre-cxx11 ABI for compatibility with pre-built LibTorch
+set(CMAKE_CXX_FLAGS "-std=c++17 ${CMAKE_CXX_FLAGS} -fPIC -UNDEBUG -D_GLIBCXX_USE_CXX11_ABI=0")
+set(CMAKE_HIP_FLAGS "-std=c++17 ${CMAKE_HIP_FLAGS} -fPIC -UNDEBUG -D_GLIBCXX_USE_CXX11_ABI=0")
 
 # set std 17
 # set(CMAKE_CXX_STANDARD 17)
@@ -209,7 +210,9 @@ include(optional)
 # flashinfer
 list(APPEND FLEXFLOW_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/deps/flashinfer/include)
 
-include(flash_attn)
+# if(USE_FLASH_ATTENTION)
+  include(flash_attn)
+# endif()
 
 if(FF_GPU_BACKEND STREQUAL "cuda")
   list(APPEND FF_CC_FLAGS

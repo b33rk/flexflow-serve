@@ -2,6 +2,14 @@
 // https://github.com/Dao-AILab/flash-attention/blob/main/csrc/flash_attn/flash_api.cpp
 
 #pragma once
+
+
+#ifndef USE_FLASH_ATTENTION
+#define USE_FLASH_ATTENTION 0
+#endif
+
+#if USE_FLASH_ATTENTION
+
 #include <cuda.h>
 #include <optional>
 #include <torch/extension.h>
@@ -448,3 +456,5 @@ inline std::tuple<int, int> get_compute_capability(int device) {
   return {capability_major, capability_minor};
 }
 }; // namespace flash
+
+#endif // USE_FLASH_ATTENTION
