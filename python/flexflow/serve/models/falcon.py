@@ -104,7 +104,7 @@ class FlexFlowFalcon(FlexFlowModel):
         self.rm = RequestManager()
         batch_tensor_num_tokens = self.rm.get_max_tokens_per_batch()
         if is_spec:
-            batch_tensor_num_tokens = self.rm.max_verify_tokens_per_batch()
+            batch_tensor_num_tokens = self.rm.get_max_verify_tokens_per_batch()
         elif self.ffconfig.enable_peft_finetuning:
             batch_tensor_num_tokens = self.rm.get_max_sequence_length()
 
