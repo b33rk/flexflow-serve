@@ -726,6 +726,7 @@ void restoreTorchTensorToCuda(torch::Tensor &torch_tensor, DT *data_ptr) {
 
 // todo(gabriele): review this function
 // the params should persist after the function returns
+template <typename DT>
 void set_wrapper_mha_fwd_1_params_peft(IncMultiHeadSelfAttentionMeta *m,
                                        BatchConfig const *bc,
                                        at::Tensor &q,
@@ -1546,7 +1547,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   bool is_causal, return_softmax;
   int window_size_left, window_size_right;
 
-  set_wrapper_mha_fwd_1_params_peft(m,
+  set_wrapper_mha_fwd_1_params_peft<DT>(m,
                                     bc,
                                     q,
                                     k,
@@ -2824,7 +2825,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   std::optional<at::Generator> gen_ = std::nullopt;
   std::optional<at::Tensor> rng_state = std::nullopt;
 
-  set_wrapper_mha_bwd_1_params_peft(m,
+  set_wrapper_mha_bwd_1_params_peft<DT>(m,
                                     bc,
                                     shard_id,
                                     input_grad_ptr,
