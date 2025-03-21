@@ -13,16 +13,21 @@
  * limitations under the License.
  */
 
-#include "flashinfer/attention/decode.cuh"
-#include "flashinfer/attention/prefill.cuh"
-#include "flashinfer_ops.cuh"
+#include "flashinfer/decode_attention_decl.cuh"
+#include "flashinfer/prefill_attention_decl.cuh"
 #include "flexflow/request_manager.h"
 #include "flexflow/utils/cuda_helper.h"
 
 namespace FlexFlow {
 
 using namespace Legion;
-using namespace flashinfer;
+using flashinfer::BatchDecodeHandler;
+using flashinfer::BatchPrefillHandler;
+using flashinfer::LogitsPostHook;
+using flashinfer::paged_kv_t;
+using flashinfer::PageStorage;
+using flashinfer::PosEncodingMode;
+using flashinfer::QKVLayout;
 
 void RequestManager::load_tokens_task(
     Task const *task,
@@ -321,14 +326,13 @@ void RequestManager::load_batch_config_task(
     // std::cout << "int_workspace_size: " <<
     // handle.incr_attention_metadata->int_workspace_size << std::endl;
 
-    handler->Plan<half, int32_t>(
+    handler->BeginForward<half, int32_t>(
         static_cast<void *>(handle.incr_attention_metadata->float_workspace),
         handle.incr_attention_metadata->float_workspace_size,
         static_cast<void *>(handle.incr_attention_metadata->int_workspace),
         handle.incr_attention_metadata->int_workspace_size,
         static_cast<int32_t *>(q_indptr_h.data()),
         static_cast<int32_t *>(kv_indptr_h.data()),
-        /*total_num_rows=*/q_indptr_h.back(),
         batch_size,
         handle.incr_attention_metadata->num_q_heads(),
         handle.incr_attention_metadata->num_kv_heads(),
