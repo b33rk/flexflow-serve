@@ -50,7 +50,8 @@ def get_configs():
         "max_requests_per_batch": 4,
         "max_seq_length": 2048,
         "max_tokens_per_batch": 256,
-        "max_new_tokens": 1024
+        "max_new_tokens": 1024,
+        "num_kv_cache_slots": -1,
     }
     # Merge dictionaries
     ff_init_configs.update(llm_configs)
@@ -81,9 +82,10 @@ def main():
     )
     llm.compile(
         generation_config,
-        max_requests_per_batch = configs_dict.get("max_requests_per_batch", 4),
-        max_seq_length = configs_dict.get("max_seq_length", 256),
-        max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 64),
+        max_requests_per_batch=configs_dict.get("max_requests_per_batch", 4),
+        max_seq_length=configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch=configs_dict.get("max_tokens_per_batch", 64),
+        num_kv_cache_slots=configs_dict.get("num_kv_cache_slots", -1),
     )
 
     llm.start_server()
@@ -91,13 +93,12 @@ def main():
     nemotron_system = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Please ensure that your responses are positive in nature."
     llama_generic_system = "You are a helpful an honest programming assistant."
 
-
-    messages=[
+    messages = [
         {"role": "system", "content": nemotron_system},
         {"role": "user", "content": "Is Rust better than Python?"},
     ]
     llm.generate(messages, max_new_tokens=configs_dict.get("max_new_tokens", 10244))
-    
+
     llm.stop_server()
 
 

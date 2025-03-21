@@ -50,6 +50,8 @@ class _SupportedModels:
         self.supported_models = {
             "LlamaForCausalLM": (ModelType.LLAMA, FlexFlowLLAMA, LLAMAConfig),
             "LLaMAForCausalLM": (ModelType.LLAMA, FlexFlowLLAMA, LLAMAConfig),
+            "Qwen2ForCausalLM": (ModelType.LLAMA, FlexFlowLLAMA, LLAMAConfig),
+            "MistralForCausalLM": (ModelType.LLAMA, FlexFlowLLAMA, LLAMAConfig),
             "OPTForCausalLM": (ModelType.OPT, FlexFlowOPT, OPTConfig),
             "RWForCausalLM": (ModelType.FALCON, FlexFlowFalcon, FalconConfig),
             "FalconForCausalLM": (ModelType.FALCON, FlexFlowFalcon, FalconConfig),
@@ -451,6 +453,7 @@ class LLM:
         max_requests_per_batch: int = 1,
         max_seq_length: int = 256,
         max_tokens_per_batch: int = 64,
+        num_kv_cache_slots: int = -1,
         max_concurrent_adapters: int = 1,
         enable_peft_finetuning: bool = False,
         num_bwd_layers_per_ft_step: int = -1,
@@ -466,6 +469,8 @@ class LLM:
         :type max_seq_length: int, optional
         :param max_tokens_per_batch: The maximum number of tokens (across requests) to allow per batch, defaults to 64
         :type max_tokens_per_batch: int, optional
+        :param num_kv_cache_slots: The number of key-value cache slots to use per request, defaults to -1 (i.e. max_seq_length*max_requests_per_batch slots)
+        :type num_kv_cache_slots: int, optional
         :param max_concurrent_adapters: The maximum number of concurrent LoRA adapters, defaults to 1
         :type max_concurrent_adapters: int, optional
         :param enable_peft_finetuning: Whether to enable support for PEFT fine-tuning, defaults to False
@@ -489,15 +494,25 @@ class LLM:
         else:
             assert type(self) == LLM
             mode = InferenceMode.INC_DECODING_MODE
+        is_spec = mode != InferenceMode.INC_DECODING_MODE
+        self.max_spec_tree_token_num = 20
 
         self.max_seq_length = max_seq_length
         self.ffconfig.enable_peft_finetuning = enable_peft_finetuning
+        self.num_kv_cache_slots = num_kv_cache_slots
+        if num_kv_cache_slots < 0:
+            if is_spec:
+                self.num_kv_cache_slots = (
+                    max_seq_length + self.max_spec_tree_token_num
+                ) * max_requests_per_batch
+            else:
+                self.num_kv_cache_slots = max_seq_length * max_requests_per_batch
 
         # Create request manager and set serving configuration
         self.rm = RequestManager()
         self.rm.set_max_requests_per_batch(max_requests_per_batch)
         self.rm.set_max_tokens_per_batch(max_tokens_per_batch)
-        self.rm.set_max_spec_tree_token_num(20)
+        self.rm.set_max_spec_tree_token_num(self.max_spec_tree_token_num)
         self.rm.set_max_sequence_length(max_seq_length)
         self.rm.set_max_concurrent_adapters(max_concurrent_adapters)
         self.rm.set_enable_peft_finetuning(enable_peft_finetuning)
@@ -511,13 +526,17 @@ class LLM:
         model_configs = self.config_class(self.hf_config)
 
         # Instantiate the relevant model
+        ffmodel = FFModel(self.ffconfig)
+        ffmodel.set_num_kv_cache_pages(
+            compute_num_kv_cache_pages_needed(self.num_kv_cache_slots, 1, is_spec)
+        )
         self.model = self.model_class(
+            ffmodel,
             mode,
             generation_config,
             self.ffconfig,
             self.hf_config,
             self.data_type,
-            max_tokens_per_batch,
         )
 
         # Download the config from huggingface
@@ -764,6 +783,7 @@ class SSM(LLM):
         max_requests_per_batch: int = 16,
         max_seq_length: int = 256,
         max_tokens_per_batch: int = 2048,
+        num_kv_cache_slots: int = -1,
         max_concurrent_adapters: int = 1,
         enable_peft_finetuning: bool = False,
         num_bwd_layers_per_ft_step: int = -1,
@@ -778,6 +798,8 @@ class SSM(LLM):
         :type max_seq_length: int, optional
         :param max_tokens_per_batch: The maximum number of tokens (across requests) to allow per batch, defaults to 2048
         :type max_tokens_per_batch: int, optional
+        :param num_kv_cache_slots: The number of key-value cache slots to use per request, defaults to -1 (i.e. max_seq_length*max_requests_per_batch slots)
+        :type num_kv_cache_slots: int, optional
         :param max_concurrent_adapters: The maximum number of concurrent LoRA adapters, defaults to 1
         :type max_concurrent_adapters: int, optional
         :param enable_peft_finetuning: Whether to enable support for PEFT fine-tuning, defaults to False
@@ -792,6 +814,7 @@ class SSM(LLM):
             max_requests_per_batch,
             max_seq_length,
             max_tokens_per_batch,
+            num_kv_cache_slots,
             max_concurrent_adapters,
             enable_peft_finetuning,
             num_bwd_layers_per_ft_step,
