@@ -714,14 +714,16 @@ torch::Tensor createTorchTensorFromCuda(void *cudaData,
 // TODO(Gabriele): review this inverse `createTorchTensorFromCuda`
 template <typename DT>
 void restoreTorchTensorToCuda(torch::Tensor &torch_tensor, DT *data_ptr) {
-  // Get the raw pointer of the tensor
-  DT *tensor_data_ptr = torch_tensor.data_ptr<DT>();
+  if (!torch_tensor.is_contiguous()) {
+    torch_tensor = torch_tensor.contiguous();
+  }
+  size_t num_bytes = torch_tensor.nbytes();
 
-  // Copy the data from the tensor_data_ptr to the data_ptr
-  cudaMemcpy(data_ptr,
-             tensor_data_ptr,
-             torch_tensor.numel() * sizeof(DT),
-             cudaMemcpyDeviceToDevice);
+  // Copy from torch_tensor data to device pointer
+  cudaError_t err = cudaMemcpy(data_ptr, torch_tensor.data_ptr(), num_bytes, cudaMemcpyHostToDevice);
+  if (err != cudaSuccess) {
+      throw std::runtime_error("cudaMemcpy failed: " + std::string(cudaGetErrorString(err)));
+  }
 }
 
 // todo(gabriele): review this function
@@ -3028,6 +3030,7 @@ void IncMultiHeadSelfAttention::peft_bwd_kernel_wrapper(
 
   if (input_grad.data_type == DT_HALF) {
     assert(!m->offload);
+// #ifdef USE_FLASH_ATTENTION_1
 #if USE_FLASH_ATTENTION
     Kernels::IncMultiHeadAttention::flash_peft_bwd_kernel(
         m,
@@ -3046,6 +3049,7 @@ void IncMultiHeadSelfAttention::peft_bwd_kernel_wrapper(
 #endif
   } else if (input_grad.data_type == DT_FLOAT) {
     assert(!m->offload);
+// #ifdef USE_FLASH_ATTENTION_1
 #if USE_FLASH_ATTENTION
     Kernels::IncMultiHeadAttention::flash_peft_bwd_kernel(
         m,
