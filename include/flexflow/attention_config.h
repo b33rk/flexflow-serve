@@ -108,7 +108,7 @@ public:
         (batch_size + 1) * 4 + max_num_pages * batch_size, 1ul * 1024 * 1024);
     size_t custom_mask_size = 0;
 
-    float_workspace_size = 1024 * 1024 * 1024; // 1 GB
+    float_workspace_size = 128 * 1024 * 1024; // 128 MB
     int_workspace_size = 8 * 1024 * 1024;     // 8 MB
     workspace_size =
         float_workspace_size + int_workspace_size; // float + int workspace
