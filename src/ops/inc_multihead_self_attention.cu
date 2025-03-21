@@ -727,8 +727,10 @@ void restoreTorchTensorToCuda(torch::Tensor &torch_tensor, DT *data_ptr) {
 // todo(gabriele): review this function
 // the params should persist after the function returns
 template <typename DT>
-void set_wrapper_mha_fwd_1_params_peft(IncMultiHeadSelfAttentionMeta *m,
+void set_wrapper_mha_fwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
                                        BatchConfig const *bc,
+                                       DT *attn_heads,
+                                       int shard_id,
                                        at::Tensor &q,
                                        at::Tensor &k,
                                        at::Tensor &v,
@@ -756,7 +758,7 @@ void set_wrapper_mha_fwd_1_params_peft(IncMultiHeadSelfAttentionMeta *m,
   }
 
   int req_idx = bc->finetuning_request_index();
-  signed long batch_size = 1;
+  // signed long batch_size = 1;
   signed long seqlen_q = bc->requestsInfo[req_idx].num_tokens_in_batch;
   signed long seqlen_k =
       bc->requestsInfo[req_idx].first_token_depth_in_request +
@@ -764,6 +766,12 @@ void set_wrapper_mha_fwd_1_params_peft(IncMultiHeadSelfAttentionMeta *m,
   signed long num_heads = m->num_q_heads;
   signed long num_heads_k = m->num_kv_heads;
   signed long head_size = m->qProjSize;
+  int tokens_previous_requests =
+      bc->requestsInfo[req_idx].first_token_offset_in_batch;
+  int num_new_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
+  int total_tokens = bc->requestsInfo[req_idx].first_token_depth_in_request +
+                     bc->requestsInfo[req_idx].num_tokens_in_batch;
+  int tokens_previous_steps = total_tokens - num_new_tokens;
 
   p_dropout = m->flash_attn_p_dropout;
   softmax_scale = (*m->qk_prod_scaling) ? (1.0f / sqrt(m->kProjSize)) : 1.0f;
@@ -825,7 +833,7 @@ void set_wrapper_mha_fwd_1_params_peft(IncMultiHeadSelfAttentionMeta *m,
 }
 
 template <typename DT>
-void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta *m,
+void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
                                        BatchConfig const *bc,
                                        int shard_id,
                                        DT *input_grad_ptr,
@@ -850,16 +858,17 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta *m,
                                        std::optional<at::Generator> &gen_,
                                        std::optional<at::Tensor> &rng_state) {
   // todo(gabriele): check if the data is correct
-  signed long batch_size = 1;
-  signed long seqlen_q = bc->requestsInfo[i].num_tokens_in_batch;
-  signed long seqlen_k = bc->requestsInfo[i].first_token_depth_in_request +
-                         bc->requestsInfo[i].num_tokens_in_batch;
-  int num_new_tokens = bc->requestsInfo[i].num_tokens_in_batch;
-  int total_tokens = bc->requestsInfo[i].first_token_depth_in_request +
-                     bc->requestsInfo[i].num_tokens_in_batch;
+  int req_idx = bc->finetuning_request_index();
+  // signed long batch_size = 1;
+  signed long seqlen_q = bc->requestsInfo[req_idx].num_tokens_in_batch;
+  signed long seqlen_k = bc->requestsInfo[req_idx].first_token_depth_in_request +
+                         bc->requestsInfo[req_idx].num_tokens_in_batch;
+  int num_new_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
+  int total_tokens = bc->requestsInfo[req_idx].first_token_depth_in_request +
+                     bc->requestsInfo[req_idx].num_tokens_in_batch;
   int tokens_previous_steps = total_tokens - num_new_tokens;
   int tokens_previous_requests =
-      bc->requestsInfo[i].first_token_offset_in_batch;
+      bc->requestsInfo[req_idx].first_token_offset_in_batch;
 
   signed long num_heads = m->num_q_heads;
   signed long num_heads_k = m->num_kv_heads;
@@ -879,7 +888,6 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta *m,
   deterministic = m->inference_debugging; // only for debugging
 
   // recompute alibi slopes (should be the same as in flash_peft_bwd_kernel)
-  std::optional<at::Tensor> alibi_slopes_ = std::nullopt;
   if (*m->position_bias) {
     at::Tensor alibi_slopes = at::empty({m->num_q_heads}, at::kFloat);
     float *slopes_ptr = alibi_slopes.data_ptr<float>();
@@ -928,7 +936,7 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta *m,
   auto opts = q.options();
   softmax_lse =
       torch::from_blob(static_cast<float *>(m->flash_attn_softmax_lse),
-                       {1, num_heads, bc->requestsInfo[i].max_length},
+                       {1, num_heads, bc->requestsInfo[req_idx].max_length},
                        opts.dtype(at::kFloat));
   softmax_lse = softmax_lse.slice(
       2, tokens_previous_steps, tokens_previous_steps + seqlen_q);
@@ -937,9 +945,9 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta *m,
   dk_ = torch::empty_like(k);
   dv_ = torch::empty_like(v);
 
-  rng_state = torch::zeros({2}, options.dtype(torch::kInt64));
-  rng_state.data_ptr<int64_t>()[0] = m->flash_attn_rng_state_0;
-  rng_state.data_ptr<int64_t>()[1] = m->flash_attn_rng_state_1;
+  rng_state = torch::zeros({2}, opts.dtype(torch::kInt64));
+  rng_state.value().data_ptr<int64_t>()[0] = m->flash_attn_rng_state_0;
+  rng_state.value().data_ptr<int64_t>()[1] = m->flash_attn_rng_state_1;
 
   // only for results alignment
   if (m->inference_debugging) {
@@ -1484,10 +1492,8 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   cudaDataType_t cublas_data_type = ff_to_cuda_datatype(m->output_type[0]);
   cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
   assert(data_type_size(m->output_type[0]) == sizeof(DT));
-  // cudaDataType_t compute_type = cublas_data_type;
 
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
-  // int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
 
   assert(bc->num_finetuning_fwd_tokens() > 0);
   int req_idx = bc->finetuning_request_index();
@@ -1549,6 +1555,8 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
 
   set_wrapper_mha_fwd_1_params_peft<DT>(m,
                                     bc,
+                                    attn_heads,
+                                    shard_id,
                                     q,
                                     k,
                                     v,
@@ -1563,7 +1571,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                                     return_softmax,
                                     gen_);
 
-  const auto [out, softmax_lse, p, rng_state] = _wrapper_mha_fwd_1(q,
+  auto result = _wrapper_mha_fwd_1(q,
                                                              k,
                                                              v,
                                                              out_,
@@ -1577,6 +1585,10 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                                                              return_softmax,
                                                              gen_,
                                                              peft_stream);
+  auto out = result[0];
+  auto softmax_lse = result[1];
+  auto p = result[2];
+  auto rng_state = result[3];
 
   // Step 2: Handle the output tensor and cache softmax_lse for BWD
   // ========================================================================
@@ -1586,7 +1598,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   m->flash_attn_rng_state_1 = rng_state[1].item<int64_t>();
   if (m->inference_debugging) {
     std::string out_fpath = get_peft_dbg_folder(m, shard_id) + ".fwd_out.pt";
-    torch::save(out_.value().clone().detach(), out_fpath);
+    torch::save(out.clone().detach(), out_fpath);
 
     std::string softmax_lse_fpath =
         get_peft_dbg_folder(m, shard_id) + ".fwd_softmax_lse.pt";
@@ -2850,31 +2862,30 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                     gen_,
                                     rng_state);
 
-  const auto [dq, dk, dv, softmax_d] = _wrapper_mha_bwd_1(m,
-                     bc,
-                     shard_id,
-                     input_grad_ptr,
-                     output_grad_ptr,
-                     dout,
-                     q,
-                     k,
-                     v,
-                     out,
-                     softmax_lse,
-                     dq_,
-                     dk_,
-                     dv_,
-                     alibi_slopes_,
-                     p_dropout,
-                     softmax_scale,
-                     is_causal,
-                     window_size_left,
-                     window_size_right,
-                     softcap,
-                     deterministic,
-                     gen_,
-                     rng_state,
-                     peft_stream);
+  auto result = _wrapper_mha_bwd_1(dout,
+                                    q,
+                                    k,
+                                    v,
+                                    out,
+                                    softmax_lse,
+                                    dq_,
+                                    dk_,
+                                    dv_,
+                                    alibi_slopes_,
+                                    p_dropout,
+                                    softmax_scale,
+                                    is_causal,
+                                    window_size_left,
+                                    window_size_right,
+                                    softcap,
+                                    deterministic,
+                                    gen_,
+                                    rng_state,
+                                    peft_stream);
+  auto dq = result[0];
+  auto dk = result[1];
+  auto dv = result[2];
+  auto softmax_d = result[3];
 
   // end step 1
   // ================================================================
@@ -2905,9 +2916,9 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
 
   // todo(gabriele): review the reshape here
   // remove batch_size dim from tensor dq, dk, dv
-  at::Tensor dv = dv_.value();
-  at::Tensor dk = dk_.value();
-  at::Tensor dq = dq_.value();
+  dv = dv_.value();
+  dk = dk_.value();
+  dq = dq_.value();
   dv.squeeze(0);
   dk.squeeze(0);
   dq.squeeze(0);
