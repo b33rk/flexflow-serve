@@ -930,6 +930,13 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   auto out_ptr = static_cast<DT *>(m->flash_attn_out) +
                  tokens_previous_requests * m->num_q_heads * m->vProjSize;
 
+  int num_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
+  auto dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+                2 * num_tokens * (m->qProjSize * m->num_q_heads);
+  auto dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+                num_tokens * (m->qProjSize * m->num_q_heads);
+  auto dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
+
   // re-organize q, k, v tensor to match the layout of flash-attn
   // q size: (batch_size, seqlen_q, num_heads, head_size)
   q = createTorchTensorFromCuda<DT>(q_ptr, {head_size, num_heads, seqlen_q});
@@ -943,6 +950,24 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   out =
       createTorchTensorFromCuda<DT>(out_ptr, {head_size, num_heads, seqlen_q});
   out = out.permute({2, 1, 0}).unsqueeze(0);
+
+  // todo(yingyi): init dq_, dk_, dv_ by peft pre-allocated buffer
+  // tensor dv shape (batch_size, seqlen_k, num_heads_k, head_size)
+  // tensor dq shape (batch_size, seqlen_q, num_heads, head_size)
+  // tensor dk shape (batch_size, seqlen_k, num_heads_k, head_size)
+  auto dq =
+      createTorchTensorFromCuda<DT>(dq_ptr, {head_size, num_heads, seqlen_q});
+  auto dk =
+      createTorchTensorFromCuda<DT>(dk_ptr, {head_size, num_heads_k, seqlen_k});
+  auto dv =
+      createTorchTensorFromCuda<DT>(dv_ptr, {head_size, num_heads_k, seqlen_k});
+  dq = dq.permute({2, 1, 0}).unsqueeze(0);
+  dk = dk.permute({2, 1, 0}).unsqueeze(0);
+  dv = dv.permute({2, 1, 0}).unsqueeze(0);
+
+  dq_ = dq;
+  dk_ = dk;
+  dv_ = dv;
 
   auto opts = q.options();
   softmax_lse =
@@ -2944,35 +2969,35 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   // tensor dq shape (batch_size, seqlen_q, num_heads, head_size)
 
   // expected shape in buffer:
-  // todo(gabriele): dq shareds the same layout as dv & dk??
   // dv: [seqlen_k, head_size * num_heads, 3]
   // dk: [seqlen_k, head_size * num_heads, 3]
   // dq: [seqlen_k, head_size * num_heads, 3]
 
-  // todo(gabriele): review the reshape here
-  // remove batch_size dim from tensor dq, dk, dv
-  dv = dv_.value();
-  dk = dk_.value();
-  dq = dq_.value();
-  dv = dv.squeeze(0);
-  dk = dk.squeeze(0);
-  dq = dq.squeeze(0);
-  // permute the tensor to the expected shape in buffer
-  dv = dv.permute({1, 2, 0});
-  dk = dk.permute({1, 2, 0});
-  dq = dq.permute({1, 2, 0});
+  // comment out the following code to fix 2x memory footprint for dq, dk, dv
+  // // todo(gabriele): review the reshape here
+  // // remove batch_size dim from tensor dq, dk, dv
+  // dv = dv_.value();
+  // dk = dk_.value();
+  // dq = dq_.value();
+  // dv = dv.squeeze(0);
+  // dk = dk.squeeze(0);
+  // dq = dq.squeeze(0);
+  // // permute the tensor to the expected shape in buffer
+  // dv = dv.permute({1, 2, 0});
+  // dk = dk.permute({1, 2, 0});
+  // dq = dq.permute({1, 2, 0});
 
-  // restore the tensor to the buffer in meta
-  DT *dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
-               2 * num_tokens * (m->qProjSize * m->num_q_heads);
-  restoreTorchTensorToCuda(dv, dv_ptr);
+  // // restore the tensor to the buffer in meta
+  // DT *dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+  //              2 * num_tokens * (m->qProjSize * m->num_q_heads);
+  // restoreTorchTensorToCuda(dv, dv_ptr);
 
-  DT *dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
-               num_tokens * (m->qProjSize * m->num_q_heads);
-  restoreTorchTensorToCuda(dk, dk_ptr);
+  // DT *dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+  //              num_tokens * (m->qProjSize * m->num_q_heads);
+  // restoreTorchTensorToCuda(dk, dk_ptr);
 
-  DT *dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
-  restoreTorchTensorToCuda(dq, dq_ptr);
+  // DT *dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
+  // restoreTorchTensorToCuda(dq, dq_ptr);
 
   // end step 2
   // ================================================================
