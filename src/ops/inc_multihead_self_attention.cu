@@ -675,7 +675,8 @@ template <typename DT>
 torch::Dtype getTorchDtype() {
   if constexpr (std::is_same_v<DT, at::Half> || std::is_same_v<DT, half>) {
     return torch::kFloat16;
-  } else if constexpr (std::is_same_v<DT, at::BFloat16> || std::is_same_v<DT, nv_bfloat16>) {
+  } else if constexpr (std::is_same_v<DT, at::BFloat16> ||
+                       std::is_same_v<DT, nv_bfloat16>) {
     return torch::kBFloat16;
   } else {
     static_assert(!std::is_same_v<DT, DT>,
@@ -891,7 +892,7 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   window_size_left = m->flash_attn_window_size_left;
   window_size_right = m->flash_attn_window_size_right;
   softcap = m->flash_attn_softcap;
-  deterministic = false; //m->inference_debugging; // only for debugging
+  deterministic = false; // m->inference_debugging; // only for debugging
 
   // recompute alibi slopes (should be the same as in flash_peft_bwd_kernel)
   if (*m->position_bias) {
@@ -1560,37 +1561,37 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   int window_size_left, window_size_right;
 
   set_wrapper_mha_fwd_1_params_peft<DT>(m,
-                                    bc,
-                                    attn_heads,
-                                    shard_id,
-                                    q,
-                                    k,
-                                    v,
-                                    out_,
-                                    alibi_slopes_,
-                                    p_dropout,
-                                    softmax_scale,
-                                    is_causal,
-                                    window_size_left,
-                                    window_size_right,
-                                    softcap,
-                                    return_softmax,
-                                    gen_);
+                                        bc,
+                                        attn_heads,
+                                        shard_id,
+                                        q,
+                                        k,
+                                        v,
+                                        out_,
+                                        alibi_slopes_,
+                                        p_dropout,
+                                        softmax_scale,
+                                        is_causal,
+                                        window_size_left,
+                                        window_size_right,
+                                        softcap,
+                                        return_softmax,
+                                        gen_);
 
   auto result = _wrapper_mha_fwd_1(q,
-                                                             k,
-                                                             v,
-                                                             out_,
-                                                             alibi_slopes_,
-                                                             p_dropout,
-                                                             softmax_scale,
-                                                             is_causal,
-                                                             window_size_left,
-                                                             window_size_right,
-                                                             softcap,
-                                                             return_softmax,
-                                                             gen_,
-                                                             peft_stream);
+                                   k,
+                                   v,
+                                   out_,
+                                   alibi_slopes_,
+                                   p_dropout,
+                                   softmax_scale,
+                                   is_causal,
+                                   window_size_left,
+                                   window_size_right,
+                                   softcap,
+                                   return_softmax,
+                                   gen_,
+                                   peft_stream);
   auto out = result[0];
   auto softmax_lse = result[1];
   auto p = result[2];
@@ -2155,40 +2156,40 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   // printf("obtained handler\n");
   assert(sizeof(DT) == 2 && "FlashInfer only supports half precision");
   DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
-     // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
-     cudaError_t result =
-         BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
-                                                       HEAD_DIM,
-                                                       LogitsPostHook::kNone,
-                                                       PosEncodingMode::kNone,
-                                                       false,
-                                                       MaskMode::kCausal,
-                                                       half,
-                                                       half,
-                                                       half,
-                                                       int32_t>(
-             static_cast<BatchPrefillHandler *>(handler),
-             q,
-             m->handle.incr_attention_metadata->q_indptr,
-             /*q_offset=*/nullptr,
-             paged_kv,
-             /*custom_mask=*/nullptr,
-             /*qk_indptr=*/nullptr,
-             o,
-             /*lse=*/nullptr,
-             num_q_heads,
-             /*window_left=*/-1,
-             /*logits_soft_cap=*/0.f,
-             sm_scale,
-             /*rope_scale=*/1.f,
-             /*rope_theta=*/static_cast<float>(1e4),
-             stream);
-     if (result != cudaSuccess) {
-       throw std::runtime_error("Failed to run "
-                                "IncrementalDecodingAttentionForwardKernel: " +
-                                std::string(cudaGetErrorString(result)));
-     }
-   });
+    // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
+    cudaError_t result =
+        BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
+                                                      HEAD_DIM,
+                                                      LogitsPostHook::kNone,
+                                                      PosEncodingMode::kNone,
+                                                      false,
+                                                      MaskMode::kCausal,
+                                                      half,
+                                                      half,
+                                                      half,
+                                                      int32_t>(
+            static_cast<BatchPrefillHandler *>(handler),
+            q,
+            m->handle.incr_attention_metadata->q_indptr,
+            /*q_offset=*/nullptr,
+            paged_kv,
+            /*custom_mask=*/nullptr,
+            /*qk_indptr=*/nullptr,
+            o,
+            /*lse=*/nullptr,
+            num_q_heads,
+            /*window_left=*/-1,
+            /*logits_soft_cap=*/0.f,
+            sm_scale,
+            /*rope_scale=*/1.f,
+            /*rope_theta=*/static_cast<float>(1e4),
+            stream);
+    if (result != cudaSuccess) {
+      throw std::runtime_error("Failed to run "
+                               "IncrementalDecodingAttentionForwardKernel: " +
+                               std::string(cudaGetErrorString(result)));
+    }
+  });
 }
 
 // TODO(yingyi): replace with flash-attn
@@ -2858,50 +2859,50 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   std::optional<at::Tensor> rng_state = std::nullopt;
 
   set_wrapper_mha_bwd_1_params_peft<DT>(m,
-                                    bc,
-                                    shard_id,
-                                    input_grad_ptr,
-                                    output_grad_ptr,
-                                    dout,
-                                    q,
-                                    k,
-                                    v,
-                                    out,
-                                    softmax_lse,
-                                    dq_,
-                                    dk_,
-                                    dv_,
-                                    alibi_slopes_,
-                                    p_dropout,
-                                    softmax_scale,
-                                    is_causal,
-                                    window_size_left,
-                                    window_size_right,
-                                    softcap,
-                                    deterministic,
-                                    gen_,
-                                    rng_state);
+                                        bc,
+                                        shard_id,
+                                        input_grad_ptr,
+                                        output_grad_ptr,
+                                        dout,
+                                        q,
+                                        k,
+                                        v,
+                                        out,
+                                        softmax_lse,
+                                        dq_,
+                                        dk_,
+                                        dv_,
+                                        alibi_slopes_,
+                                        p_dropout,
+                                        softmax_scale,
+                                        is_causal,
+                                        window_size_left,
+                                        window_size_right,
+                                        softcap,
+                                        deterministic,
+                                        gen_,
+                                        rng_state);
 
   auto result = _wrapper_mha_bwd_1(dout,
-                                    q,
-                                    k,
-                                    v,
-                                    out,
-                                    softmax_lse,
-                                    dq_,
-                                    dk_,
-                                    dv_,
-                                    alibi_slopes_,
-                                    p_dropout,
-                                    softmax_scale,
-                                    is_causal,
-                                    window_size_left,
-                                    window_size_right,
-                                    softcap,
-                                    deterministic,
-                                    gen_,
-                                    rng_state,
-                                    peft_stream);
+                                   q,
+                                   k,
+                                   v,
+                                   out,
+                                   softmax_lse,
+                                   dq_,
+                                   dk_,
+                                   dv_,
+                                   alibi_slopes_,
+                                   p_dropout,
+                                   softmax_scale,
+                                   is_causal,
+                                   window_size_left,
+                                   window_size_right,
+                                   softcap,
+                                   deterministic,
+                                   gen_,
+                                   rng_state,
+                                   peft_stream);
   auto dq = result[0];
   auto dk = result[1];
   auto dv = result[2];
@@ -3005,15 +3006,17 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
                                                      output.get_half_ptr(),
                                                      inf_stream,
                                                      peft_stream);
-  } else if (input.data_type == DT_FLOAT) {
-    Kernels::IncMultiHeadAttention::inference_kernel(m,
-                                                     bc,
-                                                     shard_id,
-                                                     input.get_float_ptr(),
-                                                     output.get_float_ptr(),
-                                                     inf_stream,
-                                                     peft_stream);
-  } else {
+  }
+  // else if (input.data_type == DT_BFLOAT16) {
+  //   Kernels::IncMultiHeadAttention::inference_kernel(m,
+  //                                                    bc,
+  //                                                    shard_id,
+  //                                                    input.get_bfloat16_ptr(),
+  //                                                    output.get_bfloat16_ptr(),
+  //                                                    inf_stream,
+  //                                                    peft_stream);
+  // }
+  else {
     assert(false && "Unspported data type");
   }
 
@@ -3066,26 +3069,27 @@ void IncMultiHeadSelfAttention::peft_bwd_kernel_wrapper(
                                                     output_grad.get_half_ptr(),
                                                     stream);
 #endif
-  } else if (input_grad.data_type == DT_FLOAT) {
-    assert(!m->offload);
-// #ifdef USE_FLASH_ATTENTION_1
-#if USE_FLASH_ATTENTION
-    Kernels::IncMultiHeadAttention::flash_peft_bwd_kernel(
-        m,
-        bc,
-        shard_id,
-        input_grad.get_float_ptr(),
-        output_grad.get_float_ptr(),
-        stream);
-#else
-    Kernels::IncMultiHeadAttention::peft_bwd_kernel(m,
-                                                    bc,
-                                                    shard_id,
-                                                    input_grad.get_float_ptr(),
-                                                    output_grad.get_float_ptr(),
-                                                    stream);
-#endif
-  } else {
+  }
+  //   else if (input_grad.data_type == DT_BFLOAT16) {
+  //     assert(!m->offload);
+  // #if USE_FLASH_ATTENTION
+  //     Kernels::IncMultiHeadAttention::flash_peft_bwd_kernel(
+  //         m,
+  //         bc,
+  //         shard_id,
+  //         input_grad.get_bfloat16_ptr(),
+  //         output_grad.get_bfloat16_ptr(),
+  //         stream);
+  // #else
+  //     Kernels::IncMultiHeadAttention::peft_bwd_kernel(m,
+  //                                                     bc,
+  //                                                     shard_id,
+  //                                                     input_grad.get_float_ptr(),
+  //                                                     output_grad.get_float_ptr(),
+  //                                                     stream);
+  // #endif
+  //   }
+  else {
     assert(false && "Unspported data type");
   }
   if (m->profiling) {
@@ -3287,19 +3291,19 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       allocated_peft_buffer_size2 = BatchConfig::max_sequence_length() *
                                     BatchConfig::max_sequence_length() *
                                     num_q_heads * size_of_dt;
-      flash_attn_softmax_lse_size = BatchConfig::max_sequence_length() *
-                                    num_q_heads * size_of_dt;
+      flash_attn_softmax_lse_size =
+          BatchConfig::max_sequence_length() * num_q_heads * size_of_dt;
       flash_attn_out_size = qProjSize * num_q_heads *
-                           BatchConfig::max_sequence_length() * size_of_dt;
+                            BatchConfig::max_sequence_length() * size_of_dt;
       peft_token_infos = (BatchConfig::PerTokenInfo *)calloc(
           1,
           sizeof(BatchConfig::PerTokenInfo) *
               BatchConfig::max_sequence_length());
       peft_token_infos_size = sizeof(BatchConfig::PerTokenInfo) *
                               BatchConfig::max_sequence_length();
-      peft_instance_size +=
-          allocated_peft_buffer_size1 + allocated_peft_buffer_size2 +
-          flash_attn_softmax_lse_size + flash_attn_out_size;
+      peft_instance_size += allocated_peft_buffer_size1 +
+                            allocated_peft_buffer_size2 +
+                            flash_attn_softmax_lse_size + flash_attn_out_size;
       peft_instance_size += peft_token_infos_size;
     }
 
