@@ -723,9 +723,11 @@ void restoreTorchTensorToCuda(torch::Tensor &torch_tensor, DT *data_ptr) {
   size_t num_bytes = torch_tensor.nbytes();
 
   // Copy from torch_tensor data to device pointer
-  cudaError_t err = cudaMemcpy(data_ptr, torch_tensor.data_ptr(), num_bytes, cudaMemcpyDeviceToDevice);
+  cudaError_t err = cudaMemcpy(
+      data_ptr, torch_tensor.data_ptr(), num_bytes, cudaMemcpyDeviceToDevice);
   if (err != cudaSuccess) {
-      throw std::runtime_error("cudaMemcpy failed: " + std::string(cudaGetErrorString(err)));
+    throw std::runtime_error("cudaMemcpy failed: " +
+                             std::string(cudaGetErrorString(err)));
   }
 }
 
@@ -868,8 +870,9 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   int req_idx = bc->finetuning_request_index();
   // signed long batch_size = 1;
   signed long seqlen_q = bc->requestsInfo[req_idx].num_tokens_in_batch;
-  signed long seqlen_k = bc->requestsInfo[req_idx].first_token_depth_in_request +
-                         bc->requestsInfo[req_idx].num_tokens_in_batch;
+  signed long seqlen_k =
+      bc->requestsInfo[req_idx].first_token_depth_in_request +
+      bc->requestsInfo[req_idx].num_tokens_in_batch;
   int num_new_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
   int total_tokens = bc->requestsInfo[req_idx].first_token_depth_in_request +
                      bc->requestsInfo[req_idx].num_tokens_in_batch;
@@ -952,9 +955,12 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   dk_ = torch::empty_like(k);
   dv_ = torch::empty_like(v);
 
-  rng_state = torch::zeros({2}, opts.dtype(torch::kInt64));
-  rng_state.value().data_ptr<int64_t>()[0] = m->flash_attn_rng_state_0;
-  rng_state.value().data_ptr<int64_t>()[1] = m->flash_attn_rng_state_1;
+  // todo(yingyi): review ths later
+  // no rng_state for zero p_dropout
+  rng_state = std::nullopt;
+  // rng_state = torch::zeros({2}, opts.dtype(torch::kInt64));
+  // rng_state.value().data_ptr<int64_t>()[0] = m->flash_attn_rng_state_0;
+  // rng_state.value().data_ptr<int64_t>()[1] = m->flash_attn_rng_state_1;
 
   // only for results alignment
   if (m->inference_debugging) {
@@ -974,13 +980,15 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
         get_peft_dbg_folder(m, shard_id) + ".bwd_softmax_lse.pt";
     torch::save(softmax_lse.clone().detach(), softmax_lse_fpath);
 
-    std::string alibi_slopes_fpath =
-        get_peft_dbg_folder(m, shard_id) + ".bwd_alibi_slopes.pt";
-    torch::save(alibi_slopes_.value().clone().detach(), alibi_slopes_fpath);
+    if (alibi_slopes_.has_value()) {
+      std::string alibi_slopes_fpath =
+          get_peft_dbg_folder(m, shard_id) + ".bwd_alibi_slopes.pt";
+      torch::save(alibi_slopes_.value().clone().detach(), alibi_slopes_fpath);
+    }
 
-    std::string rng_state_fpath =
-        get_peft_dbg_folder(m, shard_id) + ".bwd_rng_state.pt";
-    torch::save(rng_state.value().clone().detach(), rng_state_fpath);
+    // std::string rng_state_fpath =
+    //     get_peft_dbg_folder(m, shard_id) + ".bwd_rng_state.pt";
+    // torch::save(rng_state.value().clone().detach(), rng_state_fpath);
   }
 }
 
@@ -1601,8 +1609,8 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   // ========================================================================
   // print out the shapes and values of the tensors
   // save rng_state for backward context
-  m->flash_attn_rng_state_0 = rng_state[0].item<int64_t>();
-  m->flash_attn_rng_state_1 = rng_state[1].item<int64_t>();
+  // m->flash_attn_rng_state_0 = rng_state[0].item<int64_t>();
+  // m->flash_attn_rng_state_1 = rng_state[1].item<int64_t>();
   if (m->inference_debugging) {
     std::string out_fpath = get_peft_dbg_folder(m, shard_id) + ".fwd_out.pt";
     torch::save(out.clone().detach(), out_fpath);
@@ -1611,15 +1619,20 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
         get_peft_dbg_folder(m, shard_id) + ".fwd_softmax_lse.pt";
     torch::save(softmax_lse.clone().detach(), softmax_lse_fpath);
 
-    std::string rng_state_fpath =
-        get_peft_dbg_folder(m, shard_id) + ".fwd_rng_state.pt";
-    torch::save(rng_state.clone().detach(), rng_state_fpath);
+    // std::string rng_state_fpath =
+    //     get_peft_dbg_folder(m, shard_id) + ".fwd_rng_state.pt";
+    // torch::save(rng_state.clone().detach(), rng_state_fpath);
   }
 
   // copy out to flash_attn_out for bwd
   // todo(gabriele): review the layout of flash_attn_out
   // same layout as out tensor (head_size, num_q_heads, num_new_tokens)
-  memcpy(m->flash_attn_out, out.data_ptr(), out.numel() * sizeof(DT));
+  // use decive2device memcpy async
+  checkCUDA(cudaMemcpyAsync(m->flash_attn_out,
+                            out.data_ptr(),
+                            out.numel() * sizeof(DT),
+                            cudaMemcpyDeviceToDevice,
+                            peft_stream));
   // softmax_lse is saved in the data_ptr of softmax_lse tensor
   // end step 2
   // ========================================================================
@@ -3291,19 +3304,24 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       allocated_peft_buffer_size2 = BatchConfig::max_sequence_length() *
                                     BatchConfig::max_sequence_length() *
                                     num_q_heads * size_of_dt;
+#if USE_FLASH_ATTENTION
       flash_attn_softmax_lse_size =
           BatchConfig::max_sequence_length() * num_q_heads * size_of_dt;
       flash_attn_out_size = qProjSize * num_q_heads *
                             BatchConfig::max_sequence_length() * size_of_dt;
+#else
+      flash_attn_softmax_lse_size = 0;
+      flash_attn_out_size = 0;
+#endif
       peft_token_infos = (BatchConfig::PerTokenInfo *)calloc(
           1,
           sizeof(BatchConfig::PerTokenInfo) *
               BatchConfig::max_sequence_length());
       peft_token_infos_size = sizeof(BatchConfig::PerTokenInfo) *
                               BatchConfig::max_sequence_length();
-      peft_instance_size += allocated_peft_buffer_size1 +
-                            allocated_peft_buffer_size2 +
-                            flash_attn_softmax_lse_size + flash_attn_out_size;
+      peft_instance_size +=
+          allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
+      peft_instance_size += flash_attn_softmax_lse_size + flash_attn_out_size;
       peft_instance_size += peft_token_infos_size;
     }
 
@@ -3367,20 +3385,19 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
 #if USE_FLASH_ATTENTION
       // todo(gabriele): review the allocation of flash-attn bwd context
       // flash-attn out: (head_size, num_q_heads, num_new_tokens)
-      flash_attn_out = peft_mem_allocator.allocate_instance_untyped(
-          qProjSize * num_q_heads * BatchConfig::max_sequence_length() *
-          size_of_dt);
+      flash_attn_out =
+          peft_mem_allocator.allocate_instance_untyped(flash_attn_out_size);
       // flash-attn softmax_lse
       flash_attn_softmax_lse = peft_mem_allocator.allocate_instance_untyped(
-          BatchConfig::max_sequence_length() * num_q_heads * size_of_dt);
+          flash_attn_softmax_lse_size);
 
       // todo(gabriele): review flash-attn metadara
       flash_attn_p_dropout = 0.0f;
       flash_attn_is_causal = true;
       flash_attn_return_softmax = false;
       flash_attn_softcap = 0.0f;
-      flash_attn_rng_state_0 = 0;
-      flash_attn_rng_state_1 = 0;
+      // flash_attn_rng_state_0 = 0;
+      // flash_attn_rng_state_1 = 0;
       flash_attn_window_size_left = -1;
       flash_attn_window_size_right = -1;
 #endif
