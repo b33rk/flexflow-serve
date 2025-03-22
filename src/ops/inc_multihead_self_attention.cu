@@ -668,19 +668,15 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
 }
 
 #if USE_FLASH_ATTENTION
-// TODO(gabriele): only support fp16 and bf16. Do we need to support 32?
+// TODO(gabriele): only support fp16 and bf16.
 // helper: Convert flexflow datatype to torch datatype
 // only used in flash_compute_attention_kernel_peft
 template <typename DT>
 torch::Dtype getTorchDtype() {
-  if constexpr (std::is_same_v<DT, at::Half>) {
+  if constexpr (std::is_same_v<DT, at::Half> || std::is_same_v<DT, half>) {
     return torch::kFloat16;
-  } else if constexpr (std::is_same_v<DT, at::BFloat16>) {
+  } else if constexpr (std::is_same_v<DT, at::BFloat16> || std::is_same_v<DT, nv_bfloat16>) {
     return torch::kBFloat16;
-  } else if constexpr (std::is_same_v<DT, half>) { // Handle CUDA's __half
-    return torch::kFloat16;
-  } else if constexpr (std::is_same_v<DT, float>) { // Handle float
-    return torch::kFloat32;
   } else {
     static_assert(!std::is_same_v<DT, DT>,
                   "Unsupported datatype. Only fp16 (torch::Half), bf16 "
@@ -726,7 +722,7 @@ void restoreTorchTensorToCuda(torch::Tensor &torch_tensor, DT *data_ptr) {
   size_t num_bytes = torch_tensor.nbytes();
 
   // Copy from torch_tensor data to device pointer
-  cudaError_t err = cudaMemcpy(data_ptr, torch_tensor.data_ptr(), num_bytes, cudaMemcpyHostToDevice);
+  cudaError_t err = cudaMemcpy(data_ptr, torch_tensor.data_ptr(), num_bytes, cudaMemcpyDeviceToDevice);
   if (err != cudaSuccess) {
       throw std::runtime_error("cudaMemcpy failed: " + std::string(cudaGetErrorString(err)));
   }
@@ -834,9 +830,11 @@ void set_wrapper_mha_fwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
     torch::save(k.clone().detach(), k_fpath);
     torch::save(v.clone().detach(), v_fpath);
 
-    std::string alibi_slopes_fpath =
-        get_peft_dbg_folder(m, shard_id) + ".fwd_alibi_slopes.pt";
-    torch::save(alibi_slopes_.value().clone().detach(), alibi_slopes_fpath);
+    if (*m->position_bias && m->inference_debugging) {
+      std::string alibi_slopes_fpath =
+          get_peft_dbg_folder(m, shard_id) + ".fwd_alibi_slopes.pt";
+      torch::save(alibi_slopes_.value().clone().detach(), alibi_slopes_fpath);
+    }
   }
 }
 
@@ -893,7 +891,7 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   window_size_left = m->flash_attn_window_size_left;
   window_size_right = m->flash_attn_window_size_right;
   softcap = m->flash_attn_softcap;
-  deterministic = m->inference_debugging; // only for debugging
+  deterministic = false; //m->inference_debugging; // only for debugging
 
   // recompute alibi slopes (should be the same as in flash_peft_bwd_kernel)
   if (*m->position_bias) {
@@ -3176,9 +3174,10 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   num_q_heads = _num_q_heads;
   num_kv_heads = _num_kv_heads;
 
-  rotary_embedding_meta =
-      (RotaryEmbeddingMeta *)calloc(1, sizeof(RotaryEmbeddingMeta));
-  *rotary_embedding_meta = _rotary_embedding_meta;
+  // rotary_embedding_meta =
+  //     (RotaryEmbeddingMeta *)calloc(1, sizeof(RotaryEmbeddingMeta));
+  // *rotary_embedding_meta = _rotary_embedding_meta;
+  rotary_embedding_meta = new RotaryEmbeddingMeta(_rotary_embedding_meta);
   scaling_query = (bool *)calloc(1, sizeof(bool));
   *scaling_query = _scaling_query;
   scaling_factor = _scaling_factor;
@@ -3288,6 +3287,10 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       allocated_peft_buffer_size2 = BatchConfig::max_sequence_length() *
                                     BatchConfig::max_sequence_length() *
                                     num_q_heads * size_of_dt;
+      flash_attn_softmax_lse_size = BatchConfig::max_sequence_length() *
+                                    num_q_heads * size_of_dt;
+      flash_attn_out_size = qProjSize * num_q_heads *
+                           BatchConfig::max_sequence_length() * size_of_dt;
       peft_token_infos = (BatchConfig::PerTokenInfo *)calloc(
           1,
           sizeof(BatchConfig::PerTokenInfo) *
@@ -3295,7 +3298,8 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       peft_token_infos_size = sizeof(BatchConfig::PerTokenInfo) *
                               BatchConfig::max_sequence_length();
       peft_instance_size +=
-          allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
+          allocated_peft_buffer_size1 + allocated_peft_buffer_size2 +
+          flash_attn_softmax_lse_size + flash_attn_out_size;
       peft_instance_size += peft_token_infos_size;
     }
 

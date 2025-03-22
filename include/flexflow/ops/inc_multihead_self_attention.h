@@ -203,6 +203,7 @@ public:
   size_t complex_size = 0, complex_size_bwd = 0;             // numel
   size_t qk_prod_size = 0;                                   // numel
   size_t allocated_peft_buffer_size1 = 0, allocated_peft_buffer_size2 = 0,
+         flash_attn_softmax_lse_size = 0, flash_attn_out_size = 0, // peft buffer size
          peft_token_infos_size = 0;
 
   void *devQKVProjArray, *devQKVProjArrayBWD;
