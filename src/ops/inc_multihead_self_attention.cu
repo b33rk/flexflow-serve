@@ -841,6 +841,7 @@ void set_wrapper_mha_fwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   }
 }
 
+// todo(yingyi):init dq_, dk_, dv_ by peft pre-allocated buffer
 template <typename DT>
 void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
                                        BatchConfig const *bc,
@@ -2953,13 +2954,13 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   dv = dv_.value();
   dk = dk_.value();
   dq = dq_.value();
-  dv.squeeze(0);
-  dk.squeeze(0);
-  dq.squeeze(0);
+  dv = dv.squeeze(0);
+  dk = dk.squeeze(0);
+  dq = dq.squeeze(0);
   // permute the tensor to the expected shape in buffer
-  dv.permute({1, 2, 0});
-  dk.permute({1, 2, 0});
-  dq.permute({1, 2, 0});
+  dv = dv.permute({1, 2, 0});
+  dk = dk.permute({1, 2, 0});
+  dq = dq.permute({1, 2, 0});
 
   // restore the tensor to the buffer in meta
   DT *dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
