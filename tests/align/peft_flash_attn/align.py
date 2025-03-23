@@ -169,6 +169,15 @@ def flash_attention(q, k, v, is_causal, dout, alibi_slopes=None):
     # k: [batch_size, seqlen_k, num_heads_k, head_size]
     # v: [batch_size, seqlen_v, num_heads_k, head_size]
 
+    # print shape
+    print(f"q shape: {q.shape}")
+    print(f"k shape: {k.shape}")
+    print(f"v shape: {v.shape}")
+
+    q.requires_grad = True
+    k.requires_grad = True
+    v.requires_grad = True
+
     head_size = q.shape[-1]
 
     # Define scaling factor
@@ -185,13 +194,13 @@ def flash_attention(q, k, v, is_causal, dout, alibi_slopes=None):
         alibi_slopes=alibi_slopes,
     )
 
-    # Permute to match our manual implementation's output shape [batch_size, num_heads, seqlen_q, head_size]
-    flash_attn_out_permuted = flash_attn_out.permute(0, 2, 1, 3)
+    # # Permute to match our manual implementation's output shape [batch_size, num_heads, seqlen_q, head_size]
+    # flash_attn_out_permuted = flash_attn_out.permute(0, 2, 1, 3)
 
     # backward pass
     flash_attn_out.backward(dout)
 
-    return flash_attn_out_permuted, flash_softmax_lse, q.grad, k.grad, v.grad
+    return flash_attn_out, flash_softmax_lse, q.grad, k.grad, v.grad
 
 
 def check_closeness_between_flexflow_and_flash_attn(

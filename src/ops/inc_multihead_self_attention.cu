@@ -970,12 +970,8 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   dv_ = dv;
 
   auto opts = q.options();
-  softmax_lse =
-      torch::from_blob(static_cast<float *>(m->flash_attn_softmax_lse),
-                       {1, num_heads, bc->requestsInfo[req_idx].max_length},
-                       opts.dtype(at::kFloat));
-  softmax_lse = softmax_lse.slice(
-      2, tokens_previous_steps, tokens_previous_steps + seqlen_q);
+  softmax_lse = torch::from_blob(static_cast<float *>(m->flash_attn_softmax_lse),
+                                 {1, num_heads, seqlen_q}, opts.dtype(at::kFloat));
 
   dq_ = torch::empty_like(q);
   dk_ = torch::empty_like(k);
@@ -1650,8 +1646,9 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     // torch::save(rng_state.clone().detach(), rng_state_fpath);
   }
 
-  // copy out to flash_attn_out for bwd
+  // todo(yingyi): fix copy temp out to meta out
   // todo(gabriele): review the layout of flash_attn_out
+  // copy out to flash_attn_out for bwd
   // same layout as out tensor (head_size, num_q_heads, num_new_tokens)
   // use decive2device memcpy async
   checkCUDA(cudaMemcpyAsync(m->flash_attn_out,
@@ -1659,7 +1656,14 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                             out.numel() * sizeof(DT),
                             cudaMemcpyDeviceToDevice,
                             peft_stream));
-  // softmax_lse is saved in the data_ptr of softmax_lse tensor
+
+  // copy softmax_lse to flash_attn_softmax_lse for bwd
+  // layout: (batch_size, num_heads, seqlen_q)
+  checkCUDA(cudaMemcpyAsync(m->flash_attn_softmax_lse,
+                            softmax_lse.data_ptr(),
+                            softmax_lse.numel() * sizeof(float),
+                            cudaMemcpyDeviceToDevice,
+                            peft_stream));
   // end step 2
   // ========================================================================
 
@@ -3332,7 +3336,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                     num_q_heads * size_of_dt;
 #if USE_FLASH_ATTENTION
       flash_attn_softmax_lse_size =
-          BatchConfig::max_sequence_length() * num_q_heads * size_of_dt;
+          BatchConfig::max_sequence_length() * num_q_heads * sizeof(float);
       flash_attn_out_size = qProjSize * num_q_heads *
                             BatchConfig::max_sequence_length() * size_of_dt;
 #else
