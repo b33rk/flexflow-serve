@@ -150,9 +150,13 @@ class LlamaAlignmentTest(AlignmentTest):
             if not os.path.isfile(hf_tensor_path):
                 raise FileNotFoundError(f"File '{hf_tensor_path}' not found")
             print("loading hf tensor: ", hf_tensor_filename)
-            hf_tensor = torch.load(hf_tensor_path, map_location='cpu').squeeze()
-            if hf_tensor_name == "embed_tokens":
-                self.num_tokens = hf_tensor.shape[0]
+            hf_tensor = torch.load(hf_tensor_path, map_location='cpu')#.squeeze()
+            if hf_tensor_name == "embed_tokens" and "input" in hf_tensor_filename:
+                # if len(hf_tensor.shape) == 0:
+                #     self.num_tokens = 1
+                # else:
+                # print("hf_tensor.shape: ", hf_tensor.shape)
+                self.num_tokens = hf_tensor.shape[1] if len(hf_tensor.shape) > 1 else 1
             return hf_tensor
 
         def get_ff_tensor(ff_tensor_name, tensor_comparison_idx, tp_type=TPType.REPLICATE):
@@ -186,6 +190,9 @@ class LlamaAlignmentTest(AlignmentTest):
             else:
                 ff_tensor = ff_tensors[0]
 
+            # print("ff_tensor:", ff_tensor.shape)
+            # print("self.ff_batch_size: ", self.ff_batch_size)
+            # print("self.num_tokens: ", self.num_tokens)
             ff_tensor = truncate_dimension(ff_tensor, self.ff_batch_size, self.num_tokens)
             return ff_tensor
 
@@ -195,6 +202,8 @@ class LlamaAlignmentTest(AlignmentTest):
             if additional_ff_tensor is not None:
                 additional_ff_tensor = additional_ff_tensor.to(hf_tensor.dtype)
                 ff_tensor = ff_tensor - additional_ff_tensor
+            hf_tensor = hf_tensor.squeeze()
+            ff_tensor = ff_tensor.squeeze()
             try:
                 # torch.testing.assert_close(hf_tensor, ff_tensor, rtol=1.3e-6, atol=tolerance)
                 if not np.allclose(hf_tensor.detach().numpy(), ff_tensor.detach().numpy(), atol=tolerance):
@@ -261,7 +270,8 @@ class LlamaAlignmentTest(AlignmentTest):
             torch.testing.assert_close(hf_k_proj_in, hf_v_proj_in)
             compare(hf_q_proj_in, ff_qkv_tensor_in, label=f"QKV proj {i} input")
 
-            seq_len, hidden_dim = hf_q_proj_out.shape
+            # print(hf_q_proj_out.shape)
+            bz, seq_len, hidden_dim = hf_q_proj_out.shape
             head_dim = hidden_dim // self.num_attention_heads
             tot_num_heads = self.num_attention_heads + 2*self.num_key_value_heads
 
@@ -373,13 +383,14 @@ class LlamaAlignmentTest(AlignmentTest):
         ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
         input_comparison = TensorComparisonIdxs(hf_tensor_type="input", ff_tensor_type="input", hf_tensor_idx=0, ff_tensor_idx=0)
         hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.REPLICATE)[:,:,-1].squeeze()
+        ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.REPLICATE)[:,-1].squeeze()
+        #[:,:,-1].squeeze()
         hf_tensor = hf_tensor.squeeze()
         # print(hf_tensor.shape, ff_tensor.shape)
         compare(hf_tensor, ff_tensor, label="LM head input")
         output_comparison = TensorComparisonIdxs(hf_tensor_type="output", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=0)
         hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.PARTITION)[:,:,-1].squeeze()
+        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.PARTITION)[:,-1].squeeze()
         hf_tensor = hf_tensor.squeeze()
         compare(hf_tensor, ff_tensor, label="LM head output")
 
