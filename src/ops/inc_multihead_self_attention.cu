@@ -789,9 +789,9 @@ void set_wrapper_mha_fwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   return_softmax = m->flash_attn_return_softmax;
 
   // only support head_size aligned with 8 for now
-  // todo(yingyi): remove this constraint by padding (refer to
-  // flash_attn_interface.py)
-  assert(head_size % 8 == 0);
+  // todo(yingyi): do we need to support non-8 aligned head_size?
+  // refer to flash-attention/flash_attn/flash_attn_interface.py:L836
+  assert(head_size % 8 == 0 && "head_size must be aligned with 8");
 
   // todo(yingyi): might need to pass empty_like tensor and copy data back??
   // Get raw pointer of the output tensor [vProjSize, num_q_heads,
