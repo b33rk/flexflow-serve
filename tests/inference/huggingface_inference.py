@@ -59,9 +59,15 @@ def main():
     else:
         torch.set_default_dtype(torch.float32)
     
+    # Initialize distributed
+    rank = int(os.environ["RANK"])
+    device = torch.device(f"cuda:{rank}")
+    torch.cuda.set_device(device)
+    torch.distributed.init_process_group("nccl", device_id=device)
+    
     # Run huggingface model
     # Get Model
-    model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, attn_implementation="eager", device_map="auto")
+    model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, attn_implementation="eager", tp_plan="auto",)
     # Get Tokenizer
     hf_config = AutoConfig.from_pretrained(args.model_name, trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)

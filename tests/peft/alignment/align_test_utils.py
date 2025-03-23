@@ -432,6 +432,8 @@ def compare_loaded_tensors(hf_tensor, ff_tensor, tolerance=1e-2, label=""):
         pct_mismatch = len(mismatches) / len_hf_tensor
         print(f"{label} {pct_mismatch*100:.3}% mismatch between hf_tensor and ff_tensor")
         print(f"HF: {hf_tensor.squeeze()}\nFF: {ff_tensor.squeeze()}")
+        print("HF shape: ", hf_tensor.squeeze().shape)
+        print("FF shape: ", ff_tensor.squeeze().shape)
         print(np.isclose(hf_tensor.squeeze(), ff_tensor.squeeze(), atol=tolerance))
         # print(mismatches)
     assert len(mismatches) <= 0.05 * len_hf_tensor

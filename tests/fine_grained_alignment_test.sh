@@ -58,7 +58,7 @@ MAX_LENGTH=$((PROMPT_LENGTH + NUM_STEPS + 1))
 if [ "$FULL_PRECISION" = "true" ]; then full_precision_flag="--use-full-precision"; else full_precision_flag=""; fi
 if [ "$FUSION" = "true" ]; then fusion_flag="--fusion"; else fusion_flag=""; fi
 
-eval python ./tests/inference/huggingface_inference.py \
+eval torchrun --nproc-per-node $TP_DEGREE ./tests/inference/huggingface_inference.py \
     --model-name "${MODEL_NAME}" \
     --max-length "${MAX_LENGTH}" \
     --prompt-file ../../inference/prompt/test.json \
@@ -91,6 +91,9 @@ END
 echo "$json_config" > /tmp/fine_grained_alignment_config.json
 
 python ./inference/python/incr_decoding.py -config-file /tmp/fine_grained_alignment_config.json
+
+
+python ./tests/inference/inference_alignment_test.py -m "$MODEL_NAME" -tp "$TP_DEGREE" -n "$NUM_STEPS"
 
 # C++ test
 echo "C++ test"

@@ -32,7 +32,8 @@ def make_debug_dirs():
 def get_dst_folder(subdir, step_idx=0):
     global debug_dir, debug_subdirs
     assert subdir in debug_subdirs
-    dst_folder = os.path.join(debug_dir, subdir, f"step_{step_idx}")
+    shard_id = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    dst_folder = os.path.join(debug_dir, subdir, f"step_{step_idx}", f"shard_{shard_id}")
     os.makedirs(dst_folder, exist_ok=True)
     return dst_folder
 
@@ -158,7 +159,18 @@ def fwd_hook(module, input, output):
             else:
                 if verbose:
                     print(out)
+    elif isinstance(output, torch.distributed._functional_collectives.AsyncCollectiveTensor):
+        # Handle AsyncCollectiveTensor by waiting for the result and saving it
+        async_result = output.wait()  # retrieve the computed tensor
+        # print(async_result.type())
+        # if verbose:
+        #     print(async_result.shape)
+        dst_folder = get_dst_folder("fwd", module.fwd_step)
+        dst_filepath = os.path.join(dst_folder, f"{name}.output_0")
+        print(dst_filepath)
+        torch.save(async_result, dst_filepath)
     else:
+        print(type(output))
         assert False
     if verbose:
         print("===")
