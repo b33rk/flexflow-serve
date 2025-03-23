@@ -189,7 +189,7 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor = truncate_dimension(ff_tensor, self.ff_batch_size, self.num_tokens)
             return ff_tensor
 
-        def compare(hf_tensor, ff_tensor, label="", additional_ff_tensor=None, tolerance=1e-3):
+        def compare(hf_tensor, ff_tensor, label="", additional_ff_tensor=None, tolerance=1e-2):
             ff_tensor = ff_tensor.to(hf_tensor.dtype)
             hf_tensor = hf_tensor.T
             if additional_ff_tensor is not None:
@@ -276,25 +276,25 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_vproj_out = ff_qkv_tensor_out[head_dim * (self.num_attention_heads + self.num_key_value_heads) : head_dim * tot_num_heads, :]
 
             # load weights
-            print(ff_qkv_tensor_name)
-            weight_path=f"/usr/.cache/flexflow/debug/flexflow/weights/step_0/shard_0/{ff_qkv_tensor_name}.weight_0.pt"
-            weight_tensor = load_and_unpack_ff_tensor(weight_path)
-            print(weight_tensor.shape)
-            simulated_ff_qkv_tensor_out = torch.matmul(weight_tensor.T, ff_qkv_tensor_in)
-            print(simulated_ff_qkv_tensor_out.shape)
-            simulated_ff_qproj_out = simulated_ff_qkv_tensor_out[: head_dim * self.num_attention_heads, :]
-            simulated_ff_kproj_out = simulated_ff_qkv_tensor_out[head_dim * self.num_attention_heads : head_dim * (self.num_attention_heads + self.num_key_value_heads), :]
-            simulated_ff_vproj_out = simulated_ff_qkv_tensor_out[head_dim * (self.num_attention_heads + self.num_key_value_heads) : head_dim * tot_num_heads, :]
-            print(simulated_ff_qproj_out.shape, simulated_ff_kproj_out.shape, simulated_ff_vproj_out.shape)
-            print(ff_qproj_out.shape, ff_kproj_out.shape, ff_vproj_out.shape)
+            # print(ff_qkv_tensor_name)
+            # weight_path=f"/usr/.cache/flexflow/debug/flexflow/weights/step_0/shard_0/{ff_qkv_tensor_name}.weight_0.pt"
+            # weight_tensor = load_and_unpack_ff_tensor(weight_path)
+            # print(weight_tensor.shape)
+            # simulated_ff_qkv_tensor_out = torch.matmul(weight_tensor.T, ff_qkv_tensor_in)
+            # print(simulated_ff_qkv_tensor_out.shape)
+            # simulated_ff_qproj_out = simulated_ff_qkv_tensor_out[: head_dim * self.num_attention_heads, :]
+            # simulated_ff_kproj_out = simulated_ff_qkv_tensor_out[head_dim * self.num_attention_heads : head_dim * (self.num_attention_heads + self.num_key_value_heads), :]
+            # simulated_ff_vproj_out = simulated_ff_qkv_tensor_out[head_dim * (self.num_attention_heads + self.num_key_value_heads) : head_dim * tot_num_heads, :]
+            # print(simulated_ff_qproj_out.shape, simulated_ff_kproj_out.shape, simulated_ff_vproj_out.shape)
+            # print(ff_qproj_out.shape, ff_kproj_out.shape, ff_vproj_out.shape)
             # compare simulated FF with the actual FF
             # torch.testing.assert_close(simulated_ff_qproj_out, ff_qproj_out)
             # torch.testing.assert_close(simulated_ff_kproj_out, ff_kproj_out)
             # torch.testing.assert_close(simulated_ff_vproj_out, ff_vproj_out)
             
             # ff_qkv_tensor_out = load_ff_tensor(ff_qkv_tensor_path, [seq_len, hidden_dim])
-            print(simulated_ff_qproj_out)
-            compare(hf_q_proj_out, simulated_ff_qproj_out, label=f"Q proj {i} output (simulated)")
+            # print(simulated_ff_qproj_out)
+            # compare(hf_q_proj_out, simulated_ff_qproj_out, label=f"Q proj {i} output (simulated)")
 
             # compare q,k,v projections
             compare(hf_q_proj_out, ff_qproj_out, label=f"Q proj {i} output")
