@@ -6,6 +6,7 @@ from flash_attn import flash_attn_func
 import math
 import os
 from collections import defaultdict
+import re
 
 
 def env_check():
@@ -58,73 +59,97 @@ def load_tensor_from_flexflow(base_path="/root/.cache/flexflow/debug/flexflow"):
     ]
 
     # Walk through the directory structure
-    for step_dir in os.listdir(base_path):
-        print(f"Processing directory: {step_dir}")
-        
-        try:
-            if not step_dir.startswith("bwd"):
-                print(f"Skipping non-bwd directory: {step_dir}")
+    for root_dir in os.listdir(base_path):
+        print(f"Processing directory: {root_dir}")
+
+        # the attn tensors are only present in the bwd directory
+        if root_dir != "bwd":
+            print(f"Skipping non-bwd directory: {root_dir}")
+            continue
+
+        root_path = os.path.join(base_path, root_dir)
+        print(f"Found bwd directory at {root_path}")
+
+        # Look for step directories
+        for step_dir in os.listdir(root_path):
+            if not step_dir.startswith("step_"):
+                print(f"Skipping non-step directory: {step_dir}")
                 continue
 
-            parts = step_dir.split("_")
-            if len(parts) < 2:
-                print(f"Warning: Unexpected directory name format: {step_dir}")
+            # Extract step number from "step_X" or "step_X_pre"
+            step_num = step_dir.split("_")[1]
+            try:
+                step_id = int(step_num)
+            except ValueError:
+                print(f"Warning: Could not parse step number from {step_dir}")
                 continue
-                
-            step_id = int(parts[1])
-            step_path = os.path.join(base_path, step_dir)
+
+            step_path = os.path.join(root_path, step_dir)
             print(f"Found step {step_id} at {step_path}")
-            print(f"Step directory contents: {os.listdir(step_path)}")
+            # print(f"Step directory contents: {os.listdir(step_path)}")
 
             for shard_dir in os.listdir(step_path):
-                try:
-                    shard_parts = shard_dir.split("_")
-                    if len(shard_parts) < 2:
-                        print(f"Warning: Unexpected shard directory format: {shard_dir}")
+                if not shard_dir.startswith("shard_"):
+                    print(f"Skipping non-shard directory: {shard_dir}")
+                    continue
+
+                shard_id = int(shard_dir.split("_")[1])  # Extract shard number
+                shard_path = os.path.join(step_path, shard_dir)
+                print(f"Processing shard {shard_id} at {shard_path}")
+
+                for file_name in os.listdir(shard_path):
+                    # Use regex to parse the file name
+                    pattern = r"layers\.(\d+)\.layers\.(\d+)\.(self_attn)\.(.*?)\.pt$"
+                    match = re.match(pattern, file_name)
+
+                    if not match:
+                        # print(f"Skipping file with unexpected format: {file_name}")
                         continue
-                        
-                    shard_id = int(shard_parts[1])  # Extract shard number
-                    shard_path = os.path.join(step_path, shard_dir)
-                    print(f"Processing shard {shard_id} at {shard_path}")
-                    print(f"Shard directory contents: {os.listdir(shard_path)}")
 
-                    for file_name in os.listdir(shard_path):
-                        try:
-                            # Parse layer number and tensor type
-                            parts = file_name.split(".")
-                            if len(parts) < 5 or not parts[0].startswith("layers"):
-                                continue
+                    outer_layer_id = int(match.group(1))
+                    inner_layer_id = int(match.group(2))
+                    module_name = match.group(3)
+                    tensor_type = match.group(4)
 
-                            layer_id = int(parts[1])
-                            # Extract tensor type (e.g., fwd_q, bwd_k, etc.)
-                            tensor_type = ".".join(parts[3:]).replace(".pt", "")
-                            if tensor_type not in tensor_types:
-                                continue
+                    # Combine layer IDs to create a unique layer identifier
+                    layer_id = outer_layer_id
 
-                            # Load tensor using torch.jit.load
-                            tensor_path = os.path.join(shard_path, file_name)
-                            try:
-                                tensor = torch.jit.load(tensor_path)
-                                tensor = list(tensor.parameters())[0]
-                                tensors[step_id][shard_id][layer_id][tensor_type] = tensor
-                                print(f"Successfully loaded tensor: {tensor_type} for step {step_id}, shard {shard_id}, layer {layer_id}")
-                            except Exception as e:
-                                print(f"Error loading tensor from {tensor_path}: {e}")
-                        except Exception as e:
-                            print(f"Error processing file {file_name}: {e}")
-                except Exception as e:
-                    print(f"Error processing shard directory {shard_dir}: {e}")
-        except Exception as e:
-            print(f"Error processing step directory {step_dir}: {e}")
+                    # Check if this is a tensor type we're interested in
+                    full_tensor_type = f"{module_name}.{tensor_type}"
+                    if full_tensor_type not in tensor_types:
+                        # print(f"Skipping unknown tensor type: {full_tensor_type}")
+                        continue
+
+                    # Load tensor using torch.jit.load
+                    tensor_path = os.path.join(shard_path, file_name)
+                    tensor = torch.jit.load(tensor_path)
+                    tensor = list(tensor.parameters())[0]
+
+                    # Store with combined layer ID
+                    tensors[step_id][shard_id][layer_id][full_tensor_type] = tensor
+                    # print(
+                    #     f"Successfully loaded tensor: {full_tensor_type} for step {step_id}, "
+                    #     f"shard {shard_id}, layer {layer_id}"
+                    # )
 
     if not tensors:
-        print("Warning: No tensors were loaded. Please check if the directory structure and file naming are correct.")
+        print(
+            "Warning: No tensors were loaded. Please check if the directory structure and file naming are correct."
+        )
     else:
         print(f"Successfully loaded tensors for {len(tensors)} steps")
-        for step_id in tensors:
+        # Sort steps
+        for step_id in sorted(tensors.keys()):
             print(f"Step {step_id}: {len(tensors[step_id])} shards")
-            for shard_id in tensors[step_id]:
+            # Sort shards
+            for shard_id in sorted(tensors[step_id].keys()):
                 print(f"  Shard {shard_id}: {len(tensors[step_id][shard_id])} layers")
+                # Sort layers
+                for layer_id in sorted(tensors[step_id][shard_id].keys()):
+                    print(
+                        f"    Layer {layer_id}: "
+                        f"{len(tensors[step_id][shard_id][layer_id])} tensors"
+                    )
 
     return tensors
 
@@ -194,9 +219,9 @@ def perform_closeness_test(tensors):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Iterate through steps, shards, and layers
-    for step_id in tensors:
-        for shard_id in tensors[step_id]:
-            for layer_id in tensors[step_id][shard_id]:
+    for step_id in sorted(tensors.keys()):
+        for shard_id in sorted(tensors[step_id].keys()):
+            for layer_id in sorted(tensors[step_id][shard_id].keys()):
                 layer_tensors = tensors[step_id][shard_id][layer_id]
 
                 print(f"\nTesting step {step_id}, shard {shard_id}, layer {layer_id}")
