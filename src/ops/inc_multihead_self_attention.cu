@@ -445,10 +445,9 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                            m->num_q_heads / m->num_kv_heads,
                            1);
     if (m->inference_debugging) {
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods";
-      save_tensor(static_cast<DT const *>(m->handle.workSpace),
-                  num_new_tokens * total_tokens * m->num_q_heads,
-                  fpath.c_str());
+      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(m->handle.workSpace, {num_new_tokens, total_tokens, m->num_q_heads});
+      torch::save(tensor, fpath.c_str());
     }
   }
   // Step 2: Add alibi position bias to qk production
@@ -494,10 +493,9 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                                                    static_cast<DT>(-INFINITY));
     }
     if (m->inference_debugging) {
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods.masked";
-      save_tensor(static_cast<DT const *>(m->handle.workSpace),
-                  num_new_tokens * total_tokens * m->num_q_heads,
-                  fpath.c_str());
+      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods.masked.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(m->handle.workSpace, {num_new_tokens, total_tokens, m->num_q_heads});
+      torch::save(tensor, fpath.c_str());
     }
   }
 
@@ -562,10 +560,9 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
         m->num_q_heads);
 
     if (m->inference_debugging) {
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax";
-      save_tensor(static_cast<DT const *>(m->qk_prods_softmax),
-                  num_new_tokens * total_tokens * m->num_q_heads,
-                  fpath.c_str());
+      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(m->qk_prods_softmax, {num_new_tokens, total_tokens, m->num_q_heads});
+      torch::save(tensor, fpath.c_str());
     }
   }
 
@@ -632,10 +629,9 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                            1,
                            1);
     if (m->inference_debugging) {
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax";
-      save_tensor(static_cast<DT const *>(attn_heads),
-                  num_new_tokens * m->num_q_heads * m->vProjSize,
-                  fpath.c_str());
+      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(attn_heads, {m->vProjSize, m->num_q_heads, num_new_tokens});
+      torch::save(tensor, fpath.c_str());
     }
   }
 }
@@ -1123,7 +1119,7 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
       m->handle.incr_attention_metadata->kv_indptr,
       m->handle.incr_attention_metadata->kv_last_page_len);
 
-  if (m->inference_debugging) {
+  if (m->inference_debugging && false) {
     bc->save_to_file(get_fwd_dbg_folder(m, shard_id) + ".batch_config");
     std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".q_indptr";
     save_tensor(
@@ -1220,10 +1216,9 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                   inf_stream);
 
   if (m->inference_debugging) {
-    std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".devQKVProjArray";
-    save_tensor(static_cast<DT const *>(m->devQKVProjArray),
-                qkv_proj_size,
-                fpath.c_str());
+    std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".devQKVProjArray.pt";
+    at::Tensor tensor = createTorchTensorFromCuda<DT>(m->devQKVProjArray, {m->qProjSize, (int)tot_num_heads, bc->num_active_tokens()});
+    torch::save(tensor, fpath.c_str());
   }
 
   // phase 1: Implement kernel to apply rotary embedding and scaling
@@ -1231,10 +1226,9 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
       m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), inf_stream);
 
   if (m->inference_debugging) {
-    std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".post_rope";
-    save_tensor(static_cast<DT const *>(m->devQKVProjArray),
-                qkv_proj_size,
-                fpath.c_str());
+    std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".post_rope.pt";
+    at::Tensor tensor = createTorchTensorFromCuda<DT>(m->devQKVProjArray, {m->qProjSize, (int)tot_num_heads, bc->num_active_tokens()});
+    torch::save(tensor, fpath.c_str());
   }
 
   // peft stream can only start after
@@ -1394,10 +1388,9 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   if (m->inference_debugging) {
     // save result to file for checking
     std::string filename =
-        get_peft_dbg_folder(m, shard_id) + ".o_proj.input_gradient_0";
-    save_tensor(output_grad_ptr,
-                m->vProjSize * m->num_q_heads * num_tokens,
-                filename.c_str());
+        get_peft_dbg_folder(m, shard_id) + ".o_proj.input_gradient_0.pt";
+    at::Tensor tensor = createTorchTensorFromCuda<DT>(static_cast<const void*>(output_grad_ptr), {m->vProjSize, m->num_q_heads, num_tokens});
+    torch::save(tensor, filename.c_str());
   }
 
   // Step 1: compute gradients w.r.t. value
@@ -1456,11 +1449,13 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     // save result to file for checking
     if (m->inference_debugging) {
       std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".v_proj.input_gradient_0";
-      save_tensor(C, m_ * n_ * m->num_q_heads, filename.c_str());
+          get_peft_dbg_folder(m, shard_id) + ".v_proj.input_gradient_0.pt";
+      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(static_cast<const void*>(C), {m_, n_, m->num_q_heads});
+      torch::save(tensor1, filename.c_str());
       std::string filename2 =
-          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax";
-      save_tensor(A, m_ * k_ * m->num_q_heads, filename2.c_str());
+          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax.pt";
+      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(static_cast<const void*>(A), {m_, k_, m->num_q_heads});
+      torch::save(tensor2, filename2.c_str());
     }
   }
   // Step 2: compute gradients w.r.t. the qk_prods_softmax tensor
@@ -1519,14 +1514,13 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                            true);
     if (m->inference_debugging) {
       std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad";
-      save_tensor(
-          C, num_tokens * num_tokens * m->num_q_heads, filename.c_str());
-      std::string filename2 = get_peft_dbg_folder(m, shard_id) + ".vcache";
-      save_tensor(B,
-                  m->vProjSize * m->num_kv_heads *
-                      BatchConfig::max_sequence_length(),
-                  filename2.c_str());
+          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad.pt";
+      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(static_cast<const void*>(C), {num_tokens, num_tokens, m->num_q_heads});
+      torch::save(tensor1, filename.c_str());
+      std::string filename2 = get_peft_dbg_folder(m, shard_id) + ".vcache.pt";
+
+      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(static_cast<const void*>(B), {m->vProjSize, m->num_kv_heads, BatchConfig::max_sequence_length()});
+      torch::save(tensor2, filename2.c_str());
     }
   }
   // Step 3: softmax backpropagation
@@ -1556,16 +1550,15 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                     m->handle.workSpace));
 
     if (m->inference_debugging) {
-      DT *C = static_cast<DT *>(m->handle.workSpace);
+      // DT *C = static_cast<DT *>(m->handle.workSpace);
       std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad_in";
-      save_tensor(
-          C, num_tokens * num_tokens * m->num_q_heads, filename.c_str());
+          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad_in.pt";
+      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(m->handle.workSpace, {num_tokens, num_tokens, m->num_q_heads});
+      torch::save(tensor1, filename.c_str());
       filename =
-          get_peft_dbg_folder(m, shard_id) + ".softmax_activation_buffer";
-      save_tensor(static_cast<DT *>(m->softmax_activation_buffer),
-                  num_tokens * num_tokens * m->num_q_heads,
-                  filename.c_str());
+          get_peft_dbg_folder(m, shard_id) + ".softmax_activation_buffer.pt";
+      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(m->softmax_activation_buffer, {num_tokens, num_tokens, m->num_q_heads});
+      torch::save(tensor2, filename.c_str());
     }
 
     //  TODO: fill all elements above diagonal to force causal attention
@@ -1586,9 +1579,9 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     if (m->inference_debugging) {
       DT *C = static_cast<DT *>(m->handle.workSpace);
       std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad_in.masked";
-      save_tensor(
-          C, num_tokens * num_tokens * m->num_q_heads, filename.c_str());
+          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad_in.masked.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(C, {num_tokens, num_tokens, m->num_q_heads});
+      torch::save(tensor, filename.c_str());
     }
   }
   // Step 4: compute gradients w.r.t. key
@@ -1648,13 +1641,13 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                                          CUBLAS_GEMM_DEFAULT_TENSOR_OP));
     if (m->inference_debugging) {
       std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".query_activation";
-      save_tensor(
-          B, m->qProjSize * m->num_q_heads * num_tokens, filename.c_str());
+          get_peft_dbg_folder(m, shard_id) + ".query_activation.pt";
+      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(static_cast<const void*>(B), {m->qProjSize, m->num_q_heads, num_tokens});
+      torch::save(tensor1, filename.c_str());
       std::string filename2 =
-          get_peft_dbg_folder(m, shard_id) + ".devkproj_pre";
-      save_tensor(
-          C, num_tokens * (m->qProjSize * m->num_q_heads), filename2.c_str());
+          get_peft_dbg_folder(m, shard_id) + ".devkproj_pre.pt";
+      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(static_cast<const void*>(C), {num_tokens, m->qProjSize*m->num_q_heads, 3});
+      torch::save(tensor2, filename2.c_str());
     }
   }
   // Step 5: compute gradients w.r.t query
@@ -1714,9 +1707,9 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                            true);
     if (m->inference_debugging) {
       std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray_pre";
-      save_tensor(
-          C, num_tokens * m->qProjSize * m->num_q_heads * 3, filename.c_str());
+          get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray_pre.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(C, {num_tokens, m->qProjSize * m->num_q_heads, 3});
+      torch::save(tensor, filename.c_str());
     }
   }
 
@@ -1754,10 +1747,9 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
       DT *C = static_cast<DT *>(m->devQKVProjArrayBWD);
       if (m->inference_debugging) {
         std::string filename =
-            get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray";
-        save_tensor(C,
-                    num_tokens * m->qProjSize * m->num_q_heads * 3,
-                    filename.c_str());
+            get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray.pt";
+        at::Tensor tensor = createTorchTensorFromCuda<DT>(C, {num_tokens, m->qProjSize * m->num_q_heads, 3});
+        torch::save(tensor, filename.c_str());
       }
     }
 
@@ -1768,9 +1760,9 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                 (m->qProjSize *
                  m->num_q_heads); // skip over regions reserved for Q gradients
     if (m->inference_debugging) {
-      std::string filename = get_peft_dbg_folder(m, shard_id) + ".devkproj";
-      save_tensor(
-          C, num_tokens * (m->qProjSize * m->num_q_heads), filename.c_str());
+      std::string filename = get_peft_dbg_folder(m, shard_id) + ".devkproj.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(C, {num_tokens, m->qProjSize * m->num_q_heads, 3});
+      torch::save(tensor, filename.c_str());
     }
   }
 
@@ -1797,9 +1789,9 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
 
     if (m->inference_debugging) {
       std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".self_attn.input_gradient_0";
-      save_tensor(
-          C, num_tokens * m->qProjSize * m->num_q_heads, filename.c_str());
+          get_peft_dbg_folder(m, shard_id) + ".self_attn.input_gradient_0.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(C, {m->qProjSize, m->num_q_heads, num_tokens});
+      torch::save(tensor, filename.c_str());
     }
   }
 }
@@ -1985,9 +1977,10 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   num_q_heads = _num_q_heads;
   num_kv_heads = _num_kv_heads;
 
-  rotary_embedding_meta =
-      (RotaryEmbeddingMeta *)calloc(1, sizeof(RotaryEmbeddingMeta));
-  *rotary_embedding_meta = _rotary_embedding_meta;
+  // rotary_embedding_meta =
+  //     (RotaryEmbeddingMeta *)calloc(1, sizeof(RotaryEmbeddingMeta));
+  // *rotary_embedding_meta = _rotary_embedding_meta;
+  rotary_embedding_meta = new RotaryEmbeddingMeta(_rotary_embedding_meta);
   scaling_query = (bool *)calloc(1, sizeof(bool));
   *scaling_query = _scaling_query;
   scaling_factor = _scaling_factor;

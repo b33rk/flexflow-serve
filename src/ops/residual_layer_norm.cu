@@ -763,17 +763,16 @@ void peft_bwd_kernel(ResidualLayerNormMeta const *m,
                      op_name_without_uid + "_shard_" + std::to_string(0);
 
     std::string filename1 = base_filepath + "_mean";
-    save_tensor(static_cast<T *>(m->mean_ptr),
-                m->effective_batch_size,
-                filename1.c_str());
+    auto mean_tensor = createTorchTensorFromCuda<T>(m->mean_ptr, {m->effective_batch_size});
+    torch::save(mean_tensor, filename1);
+
     std::string filename2 = base_filepath + "_rstd";
-    save_tensor(static_cast<T *>(m->rstd_ptr),
-                m->effective_batch_size,
-                filename2.c_str());
+    auto rstd_tensor = createTorchTensorFromCuda<T>(m->rstd_ptr, {m->effective_batch_size});
+    torch::save(rstd_tensor, filename2);
+
     std::string filename3 = base_filepath + "_input_activation";
-    save_tensor(static_cast<T *>(m->input_activation),
-                m->effective_batch_size * m->effective_num_elements,
-                filename3.c_str());
+    auto input_activation_tensor = createTorchTensorFromCuda<T>(m->input_activation, {m->effective_batch_size, m->effective_num_elements});
+    torch::save(input_activation_tensor, filename3);
   }
 
   int const warp_size = C10_WARP_SIZE;

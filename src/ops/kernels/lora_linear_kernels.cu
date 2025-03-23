@@ -359,9 +359,8 @@ void peft_bwd_kernel(Context ctx,
           get_peft_dbg_folder(m, shard_id, false) + ".low_rank_activation";
       std::cout << "Save low_rank_activation (" << lora_config.rank << ", "
                 << num_peft_tokens << ") to " << filename << std::endl;
-      save_tensor(static_cast<const DT *>(weight.low_rank_activation),
-                  lora_config.rank * num_peft_tokens,
-                  filename.c_str());
+      auto tensor = createTorchTensorFromCuda<DT>(weight.low_rank_activation, {lora_config.rank, num_peft_tokens});
+      torch::save(tensor, filename);
     }
     checkCUDA(cublasGemmEx(m->handle.peft_blas,
                            CUBLAS_OP_N,
