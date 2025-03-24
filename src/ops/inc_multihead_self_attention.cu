@@ -970,8 +970,10 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   dv_ = dv;
 
   auto opts = q.options();
-  softmax_lse = torch::from_blob(static_cast<float *>(m->flash_attn_softmax_lse),
-                                 {1, num_heads, seqlen_q}, opts.dtype(at::kFloat));
+  softmax_lse =
+      torch::from_blob(static_cast<float *>(m->flash_attn_softmax_lse),
+                       {1, num_heads, seqlen_q},
+                       opts.dtype(at::kFloat));
 
   dq_ = torch::empty_like(q);
   dk_ = torch::empty_like(k);
@@ -2886,7 +2888,7 @@ void compute_gradient_of_input(IncMultiHeadSelfAttentionMeta const *m,
 #if USE_FLASH_ATTENTION
 // todo(yingyi): replace with flash-attn
 template <typename DT>
-void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
+void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
                            BatchConfig const *bc,
                            int shard_id,
                            DT *input_grad_ptr,
@@ -2989,9 +2991,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   auto dv = result[2];
   auto softmax_d = result[3];
 
-  // compute gradients w.r.t. input
-  compute_gradient_of_input(m, bc, shard_id, input_grad_ptr, peft_stream);
-
+  // matrix B's layout: [num_tokens, qProjsize * tot_num_heads]
   // end step 1
   // ================================================================
 
@@ -3005,7 +3005,45 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     torch::save(dq.clone().detach(), dq_fpath);
     torch::save(dk.clone().detach(), dk_fpath);
     torch::save(dv.clone().detach(), dv_fpath);
+
+    torch::Tensor dev_qkv_proj_array_bwd = createTorchTensorFromCuda<DT>(
+        m->devQKVProjArrayBWD,
+        {num_tokens, m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads)});
+
+    // print shapes of dq, dk, dv for debugging
+    std::cout << "dq shape: " << dq.sizes() << std::endl;
+    std::cout << "dk shape: " << dk.sizes() << std::endl;
+    std::cout << "dv shape: " << dv.sizes() << std::endl;
+    // dq shape: [1, 24, 3, 64]
+    // dk shape: [1, 24, 3, 64]
+    // dv shape: [1, 24, 3, 64]
+    // bz, num_tokens, num_heads, head_size
+
+    auto dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+                  2 * num_tokens * (m->qProjSize * m->num_q_heads);
+    auto dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+                  num_tokens * (m->qProjSize * m->num_q_heads);
+    auto dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
+
+    auto dq2 =
+        createTorchTensorFromCuda<DT>(dq_ptr, {m->qProjSize, m->num_q_heads, num_tokens});
+    auto dk2 = createTorchTensorFromCuda<DT>(
+        dk_ptr, {m->qProjSize, m->num_q_heads, num_total_tokens});
+    auto dv2 = createTorchTensorFromCuda<DT>(
+        dv_ptr, {m->qProjSize, m->num_q_heads, num_total_tokens});
+    dq2 = dq2.permute({2, 1, 0}).unsqueeze(0);
+    dk2 = dk2.permute({2, 1, 0}).unsqueeze(0);
+    dv2 = dv2.permute({2, 1, 0}).unsqueeze(0);
+
+    // copy dq into dq2
+    dq2.copy_(dq);
+    dk2.copy_(dk);
+    dv2.copy_(dv);
   }
+
+  // compute gradients w.r.t. input
+  compute_gradient_of_input(m, bc, shard_id, input_grad_ptr, peft_stream);
+
   // todo(gabriele): check the memory buffer here
   // todo(yingyi): fix 2x memory footprint for dq, dk, dv
   // save dq, dk, dv from at::Tensor to memory buffer
