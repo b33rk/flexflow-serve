@@ -303,7 +303,7 @@ class LlamaAlignmentTest(AlignmentTest):
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
             ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"LoRA_A {i} input")
-            torch.testing.assert_close(hf_down_proj_in, hf_tensor, rtol=1.3e-6, atol=1e-5)
+            torch.testing.assert_close(hf_down_proj_in, hf_tensor.to(hf_down_proj_in.dtype), rtol=1.3e-6, atol=1e-5)
 
             # LoRA intermediate
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input", ff_tensor_type="input", hf_tensor_idx=0, ff_tensor_idx=0)
