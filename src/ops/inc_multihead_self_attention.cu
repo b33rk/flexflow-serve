@@ -2845,6 +2845,44 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   }
 }
 
+template <typename DT>
+void compute_gradient_of_input(IncMultiHeadSelfAttentionMeta const *m,
+                               BatchConfig const *bc,
+                               int shard_id,
+                               DT *input_grad_ptr,
+                               cudaStream_t peft_stream) {
+  // Step 7: compute gradients w.r.t. input from `peft_bwd_kernel`
+  {
+    int i = bc->finetuning_request_index();
+    int num_tokens = bc->requestsInfo[i].num_tokens_in_batch;
+    float alpha = 1.0f, beta = 0.0f;
+    if (!m->reset_input_grads[0]) {
+      beta = 1.0f;
+    }
+    // matrix B: gradients w.r.t. QKV (concatenated in devQKVArray)
+    // matrix B's layout: [num_tokens, qProjsize * tot_num_heads]
+    DT const *B = static_cast<DT *>(m->devQKVProjArrayBWD);
+    // matrix C: gradients w.r.t. input
+    // matrix C's layout: [qProjsize * tot_num_heads, num_tokens]
+    DT *C = input_grad_ptr;
+    int n_ = num_tokens;
+    int k_ = m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads);
+
+    // The original version uses existing result and attention's projection to
+    // do further calculation in a way different than the usual dense layer,
+    // they are off by a transpose. So an explicit transpose is needed here.
+    // The add here is just for gradient accumulation.
+    transposeAdd(C, B, n_, k_, alpha, beta, peft_stream);
+
+    if (m->inference_debugging) {
+      std::string filename =
+          get_peft_dbg_folder(m, shard_id) + ".self_attn.input_gradient_0";
+      save_tensor(
+          C, num_tokens * m->qProjSize * m->num_q_heads, filename.c_str());
+    }
+  }
+}
+
 #if USE_FLASH_ATTENTION
 // todo(yingyi): replace with flash-attn
 template <typename DT>
@@ -2950,6 +2988,9 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   auto dk = result[1];
   auto dv = result[2];
   auto softmax_d = result[3];
+
+  // compute gradients w.r.t. input
+  compute_gradient_of_input(m, bc, shard_id, input_grad_ptr, peft_stream);
 
   // end step 1
   // ================================================================
