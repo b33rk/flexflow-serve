@@ -34,7 +34,7 @@ export LEGION_BACKTRACE=1
 python ./inference/utils/download_peft_model.py goliaro/llama-160m-lora
 
 # # Run PEFT in Huggingface to get ground truth tensors
-python ./tests/peft/hf_finetune.py --peft-model-id goliaro/llama-160m-lora --save-peft-tensors --use-full-precision -lr 0.001
+python ./tests/peft/hf_finetune.py --peft-model-id goliaro/llama-160m-lora --save-peft-tensors -lr 0.001 #--use-full-precision
 
 # Python test
 echo "Python test"
@@ -56,7 +56,7 @@ json_config=$(cat <<-END
         "inference_peft_model_id": "goliaro/llama-160m-lora",
         "finetuning_peft_model_id": "goliaro/llama-160m-lora",
         "cache_path": "${FF_CACHE_PATH:-}",
-        "full_precision": true,
+        "full_precision": false,
         "prompt": "",
         "finetuning_dataset": "./inference/prompt/peft_dataset.json",
         "output_file": "",
@@ -74,6 +74,8 @@ python ./tests/peft/peft_alignment_test.py -tp 4 -lr 0.001
 
 # C++ test
 echo "C++ test"
+# set env var for flash_attn:
+export LD_LIBRARY_PATH=/root/flexflow-serve/build:/root/flexflow-serve/build/deps/legion/lib:$(dirname $(/root/flexflow-serve/python/flexflow/findpylib.py)):/opt/conda/lib/python3.12/site-packages/torch/lib:/opt/conda/lib/python3.12/site-packages:$LD_LIBRARY_PATH
 ./build/inference/peft/peft \
     -ll:gpu 4 -ll:cpu 4 -ll:util 4 \
     -tensor-parallelism-degree 4 \
@@ -85,9 +87,9 @@ echo "C++ test"
     -finetuning-dataset ./inference/prompt/peft_dataset.json \
     -peft-model goliaro/llama-160m-lora \
     -enable-peft \
-    --use-full-precision \
-    --inference-debugging
-# Check alignment
+    --inference-debugging \
+    # --use-full-precision \
+# # Check alignment
 python ./tests/peft/peft_alignment_test.py -tp 4 -lr 0.001
 
 # Print succeess message
