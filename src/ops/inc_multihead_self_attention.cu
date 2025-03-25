@@ -877,7 +877,6 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   int num_new_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
   int total_tokens = bc->requestsInfo[req_idx].first_token_depth_in_request +
                      bc->requestsInfo[req_idx].num_tokens_in_batch;
-  int tokens_previous_steps = total_tokens - num_new_tokens;
   int tokens_previous_requests =
       bc->requestsInfo[req_idx].first_token_offset_in_batch;
 
@@ -974,11 +973,6 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
       torch::from_blob(static_cast<float *>(m->flash_attn_softmax_lse),
                        {1, num_heads, seqlen_q},
                        opts.dtype(at::kFloat));
-
-  dq_ = torch::empty_like(q);
-  dk_ = torch::empty_like(k);
-  dv_ = torch::empty_like(v);
-
   // todo(yingyi): review ths later
   // no rng_state for zero p_dropout
   rng_state = std::nullopt;
@@ -3006,39 +3000,59 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
     torch::save(dk.clone().detach(), dk_fpath);
     torch::save(dv.clone().detach(), dv_fpath);
 
-    torch::Tensor dev_qkv_proj_array_bwd = createTorchTensorFromCuda<DT>(
-        m->devQKVProjArrayBWD,
-        {num_tokens, m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads)});
-
-    // print shapes of dq, dk, dv for debugging
-    std::cout << "dq shape: " << dq.sizes() << std::endl;
-    std::cout << "dk shape: " << dk.sizes() << std::endl;
-    std::cout << "dv shape: " << dv.sizes() << std::endl;
-    // dq shape: [1, 24, 3, 64]
-    // dk shape: [1, 24, 3, 64]
-    // dv shape: [1, 24, 3, 64]
-    // bz, num_tokens, num_heads, head_size
+    std::cout << "the address of devQKVProjArrayBWD: " << m->devQKVProjArrayBWD
+              << std::endl;
+    std::cout << "the address of dq data: " << dq.data_ptr() << std::endl;
+    std::cout << "the address of dk data: " << dk.data_ptr() << std::endl;
+    std::cout << "the address of dv data: " << dv.data_ptr() << std::endl;
 
     auto dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
                   2 * num_tokens * (m->qProjSize * m->num_q_heads);
     auto dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
                   num_tokens * (m->qProjSize * m->num_q_heads);
     auto dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
+    std::cout << "the address of dq_ptr should be: " << dq_ptr << std::endl;
+    std::cout << "the address of dk_ptr should be: " << dk_ptr << std::endl;
+    std::cout << "the address of dv_ptr should be: " << dv_ptr << std::endl;
 
-    auto dq2 =
-        createTorchTensorFromCuda<DT>(dq_ptr, {m->qProjSize, m->num_q_heads, num_tokens});
-    auto dk2 = createTorchTensorFromCuda<DT>(
-        dk_ptr, {m->qProjSize, m->num_q_heads, num_total_tokens});
-    auto dv2 = createTorchTensorFromCuda<DT>(
-        dv_ptr, {m->qProjSize, m->num_q_heads, num_total_tokens});
-    dq2 = dq2.permute({2, 1, 0}).unsqueeze(0);
-    dk2 = dk2.permute({2, 1, 0}).unsqueeze(0);
-    dv2 = dv2.permute({2, 1, 0}).unsqueeze(0);
+    // int req_idx = bc->finetuning_request_index();
+    // signed long num_heads = m->num_q_heads;
+    // signed long num_heads_k = m->num_kv_heads;
+    // signed long head_size = m->qProjSize;
+    // signed long seqlen_q = bc->requestsInfo[req_idx].num_tokens_in_batch;
+    // signed long seqlen_k =
+    //     bc->requestsInfo[req_idx].first_token_depth_in_request +
+    //     bc->requestsInfo[req_idx].num_tokens_in_batch;
+    // auto dq2 =
+    //     createTorchTensorFromCuda<DT>(dq_ptr, {head_size, num_heads, seqlen_q});
+    // auto dk2 = createTorchTensorFromCuda<DT>(
+    //     dk_ptr, {head_size, num_heads_k, seqlen_k});
+    // auto dv2 = createTorchTensorFromCuda<DT>(
+    //     dv_ptr, {head_size, num_heads_k, seqlen_k});
+    // dq2 = dq2.permute({2, 1, 0}).unsqueeze(0);
+    // dk2 = dk2.permute({2, 1, 0}).unsqueeze(0);
+    // dv2 = dv2.permute({2, 1, 0}).unsqueeze(0);
 
-    // copy dq into dq2
-    dq2.copy_(dq);
-    dk2.copy_(dk);
-    dv2.copy_(dv);
+    // // save dq2, dk2, dv2 to files
+    // std::string dq2_fpath = get_peft_dbg_folder(m, shard_id) + ".pre_dq2.pt";
+    // std::string dk2_fpath = get_peft_dbg_folder(m, shard_id) + ".pre_dk2.pt";
+    // std::string dv2_fpath = get_peft_dbg_folder(m, shard_id) + ".pre_dv2.pt";
+    // torch::save(dq2.clone().detach(), dq2_fpath);
+    // torch::save(dk2.clone().detach(), dk2_fpath);
+    // torch::save(dv2.clone().detach(), dv2_fpath);
+
+    // // copy dq into dq2
+    // dq2.copy_(dq);
+    // dk2.copy_(dk);
+    // dv2.copy_(dv);
+
+    // // save dq2, dk2, dv2 to files
+    // dq2_fpath = get_peft_dbg_folder(m, shard_id) + ".post_dq2.pt";
+    // dk2_fpath = get_peft_dbg_folder(m, shard_id) + ".post_dk2.pt";
+    // dv2_fpath = get_peft_dbg_folder(m, shard_id) + ".post_dv2.pt";
+    // torch::save(dq2.clone().detach(), dq2_fpath);
+    // torch::save(dk2.clone().detach(), dk2_fpath);
+    // torch::save(dv2.clone().detach(), dv2_fpath);
   }
 
   // compute gradients w.r.t. input
@@ -3046,41 +3060,6 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
 
   // todo(gabriele): check the memory buffer here
   // todo(yingyi): fix 2x memory footprint for dq, dk, dv
-  // save dq, dk, dv from at::Tensor to memory buffer
-  // tensor dv shape (batch_size, seqlen_k, num_heads_k, head_size)
-  // tensor dk shape (batch_size, seqlen_k, num_heads_k, head_size)
-  // tensor dq shape (batch_size, seqlen_q, num_heads, head_size)
-
-  // expected shape in buffer:
-  // dv: [seqlen_k, head_size * num_heads, 3]
-  // dk: [seqlen_k, head_size * num_heads, 3]
-  // dq: [seqlen_k, head_size * num_heads, 3]
-
-  // comment out the following code to fix 2x memory footprint for dq, dk, dv
-  // // todo(gabriele): review the reshape here
-  // // remove batch_size dim from tensor dq, dk, dv
-  // dv = dv_.value();
-  // dk = dk_.value();
-  // dq = dq_.value();
-  // dv = dv.squeeze(0);
-  // dk = dk.squeeze(0);
-  // dq = dq.squeeze(0);
-  // // permute the tensor to the expected shape in buffer
-  // dv = dv.permute({1, 2, 0});
-  // dk = dk.permute({1, 2, 0});
-  // dq = dq.permute({1, 2, 0});
-
-  // // restore the tensor to the buffer in meta
-  // DT *dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
-  //              2 * num_tokens * (m->qProjSize * m->num_q_heads);
-  // restoreTorchTensorToCuda(dv, dv_ptr);
-
-  // DT *dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
-  //              num_tokens * (m->qProjSize * m->num_q_heads);
-  // restoreTorchTensorToCuda(dk, dk_ptr);
-
-  // DT *dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
-  // restoreTorchTensorToCuda(dq, dq_ptr);
 
   // end step 2
   // ================================================================
