@@ -18,7 +18,6 @@
 #include "flexflow/ops/kernels/linear_kernels.h"
 #include "flexflow/ops/lora_linear_params.h"
 #include "flexflow/utils/cuda_helper.h"
-#include <c10/cuda/CUDAGuard.h>
 
 namespace FlexFlow {
 
@@ -452,40 +451,32 @@ void forward_kernel(LinearMeta const *m,
   checkCUDA(cublasSetStream(m->handle.blas, stream));
   checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
   DT alpha = 1.0f, beta = 0.0f;
-  // cudaDataType_t input_type = ff_to_cuda_datatype(m->input_type[0]);
-  // cudaDataType_t weight_type = m->offload
-  //                                  ? ff_to_cuda_datatype(m->weight_ptr_type)
-  //                                  : ff_to_cuda_datatype(m->weight_type[0]);
-  // cudaDataType_t output_type = ff_to_cuda_datatype(m->output_type[0]);
   cudaDataType_t input_type = ff_to_cuda_datatype(m->input_type[0]);
-   cudaDataType_t weight_type = m->offload
-                                    ? ff_to_cuda_datatype(m->weight_ptr_type)
-                                    : ff_to_cuda_datatype(m->weight_type[0]);
-   cudaDataType_t output_type = ff_to_cuda_datatype(m->output_type[0]);
-   assert(input_type == weight_type && weight_type == output_type);
-   DT const *input_p = static_cast<DT const *>(input_ptr),
-           *weight_p = static_cast<DT const *>(m->offload ? m->weight_ptr : weight_ptr);
-   DT *output_p = static_cast<DT *>(output_ptr);
+  cudaDataType_t weight_type = m->offload
+                                   ? ff_to_cuda_datatype(m->weight_ptr_type)
+                                   : ff_to_cuda_datatype(m->weight_type[0]);
+  cudaDataType_t output_type = ff_to_cuda_datatype(m->output_type[0]);
   assert(input_type == weight_type && weight_type == output_type);
   cudaDataType_t compute_type = output_type;
-  int device_index = c10::cuda::current_device();
-  printf("device_index: %d\n", device_index);
-  {
-    at::cuda::CUDAStream cuda_stream = at::cuda::getStreamFromExternal(stream, device_index);
-    at::cuda::CUDAStreamGuard stream_guard{cuda_stream};
-
-    auto weight_tensor = createTorchTensorFromCuda<DT>(
-        m->offload ? m->weight_ptr : weight_ptr,
-        {in_dim, out_dim});
-    auto input_tensor = createTorchTensorFromCuda<DT>(
-        const_cast<void*>(input_ptr),
-        {in_dim, batch_size});
-    auto output_tensor = createTorchTensorFromCuda<DT>(
-        output_ptr,
-        {out_dim, batch_size});
-
-    output_tensor.addmm_(weight_tensor.transpose(0, 1), input_tensor, 0.0, 1.0);
-  }
+  checkCUDA(cublasGemmEx(m->handle.blas,
+                         CUBLAS_OP_T,
+                         CUBLAS_OP_N,
+                         out_dim,
+                         batch_size,
+                         in_dim,
+                         &alpha,
+                         m->offload ? m->weight_ptr : weight_ptr,
+                         weight_type,
+                         in_dim,
+                         input_ptr,
+                         input_type,
+                         in_dim,
+                         &beta,
+                         output_ptr,
+                         output_type,
+                         out_dim,
+                         compute_type,
+                         CUBLAS_GEMM_DEFAULT_TENSOR_OP));
 
   // use_bias = True
   if (bias_ptr != NULL) {
