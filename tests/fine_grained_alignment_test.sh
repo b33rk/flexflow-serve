@@ -5,8 +5,8 @@ set -e
 MODEL_NAME=${MODEL_NAME:-"meta-llama/Llama-3.2-1B-Instruct"}
 MEMORY_PER_GPU=${MEMORY_PER_GPU:-14000}
 ZCOPY_MEMORY=${ZCOPY_MEMORY:-40000}
-TP_DEGREE=${TP_DEGREE:-1}
-PP_DEGREE=${PP_DEGREE:-1}
+TP_DEGREE=${TP_DEGREE:-2}
+PP_DEGREE=${PP_DEGREE:-2}
 CACHE_PATH=${FF_CACHE_PATH:-"~/.cache/flexflow"}
 NUM_STEPS=${NUM_STEPS:-2}
 FULL_PRECISION=${FULL_PRECISION:-false}
@@ -37,7 +37,7 @@ mkdir -p ./inference/output
 
 # Enable backtrace in case we run into a segfault or assertion failure
 export LEGION_BACKTRACE=1
-# export FF_DEBG_NO_WEIGHTS=1
+export FF_DEBG_NO_WEIGHTS=1
 
 
 
