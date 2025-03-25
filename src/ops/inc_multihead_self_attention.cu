@@ -968,6 +968,11 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   dk_ = dk;
   dv_ = dv;
 
+  // checkpoint: dq, dk, dv data_ptr
+  std::cout << "1. the address of dq is: " << dq.data_ptr() << std::endl;
+  std::cout << "1. the address of dk is: " << dk.data_ptr() << std::endl;
+  std::cout << "1. the address of dv is: " << dv.data_ptr() << std::endl;
+
   auto opts = q.options();
   softmax_lse =
       torch::from_blob(static_cast<float *>(m->flash_attn_softmax_lse),
@@ -1373,6 +1378,11 @@ std::vector<at::Tensor> _wrapper_mha_bwd_1(
     dv = torch::empty_like(v);
   }
 
+  // checkpoint: dq, dk, dv data_ptr
+  std::cout << "2. the address of dq is: " << dq.data_ptr() << std::endl;
+  std::cout << "2. the address of dk is: " << dk.data_ptr() << std::endl;
+  std::cout << "2. the address of dv is: " << dv.data_ptr() << std::endl;
+
   // bool loop = seqlen_k > blocksize_c;
   // TODO: change later, for now set to true for simplicity
   bool loop = true;
@@ -1450,6 +1460,11 @@ std::vector<at::Tensor> _wrapper_mha_bwd_1(
                           /*unpadded_lse*/ false);
   params.dq_accum_split_stride = !deterministic ? 0 : dq_accum.stride(0);
 
+  // checkpoint: dq, dk, dv data_ptr
+  std::cout << "3. the address of dq is: " << dq.data_ptr() << std::endl;
+  std::cout << "3. the address of dk is: " << dk.data_ptr() << std::endl;
+  std::cout << "3. the address of dv is: " << dv.data_ptr() << std::endl;
+
   auto launch = &flash::run_mha_bwd;
 
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
@@ -1501,6 +1516,11 @@ std::vector<at::Tensor> _wrapper_mha_bwd_1(
                              head_size}),
                 {3});
   }
+
+  // checkpoint: dq, dk, dv data_ptr
+  std::cout << "4. the address of dq is: " << dq.data_ptr() << std::endl;
+  std::cout << "4. the address of dk is: " << dk.data_ptr() << std::endl;
+  std::cout << "4. the address of dv is: " << dv.data_ptr() << std::endl;
 
   return {dq, dk, dv, softmax_d};
   // todo(yingyi): set dq, dk, dv params by target data_ptr
@@ -2985,6 +3005,11 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
   auto dv = result[2];
   auto softmax_d = result[3];
 
+  // checkpoint: dq, dk, dv data_ptr
+  std::cout << "5. the address of dq is: " << dq.data_ptr() << std::endl;
+  std::cout << "5. the address of dk is: " << dk.data_ptr() << std::endl;
+  std::cout << "5. the address of dv is: " << dv.data_ptr() << std::endl;
+
   // matrix B's layout: [num_tokens, qProjsize * tot_num_heads]
   // end step 1
   // ================================================================
@@ -3024,7 +3049,8 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
     //     bc->requestsInfo[req_idx].first_token_depth_in_request +
     //     bc->requestsInfo[req_idx].num_tokens_in_batch;
     // auto dq2 =
-    //     createTorchTensorFromCuda<DT>(dq_ptr, {head_size, num_heads, seqlen_q});
+    //     createTorchTensorFromCuda<DT>(dq_ptr, {head_size, num_heads,
+    //     seqlen_q});
     // auto dk2 = createTorchTensorFromCuda<DT>(
     //     dk_ptr, {head_size, num_heads_k, seqlen_k});
     // auto dv2 = createTorchTensorFromCuda<DT>(
