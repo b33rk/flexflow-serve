@@ -5,11 +5,6 @@ from alignment.align_test_utils import *
 from transformers import AutoConfig
 from tqdm import tqdm
 
-def load_and_unpack_ff_tensor(filepath):
-    # FlexFlow saves tensors as a list of parameters, we need to unpack it
-    ff_tensor = torch.load(filepath, weights_only=False, map_location="cpu")
-    return list(ff_tensor.parameters())[0].squeeze()
-
 class AlignmentTest:
     def __init__(self, hf_config, tp_degree=1):
         raise NotImplementedError()

@@ -356,10 +356,11 @@ void peft_bwd_kernel(Context ctx,
     if (m->inference_debugging) {
       // save result to file for checking
       std::string filename =
-          get_peft_dbg_folder(m, shard_id, false) + ".low_rank_activation";
+          get_peft_dbg_folder(m, shard_id, false) + ".low_rank_activation.pt";
       std::cout << "Save low_rank_activation (" << lora_config.rank << ", "
                 << num_peft_tokens << ") to " << filename << std::endl;
-      auto tensor = createTorchTensorFromCuda<DT>(weight.low_rank_activation, {lora_config.rank, num_peft_tokens});
+      auto tensor = createTorchTensorFromCuda<DT>(
+          weight.low_rank_activation, {lora_config.rank, num_peft_tokens});
       torch::save(tensor, filename);
     }
     checkCUDA(cublasGemmEx(m->handle.peft_blas,

@@ -151,44 +151,42 @@ class LlamaAlignmentTest(AlignmentTest):
                 raise FileNotFoundError(f"File '{hf_tensor_path}' not found")
             print("loading hf tensor: ", hf_tensor_filename)
             hf_tensor = torch.load(hf_tensor_path, map_location='cpu')
-            if hf_tensor_name == "embed_tokens":
+            if hf_tensor_name == "embed_tokens" and "input" in hf_tensor_filename:
                 self.num_tokens = hf_tensor.shape[1]
             return hf_tensor
         
-        def get_ff_tensor(ff_tensor_name, tensor_comparison_idx, hf_shape, tp_type=TPType.REPLICATE):
+        def get_ff_tensor(ff_tensor_name, tensor_comparison_idx, tp_type=TPType.REPLICATE):
             ff_tensor_suffix = f".{tensor_comparison_idx.ff_tensor_type}" if len(tensor_comparison_idx.ff_tensor_type) > 0 else ""
             ff_tensor_idx_suffix = f"_{tensor_comparison_idx.ff_tensor_idx}" if tensor_comparison_idx.ff_tensor_idx is not None else ""
             ff_tensor_filename = f"{ff_tensor_name}{ff_tensor_suffix}{ff_tensor_idx_suffix}"
-            ff_tensor_path = os.path.join(ff_fwd_folder, ff_tensor_filename)
+            ff_tensor_path = os.path.join(ff_fwd_folder, ff_tensor_filename) + ".pt"
             if not os.path.isfile(ff_tensor_path):
                 raise FileNotFoundError(f"File '{ff_tensor_path}' not found")
-
             print("loading ff tensor: ", ff_tensor_filename)
-            ff_shape = list(hf_shape)[::-1]
-            if tp_type == TPType.PARTITION:
-                ff_shape[0] //= self.tp_degree
+            
             
             if "layers.0.embed_tokens.input_0" in ff_tensor_path:
                 # get number of tokens
-                ff_tensor = np.loadtxt(ff_tensor_path, delimiter=',')
+                # ff_tensor = np.loadtxt(ff_tensor_path, delimiter=',')
+                ff_tensor = load_and_unpack_ff_tensor(ff_tensor_path)
                 self.ff_batch_size = ff_tensor.shape[0]
 
-            ff_shape = replace_value(ff_shape, self.num_tokens, self.ff_batch_size)
-            ff_tensors = [load_ff_tensor(ff_tensor_path.replace("shard_0", f"shard_{tp_idx}"), ff_shape) for tp_idx in range(self.tp_degree)]
+            ff_tensors = [load_and_unpack_ff_tensor(ff_tensor_path.replace("shard_0", f"shard_{tp_idx}")) for tp_idx in range(self.tp_degree)]
             if self.tp_degree > 1:
                 # if replicate, check that they are identical
                 if tp_type == TPType.REPLICATE:
-                    assert(are_np_arrays_identical(ff_tensors))
+                    for t in ff_tensors[1:]:
+                        assert torch.allclose(ff_tensors[0], t)
                     ff_tensor = ff_tensors[0]
                 # if partition, concatenate along the partition dimension
                 elif tp_type == TPType.PARTITION:
-                    ff_tensor = np.concatenate(ff_tensors, axis=0)
+                    ff_tensor = torch.cat(ff_tensors, dim=0)
                 # if to_reduce, sum along the partition dimension
                 elif tp_type == TPType.TO_REDUCE:
-                    ff_tensor = np.sum(ff_tensors, axis=0)
+                    ff_tensor = sum(ff_tensors)
             else:
                 ff_tensor = ff_tensors[0]
-            ff_tensor = torch.from_numpy(ff_tensor)
+            
             ff_tensor = truncate_dimension(ff_tensor, self.ff_batch_size, self.num_tokens)
             return ff_tensor
 
@@ -198,6 +196,8 @@ class LlamaAlignmentTest(AlignmentTest):
             if additional_ff_tensor is not None:
                 additional_ff_tensor = additional_ff_tensor.to(hf_tensor.dtype)
                 ff_tensor = ff_tensor - additional_ff_tensor
+            hf_tensor = hf_tensor.squeeze()
+            ff_tensor = ff_tensor.squeeze()
             try:
                 # torch.testing.assert_close(hf_tensor, ff_tensor, rtol=1.3e-6, atol=tolerance)
                 if not np.allclose(hf_tensor.detach().numpy(), ff_tensor.detach().numpy(), atol=tolerance):
@@ -222,10 +222,10 @@ class LlamaAlignmentTest(AlignmentTest):
         input_comparison = TensorComparisonIdxs(hf_tensor_type="input", ff_tensor_type="input", hf_tensor_idx=0, ff_tensor_idx=0)
         output_comparison = TensorComparisonIdxs(hf_tensor_type="output", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=0)
         hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape)
+        ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison)
         compare(hf_tensor, ff_tensor, label="Embedding input")
         hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape)
+        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison)
         compare(hf_tensor, ff_tensor, label="Embedding output")
         
         # Transformers blocks
@@ -240,10 +240,10 @@ class LlamaAlignmentTest(AlignmentTest):
                 input_comparison = TensorComparisonIdxs(hf_tensor_type="input", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=0)
                 output_comparison = TensorComparisonIdxs(hf_tensor_type="output", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=1)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape)
+            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison)
             compare(hf_tensor, ff_tensor, label=f"Input layernorm {i} input")
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison)
             compare(hf_tensor, ff_tensor, label=f"Input layernorm {i} output")
 
             # Attention
@@ -252,9 +252,9 @@ class LlamaAlignmentTest(AlignmentTest):
             # the raw attention result, w/o o_proj. This is the output of senf_attn of FF and the input of o_proj in HF
             output_comparison = TensorComparisonIdxs(hf_tensor_type="input", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            # ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.TO_REDUCE)
+            # ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.TO_REDUCE)
             # TP for self-attn partitions the attention heads across TP workers
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.PARTITION)
             print("comparing attention tensor: ", hf_tensor_name, " and ", ff_tensor_name)
             compare(hf_tensor, ff_tensor, label=f"Attention {i} output")
             
@@ -263,7 +263,7 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=1)
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison)
             compare(hf_tensor, ff_tensor, label=f"Post-attention layernorm {i} output")
 
             # W1 (gate_proj)
@@ -271,7 +271,7 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"W1 {i} output")
 
             # W3 (up_proj)
@@ -279,7 +279,7 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"W3 {i} output")
 
             # W2 (down_proj)
@@ -289,19 +289,19 @@ class LlamaAlignmentTest(AlignmentTest):
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_down_proj_out = get_hf_tensor(hf_tensor_name, output_comparison)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"W2 {i} input")
 
             hf_down_proj_in = hf_tensor.clone()
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            ff_down_proj_out = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.TO_REDUCE)
+            ff_down_proj_out = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.TO_REDUCE)
 
             # LoRA_A
             hf_tensor_name = f"layers.{i}.mlp.down_proj.lora_A.default"
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input", ff_tensor_type="input", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"LoRA_A {i} input")
             torch.testing.assert_close(hf_down_proj_in, hf_tensor, rtol=1.3e-6, atol=1e-5)
 
@@ -313,7 +313,7 @@ class LlamaAlignmentTest(AlignmentTest):
             hf_lora_B_in = get_hf_tensor(hf_tensor_name, input_comparison)
             torch.testing.assert_close(hf_lora_A_out, hf_lora_B_in, rtol=1.3e-6, atol=1e-5)
             ff_tensor_name = f"layers.{i}.layers.{i}.mlp.down_proj.lora"
-            ff_lora_A_out = get_ff_tensor(ff_tensor_name, output_comparison, hf_lora_A_out.shape, tp_type=TPType.TO_REDUCE)
+            ff_lora_A_out = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.TO_REDUCE)
             compare(hf_lora_A_out, ff_lora_A_out, label=f"LoRA_A {i} output")
 
             # LoRA_B
@@ -321,7 +321,7 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison) * self.lora_scaling_factor
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_down_proj_out.shape, tp_type=TPType.TO_REDUCE)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.TO_REDUCE)
             compare(hf_down_proj_out, ff_tensor, label=f"W2_out + scaling*LoRA_B_out {i}")
             compare(hf_tensor, ff_tensor, additional_ff_tensor=ff_down_proj_out, label=f"LoRA_B {i} output")
         
@@ -330,7 +330,7 @@ class LlamaAlignmentTest(AlignmentTest):
         ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
         output_comparison = TensorComparisonIdxs(hf_tensor_type="output", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=1)
         hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape)
+        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison)
         compare(hf_tensor, ff_tensor, label="Norm output")
 
         # LM head
@@ -338,11 +338,11 @@ class LlamaAlignmentTest(AlignmentTest):
         ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
         input_comparison = TensorComparisonIdxs(hf_tensor_type="input", ff_tensor_type="input", hf_tensor_idx=0, ff_tensor_idx=0)
         hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.REPLICATE)
+        ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.REPLICATE)
         compare(hf_tensor, ff_tensor, label="LM head input")
         output_comparison = TensorComparisonIdxs(hf_tensor_type="output", ff_tensor_type="output", hf_tensor_idx=0, ff_tensor_idx=0)
         hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.PARTITION)
         compare(hf_tensor, ff_tensor, label="LM head output")
 
     def check_bwd_pass(self, step_idx=0):
@@ -377,21 +377,17 @@ class LlamaAlignmentTest(AlignmentTest):
             hf_tensor = torch.load(hf_tensor_path, map_location='cpu')
             return hf_tensor
         
-        def get_ff_tensor(ff_tensor_name, tensor_comparison_idx, hf_shape, tp_type=TPType.REPLICATE, pre=False, shard_axis=0):
+        def get_ff_tensor(ff_tensor_name, tensor_comparison_idx, tp_type=TPType.REPLICATE, pre=False, shard_axis=0):
             ff_tensor_suffix = f".{tensor_comparison_idx.ff_tensor_type}" if len(tensor_comparison_idx.ff_tensor_type) > 0 else ""
             ff_tensor_idx_suffix = f"_{tensor_comparison_idx.ff_tensor_idx}" if tensor_comparison_idx.ff_tensor_idx is not None else ""
             ff_tensor_filename = f"{ff_tensor_name}{ff_tensor_suffix}{ff_tensor_idx_suffix}"
             
-            ff_tensor_path = os.path.join(ff_bwd_folder, ff_tensor_filename)
+            ff_tensor_path = os.path.join(ff_bwd_folder, ff_tensor_filename) + ".pt"
             if pre:
                 ff_tensor_path = ff_tensor_path.replace(f"step_{step_idx}", f"step_{step_idx}_pre")
             if not os.path.isfile(ff_tensor_path):
                 raise FileNotFoundError(f"File '{ff_tensor_path}' not found")
             print("loading ff tensor: ", ff_tensor_filename)
-
-            ff_shape = list(hf_shape)[::-1]
-            if tp_type == TPType.PARTITION:
-                ff_shape[shard_axis] //= self.tp_degree
 
             # exception: intermediate attention tensors
             intermediate_attention_tensor = (
@@ -405,25 +401,22 @@ class LlamaAlignmentTest(AlignmentTest):
                 ) and
                 not ff_tensor_name.endswith(".self_attn.qkv_proj")
             )
-            print(ff_tensor_filename + (" is not truncated" if intermediate_attention_tensor else " is truncated"))
-            if not intermediate_attention_tensor:
-                ff_shape = replace_value(ff_shape, self.num_tokens, self.ff_batch_size)
             
-            ff_tensors = [load_ff_tensor(ff_tensor_path.replace("shard_0", f"shard_{tp_idx}"), ff_shape) for tp_idx in range(self.tp_degree)]
+            ff_tensors = [load_and_unpack_ff_tensor(ff_tensor_path.replace("shard_0", f"shard_{tp_idx}")) for tp_idx in range(self.tp_degree)]
             if self.tp_degree > 1:
                 # if replicate, check that they are identical
                 if tp_type == TPType.REPLICATE:
-                    assert(are_np_arrays_identical(ff_tensors))
+                    for t in ff_tensors[1:]:
+                        assert torch.allclose(ff_tensors[0], t)
                     ff_tensor = ff_tensors[0]
                 # if partition, concatenate along the partition dimension
                 elif tp_type == TPType.PARTITION:
-                    ff_tensor = np.concatenate(ff_tensors, axis=shard_axis)
+                    ff_tensor = torch.cat(ff_tensors, dim=shard_axis)
                 # if to_reduce, sum along the partition dimension
                 elif tp_type == TPType.TO_REDUCE:
-                    ff_tensor = np.sum(ff_tensors, axis=shard_axis)
+                    ff_tensor = torch.sum(torch.stack(ff_tensors, dim=shard_axis), dim=shard_axis)
             else:
                 ff_tensor = ff_tensors[0]
-            ff_tensor = torch.from_numpy(ff_tensor)
             if not intermediate_attention_tensor:
                 ff_tensor = truncate_dimension(ff_tensor, self.ff_batch_size, self.num_tokens)
             return ff_tensor
@@ -434,6 +427,8 @@ class LlamaAlignmentTest(AlignmentTest):
             if additional_ff_tensor is not None:
                 additional_ff_tensor = additional_ff_tensor.to(hf_tensor.dtype)
                 ff_tensor = ff_tensor - additional_ff_tensor
+            hf_tensor = hf_tensor.squeeze()
+            ff_tensor = ff_tensor.squeeze()
             try:
                 # torch.testing.assert_close(hf_tensor, ff_tensor, rtol=rtol, atol=tolerance)
                 if not np.allclose(hf_tensor.numpy(), ff_tensor.numpy(), atol=tolerance):
@@ -458,10 +453,10 @@ class LlamaAlignmentTest(AlignmentTest):
         output_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
         input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
         hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.PARTITION)
         compare(hf_tensor, ff_tensor, label="LM head gradient output")
         hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, TPType.TO_REDUCE)
+        ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, TPType.TO_REDUCE)
         compare(hf_tensor, ff_tensor, label="LM head gradient input")
 
         # Norm
@@ -470,10 +465,10 @@ class LlamaAlignmentTest(AlignmentTest):
         output_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
         input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
         hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.REPLICATE)
+        ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.REPLICATE)
         compare(hf_tensor, ff_tensor, label="Norm gradient output")
         hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-        ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape)
+        ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison)
         compare(hf_tensor, ff_tensor, label="Norm gradient input")
 
         # Transformers blocks
@@ -483,9 +478,9 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.REPLICATE)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.REPLICATE)
             compare(hf_tensor, ff_tensor, label=f"W2 {i} gradient output")
-            down_proj_grad_output_pre = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.REPLICATE, pre=True)
+            down_proj_grad_output_pre = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.REPLICATE, pre=True)
             down_proj_grad_output = ff_tensor.clone()
             compare_loaded_tensors(down_proj_grad_output, down_proj_grad_output_pre)
 
@@ -494,8 +489,8 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            lora_grad_output = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.REPLICATE)
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.REPLICATE) * self.lora_scaling_factor
+            lora_grad_output = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.REPLICATE)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.REPLICATE) * self.lora_scaling_factor
             compare(hf_tensor, ff_tensor, label=f"LoRA_B {i} gradient output")
 
             # LoRA_A
@@ -503,7 +498,7 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"LoRA_A {i} gradient input")
             lora_a_grad_input = ff_tensor.clone()
 
@@ -512,8 +507,8 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
-            down_proj_grad_input_pre = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.PARTITION, pre=True)
+            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.PARTITION)
+            down_proj_grad_input_pre = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.PARTITION, pre=True)
             compare(hf_tensor, ff_tensor, label=f"W2 {i} gradient input")
 
             # down proj output (before/after kernel) should match output of lora_b
@@ -527,7 +522,7 @@ class LlamaAlignmentTest(AlignmentTest):
             hf_w2_input = hf_tensor.clone()
             ff_tensor_name = f"layers.{i}.SigmoidSiluMulti"
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.PARTITION)
             compare(hf_w2_input, ff_tensor, label=f"HF W2 {i} output and FF SSM output")
 
             # W1 (gate_proj) output
@@ -535,14 +530,14 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"W1 {i} gradient output")
             # W1 (gate_proj) input
             # HF W1 in = FF W1 in - HF W1 in (pre)
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.TO_REDUCE)
-            ff_tensor_pre = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.TO_REDUCE, pre=True)
+            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.TO_REDUCE)
+            ff_tensor_pre = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.TO_REDUCE, pre=True)
             compare(hf_tensor, ff_tensor, additional_ff_tensor=ff_tensor_pre, label=f"W1 {i} gradient input")
 
             # W3 (up_proj) output
@@ -550,7 +545,7 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.PARTITION)
             # print(f"w3 {i} grad output")
             # print("flexflow tensor shape:", ff_tensor.squeeze().shape)
             # print(ff_tensor.squeeze())
@@ -567,7 +562,7 @@ class LlamaAlignmentTest(AlignmentTest):
             # W3 (up_proj) input
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.TO_REDUCE)
+            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.TO_REDUCE)
 
             # w3_input_torch = torch.matmul(hf_tensor, torch.transpose(ff_tensor, 0, 1))
             # ff_up_proj_weight_path="/usr/.cache/flexflow/debug/flexflow/weights/step_0/shard_0/layers.11.layers.11.mlp.up_proj.weight_0"
@@ -600,12 +595,12 @@ class LlamaAlignmentTest(AlignmentTest):
             # ff_tensor_name = f"layers.{i}.layers.{i}.self_attn"
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             # hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            # ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, hf_tensor.shape, tp_type=TPType.TO_REDUCE)
+            # ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.TO_REDUCE)
             # compare(hf_tensor, ff_tensor, label=f"Attn O-proj {i} gradient output")
             ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.o_proj"
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
+            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"Attn O-proj {i} gradient input")
 
             # V-proj grads
@@ -615,7 +610,7 @@ class LlamaAlignmentTest(AlignmentTest):
             mixed_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, mixed_comparison)
             hf_tensor = hf_tensor.squeeze().T
-            ff_tensor = get_ff_tensor(ff_tensor_name, mixed_comparison, hf_tensor.shape, tp_type=TPType.PARTITION, shard_axis=1)
+            ff_tensor = get_ff_tensor(ff_tensor_name, mixed_comparison, tp_type=TPType.PARTITION, shard_axis=1)
             compare(hf_tensor, ff_tensor, label=f"V-proj {i} gradient input")
 
             # K-proj grads
@@ -626,7 +621,7 @@ class LlamaAlignmentTest(AlignmentTest):
             hf_tensor = get_hf_tensor(hf_tensor_name, k_proj_comparison)
             hf_tensor = hf_tensor.squeeze().view(self.num_tokens, self.num_attention_heads, self.projsize).transpose(1, 2).contiguous()
             hf_tensor = hf_tensor.T
-            ff_tensor = get_ff_tensor(ff_tensor_name, k_proj_comparison, hf_tensor.shape, tp_type=TPType.PARTITION, shard_axis=2)
+            ff_tensor = get_ff_tensor(ff_tensor_name, k_proj_comparison, tp_type=TPType.PARTITION, shard_axis=2)
             compare(hf_tensor, ff_tensor, label=f"K-proj {i} gradient input")
             
             # Q-proj grads
@@ -638,7 +633,7 @@ class LlamaAlignmentTest(AlignmentTest):
             hf_tensor = get_hf_tensor(hf_tensor_name, q_proj_comparison)
             hf_tensor = hf_tensor.view(self.num_tokens, self.num_attention_heads, self.projsize).transpose(1, 2).contiguous().T
             augmented_hf_tensor_shape = torch.Size([3]+list(hf_tensor.size()))
-            ff_tensor = get_ff_tensor(ff_tensor_name, q_proj_comparison, augmented_hf_tensor_shape, tp_type=TPType.PARTITION, shard_axis=2)[:,:,:,0]
+            ff_tensor = get_ff_tensor(ff_tensor_name, q_proj_comparison, tp_type=TPType.PARTITION, shard_axis=2)[:,:,:,0]
             compare(hf_tensor, ff_tensor, label=f"Q-proj {i} gradient input")
             
             # FF Attn input with HF layernorm out
@@ -646,7 +641,7 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.qkv_proj"
             input_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.TO_REDUCE)
+            ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.TO_REDUCE)
             compare(hf_tensor, ff_tensor, label=f"Attn input {i} gradient input")
 
             if i > 0:
@@ -654,7 +649,7 @@ class LlamaAlignmentTest(AlignmentTest):
                 attn_input = ff_tensor.clone()
                 ff_tensor_name = f"layers.{i}.layers.{i}.input_layernorm"
                 _output_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=1)
-                input_layernorm_out1 = get_ff_tensor(ff_tensor_name, _output_comparison, hf_tensor.shape, tp_type=TPType.REPLICATE)
+                input_layernorm_out1 = get_ff_tensor(ff_tensor_name, _output_comparison, tp_type=TPType.REPLICATE)
                 compare_loaded_tensors(attn_input, input_layernorm_out1, tolerance=1e-5)
                 # torch.testing.assert_close(attn_input, input_layernorm_out1, rtol=1.3e-6, atol=1e-5)
 
@@ -664,8 +659,8 @@ class LlamaAlignmentTest(AlignmentTest):
                 ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
                 input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
                 ff_in1_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=1)
-                input_layernorm0 = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.REPLICATE)
-                input_layernorm1 = get_ff_tensor(ff_tensor_name, ff_in1_comparison, hf_tensor.shape, tp_type=TPType.REPLICATE)
+                input_layernorm0 = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.REPLICATE)
+                input_layernorm1 = get_ff_tensor(ff_tensor_name, ff_in1_comparison, tp_type=TPType.REPLICATE)
                 torch.testing.assert_close(input_layernorm0, input_layernorm1, rtol=1.3e-6, atol=1e-5)
                 hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
                 # if i > 1:
@@ -689,36 +684,37 @@ class LlamaAlignmentTest(AlignmentTest):
                 raise FileNotFoundError(f"File '{hf_tensor_path}' not found")
             hf_tensor = torch.load(hf_tensor_path, map_location='cpu')
             return hf_tensor
-        def get_ff_tensor(ff_tensor_name, hf_shape, tp_type=TPType.REPLICATE, pre=False):
-            ff_tensor_path = os.path.join(ff_weight_folder, ff_tensor_name)
+        def get_ff_tensor(ff_tensor_name, tp_type=TPType.REPLICATE, pre=False, shard_axis=0):
+            ff_tensor_path = os.path.join(ff_weight_folder, ff_tensor_name) + ".pt"
             if pre:
                 ff_tensor_path = ff_tensor_path.replace(f"step_{step_idx}", f"step_{step_idx}_pre")
             if not os.path.isfile(ff_tensor_path):
                 raise FileNotFoundError(f"File '{ff_tensor_path}' not found")
-
-            ff_shape = list(hf_shape)[::-1]
-            if tp_type == TPType.PARTITION:
-                ff_shape[0] //= self.tp_degree
             
-            ff_tensors = [load_ff_tensor(ff_tensor_path.replace("shard_0", f"shard_{tp_idx}"), ff_shape) for tp_idx in range(self.tp_degree)]
+            print("loading ff tensor: ", ff_tensor_name)
+            
+            ff_tensors = [load_and_unpack_ff_tensor(ff_tensor_path.replace("shard_0", f"shard_{tp_idx}")) for tp_idx in range(self.tp_degree)]
             if self.tp_degree > 1:
                 # if replicate, check that they are identical
                 if tp_type == TPType.REPLICATE:
-                    assert(are_np_arrays_identical(ff_tensors))
+                    for t in ff_tensors[1:]:
+                        assert torch.allclose(ff_tensors[0], t)
                     ff_tensor = ff_tensors[0]
                 # if partition, concatenate along the partition dimension
                 elif tp_type == TPType.PARTITION:
-                    ff_tensor = np.concatenate(ff_tensors, axis=0)
+                    ff_tensor = torch.cat(ff_tensors, dim=shard_axis)
                 # if to_reduce, sum along the partition dimension
                 elif tp_type == TPType.TO_REDUCE:
-                    ff_tensor = np.sum(ff_tensors, axis=0)
+                    ff_tensor = torch.sum(torch.stack(ff_tensors, dim=shard_axis), dim=shard_axis)
             else:
                 ff_tensor = ff_tensors[0]
-            ff_tensor = torch.from_numpy(ff_tensor)
             return ff_tensor
+        
         def compare(hf_tensor, ff_tensor, label="", tolerance=1e-4):
             ff_tensor = ff_tensor.to(hf_tensor.dtype)
             hf_tensor = hf_tensor.T
+            hf_tensor = hf_tensor.squeeze()
+            ff_tensor = ff_tensor.squeeze()
             try:
                 # torch.testing.assert_close(hf_tensor, ff_tensor, rtol=rtol, atol=tolerance)
                 if not np.allclose(hf_tensor.numpy(), ff_tensor.numpy(), atol=tolerance):
@@ -744,14 +740,16 @@ class LlamaAlignmentTest(AlignmentTest):
             hf_finetuned_weight = get_hf_tensor(hf_finetuned_weight_name)
             torch.testing.assert_close(hf_gradient, (hf_original_weight-hf_finetuned_weight)/learning_rate, rtol=1.3e-6, atol=1e-5)
             ff_gradient_name = convert_hf_filename_to_ff(hf_gradient_name)
-            ff_gradient = get_ff_tensor(ff_gradient_name, hf_gradient.shape, tp_type=TPType.REPLICATE)
+            ff_gradient = get_ff_tensor(ff_gradient_name, tp_type=TPType.REPLICATE)
             
-            lora_low_rank_activation_fwd_path = f"fwd/step_{step_idx}/shard_0/layers.{i}.layers.{i}.mlp.down_proj.lora.low_rank_activation"
-            lora_low_rank_activation_bwd_path = f"bwd/step_{step_idx}/shard_0/layers.{i}.layers.{i}.mlp.down_proj.lora.low_rank_activation"
-            lora_low_rank_activation_fwd = load_ff_tensor(lora_low_rank_activation_fwd_path, [16, 128])[:,:self.num_tokens]
-            lora_low_rank_activation_fwd = torch.from_numpy(lora_low_rank_activation_fwd)
-            lora_low_rank_activation_bwd = load_ff_tensor(lora_low_rank_activation_bwd_path, [16, 24])
-            lora_low_rank_activation_bwd = torch.from_numpy(lora_low_rank_activation_bwd)
+            ff_fwd_folder = os.path.join(ff_path, "fwd", f"step_{step_idx}", "shard_0")
+            ff_bwd_folder = os.path.join(ff_path, "bwd", f"step_{step_idx}", "shard_0")
+            lora_low_rank_activation_fwd_path = f"{ff_fwd_folder}/layers.{i}.layers.{i}.mlp.down_proj.lora.low_rank_activation.pt"
+            lora_low_rank_activation_bwd_path = f"{ff_bwd_folder}/layers.{i}.layers.{i}.mlp.down_proj.lora.low_rank_activation.pt"
+            lora_low_rank_activation_fwd = load_and_unpack_ff_tensor(lora_low_rank_activation_fwd_path)[:,:self.num_tokens]
+            # lora_low_rank_activation_fwd = torch.from_numpy(lora_low_rank_activation_fwd)
+            lora_low_rank_activation_bwd = load_and_unpack_ff_tensor(lora_low_rank_activation_bwd_path)
+            # lora_low_rank_activation_bwd = torch.from_numpy(lora_low_rank_activation_bwd)
             torch.testing.assert_close(lora_low_rank_activation_fwd, lora_low_rank_activation_bwd, rtol=1.3e-6, atol=1e-5)
             
             # print(f"LoRA_B {i} gradient")
@@ -790,7 +788,7 @@ class LlamaAlignmentTest(AlignmentTest):
             hf_finetuned_weight = get_hf_tensor(hf_finetuned_weight_name)
             torch.testing.assert_close(hf_gradient, (hf_original_weight-hf_finetuned_weight)/learning_rate, rtol=1.3e-6, atol=1e-5)
             ff_gradient_name = convert_hf_filename_to_ff(hf_gradient_name)
-            ff_gradient = get_ff_tensor(ff_gradient_name, hf_gradient.shape, tp_type=TPType.PARTITION)
+            ff_gradient = get_ff_tensor(ff_gradient_name, tp_type=TPType.PARTITION)
             compare(hf_gradient, ff_gradient, label=f"LoRA_A {i} gradient")
 
 parser = argparse.ArgumentParser(description='Argument Parser Example') 

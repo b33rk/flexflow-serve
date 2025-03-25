@@ -446,7 +446,8 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                            1);
     if (m->inference_debugging) {
       std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods.pt";
-      at::Tensor tensor = createTorchTensorFromCuda<DT>(m->handle.workSpace, {num_new_tokens, total_tokens, m->num_q_heads});
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(
+          m->handle.workSpace, {num_new_tokens, total_tokens, m->num_q_heads});
       torch::save(tensor, fpath.c_str());
     }
   }
@@ -493,8 +494,10 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                                                    static_cast<DT>(-INFINITY));
     }
     if (m->inference_debugging) {
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods.masked.pt";
-      at::Tensor tensor = createTorchTensorFromCuda<DT>(m->handle.workSpace, {num_new_tokens, total_tokens, m->num_q_heads});
+      std::string fpath =
+          get_fwd_dbg_folder(m, shard_id) + ".qk_prods.masked.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(
+          m->handle.workSpace, {num_new_tokens, total_tokens, m->num_q_heads});
       torch::save(tensor, fpath.c_str());
     }
   }
@@ -560,8 +563,10 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
         m->num_q_heads);
 
     if (m->inference_debugging) {
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax.pt";
-      at::Tensor tensor = createTorchTensorFromCuda<DT>(m->qk_prods_softmax, {num_new_tokens, total_tokens, m->num_q_heads});
+      std::string fpath =
+          get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(
+          m->qk_prods_softmax, {num_new_tokens, total_tokens, m->num_q_heads});
       torch::save(tensor, fpath.c_str());
     }
   }
@@ -629,8 +634,10 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                            1,
                            1);
     if (m->inference_debugging) {
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax.pt";
-      at::Tensor tensor = createTorchTensorFromCuda<DT>(attn_heads, {m->vProjSize, m->num_q_heads, num_new_tokens});
+      std::string fpath =
+          get_fwd_dbg_folder(m, shard_id) + ".qk_prods_softmax.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(
+          attn_heads, {m->vProjSize, m->num_q_heads, num_new_tokens});
       torch::save(tensor, fpath.c_str());
     }
   }
@@ -1158,40 +1165,40 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   // printf("obtained handler\n");
   assert(sizeof(DT) == 2 && "FlashInfer only supports half precision");
   DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
-     // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
-     cudaError_t result =
-         BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
-                                                       HEAD_DIM,
-                                                       LogitsPostHook::kNone,
-                                                       PosEncodingMode::kNone,
-                                                       false,
-                                                       MaskMode::kCausal,
-                                                       half,
-                                                       half,
-                                                       half,
-                                                       int32_t>(
-             static_cast<BatchPrefillHandler *>(handler),
-             q,
-             m->handle.incr_attention_metadata->q_indptr,
-             /*q_offset=*/nullptr,
-             paged_kv,
-             /*custom_mask=*/nullptr,
-             /*qk_indptr=*/nullptr,
-             o,
-             /*lse=*/nullptr,
-             num_q_heads,
-             /*window_left=*/-1,
-             /*logits_soft_cap=*/0.f,
-             sm_scale,
-             /*rope_scale=*/1.f,
-             /*rope_theta=*/static_cast<float>(1e4),
-             stream);
-     if (result != cudaSuccess) {
-       throw std::runtime_error("Failed to run "
-                                "IncrementalDecodingAttentionForwardKernel: " +
-                                std::string(cudaGetErrorString(result)));
-     }
-   });
+    // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
+    cudaError_t result =
+        BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
+                                                      HEAD_DIM,
+                                                      LogitsPostHook::kNone,
+                                                      PosEncodingMode::kNone,
+                                                      false,
+                                                      MaskMode::kCausal,
+                                                      half,
+                                                      half,
+                                                      half,
+                                                      int32_t>(
+            static_cast<BatchPrefillHandler *>(handler),
+            q,
+            m->handle.incr_attention_metadata->q_indptr,
+            /*q_offset=*/nullptr,
+            paged_kv,
+            /*custom_mask=*/nullptr,
+            /*qk_indptr=*/nullptr,
+            o,
+            /*lse=*/nullptr,
+            num_q_heads,
+            /*window_left=*/-1,
+            /*logits_soft_cap=*/0.f,
+            sm_scale,
+            /*rope_scale=*/1.f,
+            /*rope_theta=*/static_cast<float>(1e4),
+            stream);
+    if (result != cudaSuccess) {
+      throw std::runtime_error("Failed to run "
+                               "IncrementalDecodingAttentionForwardKernel: " +
+                               std::string(cudaGetErrorString(result)));
+    }
+  });
 }
 
 template <typename DT>
@@ -1217,7 +1224,9 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
 
   if (m->inference_debugging) {
     std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".devQKVProjArray.pt";
-    at::Tensor tensor = createTorchTensorFromCuda<DT>(m->devQKVProjArray, {m->qProjSize, (int)tot_num_heads, bc->num_active_tokens()});
+    at::Tensor tensor = createTorchTensorFromCuda<DT>(
+        m->devQKVProjArray,
+        {m->qProjSize, (int)tot_num_heads, bc->num_active_tokens()});
     torch::save(tensor, fpath.c_str());
   }
 
@@ -1227,7 +1236,9 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
 
   if (m->inference_debugging) {
     std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".post_rope.pt";
-    at::Tensor tensor = createTorchTensorFromCuda<DT>(m->devQKVProjArray, {m->qProjSize, (int)tot_num_heads, bc->num_active_tokens()});
+    at::Tensor tensor = createTorchTensorFromCuda<DT>(
+        m->devQKVProjArray,
+        {m->qProjSize, (int)tot_num_heads, bc->num_active_tokens()});
     torch::save(tensor, fpath.c_str());
   }
 
@@ -1389,7 +1400,9 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     // save result to file for checking
     std::string filename =
         get_peft_dbg_folder(m, shard_id) + ".o_proj.input_gradient_0.pt";
-    at::Tensor tensor = createTorchTensorFromCuda<DT>(static_cast<const void*>(output_grad_ptr), {m->vProjSize, m->num_q_heads, num_tokens});
+    at::Tensor tensor = createTorchTensorFromCuda<DT>(
+        static_cast<void const *>(output_grad_ptr),
+        {m->vProjSize * m->num_q_heads, num_tokens});
     torch::save(tensor, filename.c_str());
   }
 
@@ -1450,11 +1463,15 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".v_proj.input_gradient_0.pt";
-      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(static_cast<const void*>(C), {m_, n_, m->num_q_heads});
+      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(
+          static_cast<void const *>(C),
+          {num_tokens, m->vProjSize * m->num_q_heads});
       torch::save(tensor1, filename.c_str());
       std::string filename2 =
           get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax.pt";
-      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(static_cast<const void*>(A), {m_, k_, m->num_q_heads});
+      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(
+          static_cast<void const *>(A),
+          {num_tokens, num_tokens, m->num_q_heads});
       torch::save(tensor2, filename2.c_str());
     }
   }
@@ -1515,11 +1532,15 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad.pt";
-      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(static_cast<const void*>(C), {num_tokens, num_tokens, m->num_q_heads});
+      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(
+          static_cast<void const *>(C),
+          {num_tokens, num_tokens, m->num_q_heads});
       torch::save(tensor1, filename.c_str());
       std::string filename2 = get_peft_dbg_folder(m, shard_id) + ".vcache.pt";
 
-      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(static_cast<const void*>(B), {m->vProjSize, m->num_kv_heads, BatchConfig::max_sequence_length()});
+      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(
+          static_cast<void const *>(B),
+          {m->vProjSize, m->num_kv_heads, BatchConfig::max_sequence_length()});
       torch::save(tensor2, filename2.c_str());
     }
   }
@@ -1553,11 +1574,14 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
       // DT *C = static_cast<DT *>(m->handle.workSpace);
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad_in.pt";
-      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(m->handle.workSpace, {num_tokens, num_tokens, m->num_q_heads});
+      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(
+          m->handle.workSpace, {num_tokens, num_tokens, m->num_q_heads});
       torch::save(tensor1, filename.c_str());
       filename =
           get_peft_dbg_folder(m, shard_id) + ".softmax_activation_buffer.pt";
-      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(m->softmax_activation_buffer, {num_tokens, num_tokens, m->num_q_heads});
+      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(
+          m->softmax_activation_buffer,
+          {num_tokens, num_tokens, m->num_q_heads});
       torch::save(tensor2, filename.c_str());
     }
 
@@ -1578,9 +1602,10 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     }
     if (m->inference_debugging) {
       DT *C = static_cast<DT *>(m->handle.workSpace);
-      std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".qk_prods.softmax_grad_in.masked.pt";
-      at::Tensor tensor = createTorchTensorFromCuda<DT>(C, {num_tokens, num_tokens, m->num_q_heads});
+      std::string filename = get_peft_dbg_folder(m, shard_id) +
+                             ".qk_prods.softmax_grad_in.masked.pt";
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(
+          C, {num_tokens, num_tokens, m->num_q_heads});
       torch::save(tensor, filename.c_str());
     }
   }
@@ -1642,11 +1667,15 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".query_activation.pt";
-      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(static_cast<const void*>(B), {m->qProjSize, m->num_q_heads, num_tokens});
+      at::Tensor tensor1 = createTorchTensorFromCuda<DT>(
+          static_cast<void const *>(B),
+          {m->qProjSize, m->num_q_heads, num_tokens});
       torch::save(tensor1, filename.c_str());
       std::string filename2 =
           get_peft_dbg_folder(m, shard_id) + ".devkproj_pre.pt";
-      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(static_cast<const void*>(C), {num_tokens, m->qProjSize*m->num_q_heads, 3});
+      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(
+          static_cast<void const *>(C),
+          {num_tokens, m->qProjSize, m->num_q_heads});
       torch::save(tensor2, filename2.c_str());
     }
   }
@@ -1708,7 +1737,8 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray_pre.pt";
-      at::Tensor tensor = createTorchTensorFromCuda<DT>(C, {num_tokens, m->qProjSize * m->num_q_heads, 3});
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(
+          C, {num_tokens, m->qProjSize * m->num_q_heads, 3});
       torch::save(tensor, filename.c_str());
     }
   }
@@ -1748,7 +1778,8 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
       if (m->inference_debugging) {
         std::string filename =
             get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray.pt";
-        at::Tensor tensor = createTorchTensorFromCuda<DT>(C, {num_tokens, m->qProjSize * m->num_q_heads, 3});
+        at::Tensor tensor = createTorchTensorFromCuda<DT>(
+            C, {num_tokens, m->qProjSize, m->num_q_heads, 3});
         torch::save(tensor, filename.c_str());
       }
     }
@@ -1761,7 +1792,8 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
                  m->num_q_heads); // skip over regions reserved for Q gradients
     if (m->inference_debugging) {
       std::string filename = get_peft_dbg_folder(m, shard_id) + ".devkproj.pt";
-      at::Tensor tensor = createTorchTensorFromCuda<DT>(C, {num_tokens, m->qProjSize * m->num_q_heads, 3});
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(
+          C, {num_tokens, m->qProjSize, m->num_q_heads});
       torch::save(tensor, filename.c_str());
     }
   }
@@ -1790,7 +1822,8 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     if (m->inference_debugging) {
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".self_attn.input_gradient_0.pt";
-      at::Tensor tensor = createTorchTensorFromCuda<DT>(C, {m->qProjSize, m->num_q_heads, num_tokens});
+      at::Tensor tensor = createTorchTensorFromCuda<DT>(
+          C, {m->qProjSize, m->num_q_heads, num_tokens});
       torch::save(tensor, filename.c_str());
     }
   }

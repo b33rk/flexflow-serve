@@ -521,3 +521,8 @@ def truncate_dimension(tensor, old_dim, new_dim):
     truncated_tensor = tensor[tuple(slices)]
 
     return truncated_tensor
+
+def load_and_unpack_ff_tensor(filepath):
+    # FlexFlow saves tensors as a list of parameters, we need to unpack it
+    ff_tensor = torch.load(filepath, weights_only=False, map_location="cpu")
+    return list(ff_tensor.parameters())[0].squeeze()

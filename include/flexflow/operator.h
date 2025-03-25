@@ -336,7 +336,8 @@ public:
         std::string filename =
             dst_filepath_weights.string() + ".weight_" + std::to_string(i);
         filename += ".pt";
-        at::Tensor weight_tensor = torch_tensor_from_accessor(weight_tensors[i]);
+        at::Tensor weight_tensor =
+            torch_tensor_from_accessor(weight_tensors[i]);
         torch::save(weight_tensor, filename.c_str());
       }
     }

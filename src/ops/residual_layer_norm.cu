@@ -763,15 +763,19 @@ void peft_bwd_kernel(ResidualLayerNormMeta const *m,
                      op_name_without_uid + "_shard_" + std::to_string(0);
 
     std::string filename1 = base_filepath + "_mean";
-    auto mean_tensor = createTorchTensorFromCuda<T>(m->mean_ptr, {m->effective_batch_size});
+    auto mean_tensor =
+        createTorchTensorFromCuda<T>(m->mean_ptr, {m->effective_batch_size});
     torch::save(mean_tensor, filename1);
 
     std::string filename2 = base_filepath + "_rstd";
-    auto rstd_tensor = createTorchTensorFromCuda<T>(m->rstd_ptr, {m->effective_batch_size});
+    auto rstd_tensor =
+        createTorchTensorFromCuda<T>(m->rstd_ptr, {m->effective_batch_size});
     torch::save(rstd_tensor, filename2);
 
     std::string filename3 = base_filepath + "_input_activation";
-    auto input_activation_tensor = createTorchTensorFromCuda<T>(m->input_activation, {m->effective_batch_size, m->effective_num_elements});
+    auto input_activation_tensor = createTorchTensorFromCuda<T>(
+        m->input_activation,
+        {m->effective_batch_size, m->effective_num_elements});
     torch::save(input_activation_tensor, filename3);
   }
 
