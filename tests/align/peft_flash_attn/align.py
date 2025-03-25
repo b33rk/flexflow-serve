@@ -211,6 +211,8 @@ def check_closeness_between_flexflow_and_flash_attn(
     )
     if not comparison:
         print(f"Difference found between {tensor_type} from flexflow and flash-attn")
+        print(f"FlexFlow tensor: {flexflow_tensor}")
+        print(f"Flash-attn tensor: {flash_attn_tensor}")
         return False
     return True
 
@@ -226,6 +228,8 @@ def perform_closeness_test(tensors):
 
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    test_success = True
 
     # Iterate through steps, shards, and layers
     for step_id in sorted(tensors.keys()):
@@ -348,7 +352,7 @@ def perform_closeness_test(tensors):
                         fwd_out, flash_out, "out"
                     )
                     if not out_closeness:
-                        return False
+                        test_success = False
 
                     # check softmax_lse closeness
                     softmax_lse_closeness = (
@@ -357,30 +361,30 @@ def perform_closeness_test(tensors):
                         )
                     )
                     if not softmax_lse_closeness:
-                        return False
+                        test_success = False
 
                     # check dq closeness
                     dq_closeness = check_closeness_between_flexflow_and_flash_attn(
                         bwd_dq, flash_dq, "dq"
                     )
                     if not dq_closeness:
-                        return False
+                        test_success = False
 
                     # check dk closeness
                     dk_closeness = check_closeness_between_flexflow_and_flash_attn(
                         bwd_dk, flash_dk, "dk"
                     )
                     if not dk_closeness:
-                        return False
+                        test_success = False
 
                     # check dv closeness
                     dv_closeness = check_closeness_between_flexflow_and_flash_attn(
                         bwd_dv, flash_dv, "dv"
                     )
                     if not dv_closeness:
-                        return False
+                        test_success = False
 
-                    return True
+                    return test_success
 
 
 if __name__ == "__main__":
