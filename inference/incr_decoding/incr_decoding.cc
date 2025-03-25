@@ -156,6 +156,7 @@ std::vector<Request> make_warmup_requests(int num_requests) {
     inference_req.benchmarking_tokens = 512;
     inference_req.max_new_tokens = 30;
     inference_req.warmup = true;
+    inference_req.ignore_eos = true; // ignore EOS during warmup
     warmup_requests.push_back(inference_req);
   }
   return warmup_requests;
@@ -163,7 +164,8 @@ std::vector<Request> make_warmup_requests(int num_requests) {
 
 std::vector<Request> load_prompt_list(nlohmann::ordered_json prompt_json,
                                       float qps,
-                                      int max_length) {
+                                      int max_length,
+                                      bool ignore_eos = false) {
   int total_num_requests = 0;
   assert(qps >= 0.0f);
   long long interarrival_time =
@@ -177,6 +179,7 @@ std::vector<Request> load_prompt_list(nlohmann::ordered_json prompt_json,
     inference_req.prompt = text;
     inference_req.max_length = max_length;
     inference_req.arrival_time_us = arrival_time;
+    inference_req.ignore_eos = ignore_eos;
     requests.push_back(inference_req);
     total_num_requests++;
     arrival_time += interarrival_time;
@@ -186,6 +189,7 @@ std::vector<Request> load_prompt_list(nlohmann::ordered_json prompt_json,
 
 std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
                                 float qps,
+                                bool ignore_eos = false,
                                 bool benchmarking = false) {
   std::vector<Request> requests;
   assert(qps >= 0.0f);
@@ -207,6 +211,7 @@ std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
     }
     inference_req.arrival_time_us = arrival_time;
     inference_req.max_new_tokens = response_length;
+    inference_req.ignore_eos = ignore_eos;
     arrival_time += interarrival_time;
     requests.push_back(inference_req);
   }
@@ -215,6 +220,7 @@ std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
 
 std::vector<Request> load_requests(std::string prompt_file_path,
                                    float qps,
+                                   bool ignore_eos,
                                    int max_length_if_needed) {
   std::ifstream file_handle(prompt_file_path);
   if (!file_handle.good()) {
@@ -241,9 +247,9 @@ std::vector<Request> load_requests(std::string prompt_file_path,
     std::cerr << "Error: JSON file is null!" << std::endl;
     assert(false);
   } else if (prompt_json.is_array()) {
-    return load_prompt_list(prompt_json, qps, max_length_if_needed);
+    return load_prompt_list(prompt_json, qps, max_length_if_needed, ignore_eos);
   } else if (prompt_json.is_object()) {
-    return load_trace(prompt_json, qps);
+    return load_trace(prompt_json, qps, ignore_eos);
   } else {
     std::cerr << "JSON is neither an array nor an object!" << std::endl;
     assert(false);
@@ -273,6 +279,7 @@ void FlexFlow::top_level_task(Task const *task,
   int max_length = 128;
   int num_kv_cache_slots = -1;
   bool run_warmup = false;
+  bool ignore_eos = true;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -424,7 +431,7 @@ void FlexFlow::top_level_task(Task const *task,
   }
   std::cout << "----------inference started--------------" << std::endl;
   std::vector<Request> requests =
-      load_requests(file_paths.prompt_file_path, qps, max_length);
+      load_requests(file_paths.prompt_file_path, qps, ignore_eos, max_length);
 
   std::vector<GenerationResult> result =
       (qps > 0.0f) ? model.generate_online(requests, {})

@@ -239,6 +239,7 @@ std::ostream &operator<<(std::ostream &os, Request const &req) {
   os << "  max_new_tokens: " << req.max_new_tokens << "\n";
   os << "  benchmarking_tokens: " << req.benchmarking_tokens << "\n";
   os << "  add_special_tokens: " << req.add_special_tokens << "\n";
+  os << "  ignore_eos: " << req.ignore_eos << "\n";
   os << "  warmup: " << req.warmup << "\n";
   os << "  status: " << static_cast<int>(req.status) << "\n";
   os << "  peft_model_id: " << req.peft_model_id << "\n";
@@ -777,7 +778,7 @@ bool RequestManager::inf_req_completed(BatchConfig const &old_bc, int i) {
   // printf("model_type = %d\n", this->model_type);
   if (request.tokens.size() >= old_bc.requestsInfo[i].max_length) {
     request_completed = true;
-  } else if (is_eos_token(request.tokens.back())) {
+  } else if (is_eos_token(request.tokens.back()) && !request.ignore_eos) {
     // Encounter EOS token id
     request_completed = true;
   }

@@ -2140,6 +2140,7 @@ class Request:
     max_length: int = -1
     max_new_tokens: int = -1
     add_special_tokens: bool = True
+    ignore_eos: bool = False
     peft_model_id: Optional[PEFTModelID] = None
     dataset_filepath: Optional[str] = None
     max_training_epochs: int = 1
@@ -4486,6 +4487,7 @@ class FFModel(object):
         max_lengths = [request.max_length for request in requests_list]
         max_new_tokens_ = [request.max_new_tokens for request in requests_list]
         add_special_tokens_ = [request.add_special_tokens for request in requests_list]
+        ignore_eos_ = [request.ignore_eos for request in requests_list]
 
         peft_model_ids = [
             (
@@ -4513,6 +4515,7 @@ class FFModel(object):
             max_lengths,
             max_new_tokens_,
             add_special_tokens_,
+            ignore_eos_,
             peft_model_ids,
             dataset_filepaths,
             training_steps,

@@ -190,7 +190,8 @@ std::vector<Request> make_warmup_requests(int num_inf_request,
 }
 
 std::vector<Request> load_prompt_list(nlohmann::ordered_json prompt_json,
-                                      int max_length) {
+                                      int max_length,
+                                      bool ignore_eos = false) {
   int total_num_requests = 0;
   std::vector<Request> requests;
   for (auto &prompt : prompt_json) {
@@ -199,6 +200,7 @@ std::vector<Request> load_prompt_list(nlohmann::ordered_json prompt_json,
     Request inference_req;
     inference_req.prompt = text;
     inference_req.max_length = max_length;
+    inference_req.ignore_eos = ignore_eos;
     requests.push_back(inference_req);
     total_num_requests++;
   }
@@ -206,6 +208,7 @@ std::vector<Request> load_prompt_list(nlohmann::ordered_json prompt_json,
 }
 
 std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
+                                bool ignore_eos = false,
                                 bool benchmarking = false) {
   std::vector<Request> requests;
   auto &metadata = prompt_json["metadata"];
@@ -222,12 +225,14 @@ std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
       inference_req.prompt = text;
     }
     inference_req.max_new_tokens = response_length;
+    inference_req.ignore_eos = ignore_eos;
     requests.push_back(inference_req);
   }
   return requests;
 }
 
 std::vector<Request> load_requests(std::string prompt_file_path,
+                                   bool ignore_eos,
                                    int max_length_if_needed) {
   std::ifstream file_handle(prompt_file_path);
   if (!file_handle.good()) {
@@ -254,9 +259,9 @@ std::vector<Request> load_requests(std::string prompt_file_path,
     std::cerr << "Error: JSON file is null!" << std::endl;
     assert(false);
   } else if (prompt_json.is_array()) {
-    return load_prompt_list(prompt_json, max_length_if_needed);
+    return load_prompt_list(prompt_json, max_length_if_needed, ignore_eos);
   } else if (prompt_json.is_object()) {
-    return load_trace(prompt_json);
+    return load_trace(prompt_json, ignore_eos);
   } else {
     std::cerr << "JSON is neither an array nor an object!" << std::endl;
     assert(false);
@@ -288,6 +293,7 @@ void FlexFlow::top_level_task(Task const *task,
   int num_layers_per_finetuning_step = -1;
   bool run_warmup = false;
   int num_kv_cache_slots = -1;
+  bool ignore_eos = true;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -483,7 +489,7 @@ void FlexFlow::top_level_task(Task const *task,
   // Run workload
   {
     std::vector<Request> requests =
-        load_requests(file_paths.prompt_file_path, 128);
+        load_requests(file_paths.prompt_file_path, ignore_eos, 128);
 
     // Add fine-tuning request
     assert(!file_paths.dataset_file_path.empty() &&

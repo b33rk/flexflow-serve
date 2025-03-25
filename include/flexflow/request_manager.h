@@ -117,6 +117,7 @@ struct Request {
   int max_new_tokens = -1;
   int benchmarking_tokens = -1;
   bool add_special_tokens = true;
+  bool ignore_eos = false;
   bool warmup = false;
 
   Status status = PENDING;
