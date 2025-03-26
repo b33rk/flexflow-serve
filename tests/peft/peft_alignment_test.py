@@ -608,38 +608,40 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, hf_tensor.shape, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"Attn O-proj {i} gradient input")
 
-            # # V-proj grads
-            # # FF shape: [num_tokens, qProjSize*num_heads]
-            # hf_tensor_name = f"layers.{i}.self_attn.v_proj"
-            # ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
-            # mixed_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
-            # hf_tensor = get_hf_tensor(hf_tensor_name, mixed_comparison)
-            # hf_tensor = hf_tensor.squeeze().T
-            # ff_tensor = get_ff_tensor(ff_tensor_name, mixed_comparison, hf_tensor.shape, tp_type=TPType.PARTITION, shard_axis=1)
-            # compare(hf_tensor, ff_tensor, label=f"V-proj {i} gradient input")
+            # V-proj grads
+            # FF shape: [num_tokens, qProjSize*num_heads]
+            # todo(gabriele): ff shape is [qProjSize*num_heads, num_tokens]
+            hf_tensor_name = f"layers.{i}.self_attn.v_proj"
+            ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
+            mixed_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
+            hf_tensor = get_hf_tensor(hf_tensor_name, mixed_comparison)
+            hf_tensor = hf_tensor.squeeze().T # todo(gabriele): the shape is incorrect now
+            ff_tensor = get_ff_tensor(ff_tensor_name, mixed_comparison, hf_tensor.shape, tp_type=TPType.PARTITION, shard_axis=1)
+            compare(hf_tensor, ff_tensor, label=f"V-proj {i} gradient input")
 
-            # # K-proj grads
-            # # FF shape: (num_tokens, qProjSize, num_heads)
-            # hf_tensor_name = f"layers.{i}.self_attn.k_proj"
-            # ff_tensor_name = f"layers.{i}.layers.{i}.self_attn"
-            # k_proj_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="devkproj", hf_tensor_idx=0, ff_tensor_idx=None)
-            # hf_tensor = get_hf_tensor(hf_tensor_name, k_proj_comparison)
-            # hf_tensor = hf_tensor.squeeze().view(self.num_tokens, self.num_attention_heads, self.projsize).transpose(1, 2).contiguous()
-            # hf_tensor = hf_tensor.T
-            # ff_tensor = get_ff_tensor(ff_tensor_name, k_proj_comparison, hf_tensor.shape, tp_type=TPType.PARTITION, shard_axis=2)
-            # compare(hf_tensor, ff_tensor, label=f"K-proj {i} gradient input")
+            # K-proj grads
+            # FF shape: (num_tokens, qProjSize, num_heads)
+            # todo(gabriele): ff shape is [qProjSize, num_heads, num_tokens]
+            hf_tensor_name = f"layers.{i}.self_attn.k_proj"
+            ff_tensor_name = f"layers.{i}.layers.{i}.self_attn"
+            k_proj_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="devkproj", hf_tensor_idx=0, ff_tensor_idx=None)
+            hf_tensor = get_hf_tensor(hf_tensor_name, k_proj_comparison)
+            hf_tensor = hf_tensor.squeeze().view(self.num_tokens, self.num_attention_heads, self.projsize).transpose(1, 2).contiguous()
+            hf_tensor = hf_tensor.T # todo(gabriele): the shape is incorrect now
+            ff_tensor = get_ff_tensor(ff_tensor_name, k_proj_comparison, hf_tensor.shape, tp_type=TPType.PARTITION, shard_axis=2)
+            compare(hf_tensor, ff_tensor, label=f"K-proj {i} gradient input")
             
             # Q-proj grads
             # FF shape (devQKVPRojArray): (num_tokens, qProjSize, num_heads, 3)
             # Q-proj out grad: devQKVPRojArray[:,:,:,0]
-            # hf_tensor_name = f"layers.{i}.self_attn.q_proj"
-            # ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.devQKVPRojArray"
-            # q_proj_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="", hf_tensor_idx=0, ff_tensor_idx=None)
-            # hf_tensor = get_hf_tensor(hf_tensor_name, q_proj_comparison)
-            # hf_tensor = hf_tensor.view(self.num_tokens, self.num_attention_heads, self.projsize).transpose(1, 2).contiguous().T
-            # augmented_hf_tensor_shape = torch.Size([3]+list(hf_tensor.size()))
-            # ff_tensor = get_ff_tensor(ff_tensor_name, q_proj_comparison, augmented_hf_tensor_shape, tp_type=TPType.PARTITION, shard_axis=2)[:,:,:,0]
-            # compare(hf_tensor, ff_tensor, label=f"Q-proj {i} gradient input")
+            hf_tensor_name = f"layers.{i}.self_attn.q_proj"
+            ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.devQKVPRojArray"
+            q_proj_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="", hf_tensor_idx=0, ff_tensor_idx=None)
+            hf_tensor = get_hf_tensor(hf_tensor_name, q_proj_comparison)
+            hf_tensor = hf_tensor.view(self.num_tokens, self.num_attention_heads, self.projsize).transpose(1, 2).contiguous().T
+            augmented_hf_tensor_shape = torch.Size([3]+list(hf_tensor.size()))
+            ff_tensor = get_ff_tensor(ff_tensor_name, q_proj_comparison, augmented_hf_tensor_shape, tp_type=TPType.PARTITION, shard_axis=2)[:,:,:,0]
+            compare(hf_tensor, ff_tensor, label=f"Q-proj {i} gradient input")
             
             # FF Attn input with HF layernorm out
             hf_tensor_name = f"layers.{i}.input_layernorm"

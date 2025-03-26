@@ -26,12 +26,9 @@
 #include "flashinfer/prefill_attention_decl.cuh"
 #include "flexflow/page_manager.h"
 
-#ifndef USE_FLASH_ATTENTION
-#define USE_FLASH_ATTENTION 0
-#endif
+// #define USE_FLASH_ATTENTION 1 // just for debug
 
 #if USE_FLASH_ATTENTION
-
 #include "flexflow/flash_api.h"
 
 // only for debugging
@@ -950,7 +947,6 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
       createTorchTensorFromCuda<DT>(out_ptr, {head_size, num_heads, seqlen_q});
   out = out.permute({2, 1, 0}).unsqueeze(0);
 
-  // todo(yingyi): init dq_, dk_, dv_ by peft pre-allocated buffer
   // tensor dv shape (batch_size, seqlen_k, num_heads_k, head_size)
   // tensor dq shape (batch_size, seqlen_q, num_heads, head_size)
   // tensor dk shape (batch_size, seqlen_k, num_heads_k, head_size)
@@ -963,6 +959,19 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   dq = dq.permute({2, 1, 0}).unsqueeze(0);
   dk = dk.permute({2, 1, 0}).unsqueeze(0);
   dv = dv.permute({2, 1, 0}).unsqueeze(0);
+
+  // todo(gabriele): i fix the data layout for dq, dk, dv, but it's not contiguous at last dimension to flash-attn refuse it
+  // we could try to fix it by the memory layout to match the q, k, v layout (and use the commented-out code above)
+  // but we need to rewrite the rope bwd kernel and input_gradient calculation kernel to match the new layout
+  // auto dq =
+  //     createTorchTensorFromCuda<DT>(dq_ptr, {seqlen_q, head_size, num_heads});
+  // auto dk =
+  //     createTorchTensorFromCuda<DT>(dk_ptr, {seqlen_k, head_size, num_heads_k});
+  // auto dv =
+  //     createTorchTensorFromCuda<DT>(dv_ptr, {seqlen_k, head_size, num_heads_k});
+  // dq = dq.permute({0, 2, 1}).unsqueeze(0);
+  // dk = dk.permute({0, 2, 1}).unsqueeze(0);
+  // dv = dv.permute({0, 2, 1}).unsqueeze(0);
 
   dq_ = dq;
   dk_ = dk;
@@ -2467,7 +2476,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     // matrix B's layout: [vProjSize * num_q_heads, num_new_tokens]
     DT const *B = output_grad_ptr;
     // matrix C: gradients for value (saved as part of m->devQKVProjArray)
-    // matrix C's layout: [num_tokens, qProjsize * num_q_heads, 3]
+    // matrix C's layout: [num_tokens, qProjsize, num_q_heads, 3]
     // note that we first need to compute the gradients wrt each q_heads, then
     // we can sum the gradients corresponding to each group of q_heads to obtain
     // the gradients wrt each value head
@@ -2808,26 +2817,30 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
           num_tokens,
           m->num_q_heads,
           m->num_kv_heads);
+    }
+
+    {
       DT *C = static_cast<DT *>(m->devQKVProjArrayBWD);
       if (m->inference_debugging) {
         std::string filename =
             get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray";
-        save_tensor(C,
-                    num_tokens * m->qProjSize * m->num_q_heads * 3,
-                    filename.c_str());
+        save_tensor(
+            C, num_tokens * m->qProjSize * m->num_q_heads * 3, filename.c_str());
       }
     }
 
-    // matrix C: gradients for key (saved as part of m->devQKVProjArrayBWD)
-    // matrix C's layout: [num_tokens, qProjsize * num_heads, 3]
-    DT *C = static_cast<DT *>(m->devQKVProjArrayBWD) +
-            num_tokens *
-                (m->qProjSize *
-                 m->num_q_heads); // skip over regions reserved for Q gradients
-    if (m->inference_debugging) {
-      std::string filename = get_peft_dbg_folder(m, shard_id) + ".devkproj";
-      save_tensor(
-          C, num_tokens * (m->qProjSize * m->num_q_heads), filename.c_str());
+    { // matrix C: gradients for key (saved as part of m->devQKVProjArrayBWD)
+      // matrix C's layout: [num_tokens, qProjsize * num_heads, 3]
+      DT *C =
+          static_cast<DT *>(m->devQKVProjArrayBWD) +
+          num_tokens *
+              (m->qProjSize *
+               m->num_q_heads); // skip over regions reserved for Q gradients
+      if (m->inference_debugging) {
+        std::string filename = get_peft_dbg_folder(m, shard_id) + ".devkproj";
+        save_tensor(
+            C, num_tokens * (m->qProjSize * m->num_q_heads), filename.c_str());
+      }
     }
   }
 
@@ -2840,14 +2853,6 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     // matrix B: gradients w.r.t. QKV (concatenated in devQKVArray)
     // matrix B's layout: [num_tokens, qProjsize * tot_num_heads]
     DT const *B = static_cast<DT *>(m->devQKVProjArrayBWD);
-
-    if (m->inference_debugging) {
-      std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArrayBWD-normal";
-      save_tensor(
-          B, num_tokens * (m->qProjSize * m->num_q_heads), filename.c_str());
-    }
-
     // matrix C: gradients w.r.t. input
     // matrix C's layout: [qProjsize * tot_num_heads, num_tokens]
     DT *C = input_grad_ptr;
@@ -2880,56 +2885,64 @@ void compute_gradient_of_input(IncMultiHeadSelfAttentionMeta const *m,
   int num_tokens = bc->requestsInfo[i].num_tokens_in_batch;
 
   // Step 6: perform rotary position embeddings (RoPE) bwd
-  if (m->rotary_embedding_meta->apply_rotary_embedding) {
-    checkCUDA(cudaMemcpyAsync(m->peft_token_infos_device,
-                              m->peft_token_infos,
-                              m->peft_token_infos_size,
-                              cudaMemcpyHostToDevice,
-                              peft_stream));
-    assert(m->qProjSize == m->kProjSize);
-    /*q&k*/
-    int half_proj = m->qProjSize / 2;
-    int q_proj_work = num_tokens * m->num_q_heads * half_proj;
-    int kv_proj_work = num_tokens * m->num_kv_heads * half_proj;
-    int parallelism = q_proj_work + kv_proj_work;
-    apply_rotary_embedding_bwd<<<GET_BLOCKS(parallelism),
-                                 min(CUDA_NUM_THREADS, parallelism),
-                                 0,
-                                 peft_stream>>>(
-        static_cast<DT *>(m->devQKVProjArrayBWD),
-        m->complex_input,
-        m->peft_token_infos_device,
-        m->rotary_embedding_meta->rope_theta,
-        (m->rotary_embedding_meta->rope_type == "llama3"),
-        m->rotary_embedding_meta->factor,
-        m->rotary_embedding_meta->low_freq_factor,
-        m->rotary_embedding_meta->high_freq_factor,
-        m->rotary_embedding_meta->original_max_position_embeddings,
-        m->qProjSize,
-        num_tokens,
-        m->num_q_heads,
-        m->num_kv_heads);
-    DT *C = static_cast<DT *>(m->devQKVProjArrayBWD);
-    if (m->inference_debugging) {
-      std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray";
-      save_tensor(
-          C, num_tokens * m->qProjSize * m->num_q_heads * 3, filename.c_str());
+  {
+    if (m->rotary_embedding_meta->apply_rotary_embedding) {
+      checkCUDA(cudaMemcpyAsync(m->peft_token_infos_device,
+                                m->peft_token_infos,
+                                m->peft_token_infos_size,
+                                cudaMemcpyHostToDevice,
+                                peft_stream));
+      assert(m->qProjSize == m->kProjSize);
+      /*q&k*/
+      int half_proj = m->qProjSize / 2;
+      int q_proj_work = num_tokens * m->num_q_heads * half_proj;
+      int kv_proj_work = num_tokens * m->num_kv_heads * half_proj;
+      int parallelism = q_proj_work + kv_proj_work;
+      apply_rotary_embedding_bwd<<<GET_BLOCKS(parallelism),
+                                   min(CUDA_NUM_THREADS, parallelism),
+                                   0,
+                                   peft_stream>>>(
+          static_cast<DT *>(m->devQKVProjArrayBWD),
+          m->complex_input,
+          m->peft_token_infos_device,
+          m->rotary_embedding_meta->rope_theta,
+          (m->rotary_embedding_meta->rope_type == "llama3"),
+          m->rotary_embedding_meta->factor,
+          m->rotary_embedding_meta->low_freq_factor,
+          m->rotary_embedding_meta->high_freq_factor,
+          m->rotary_embedding_meta->original_max_position_embeddings,
+          m->qProjSize,
+          num_tokens,
+          m->num_q_heads,
+          m->num_kv_heads);
     }
-  }
 
-  // matrix C: gradients for key (saved as part of m->devQKVProjArrayBWD)
-  // matrix C's layout: [num_tokens, qProjsize * num_heads, 3]
-  DT *C = static_cast<DT *>(m->devQKVProjArrayBWD) +
+    {
+      DT *C = static_cast<DT *>(m->devQKVProjArrayBWD);
+      if (m->inference_debugging) {
+        std::string filename =
+            get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray";
+        save_tensor(
+            C, num_tokens * m->qProjSize * m->num_q_heads * 3, filename.c_str());
+      }
+    }
+
+    { // matrix C: gradients for key (saved as part of m->devQKVProjArrayBWD)
+      // matrix C's layout: [num_tokens, qProjsize * num_heads, 3]
+      DT *C =
+          static_cast<DT *>(m->devQKVProjArrayBWD) +
           num_tokens *
               (m->qProjSize *
                m->num_q_heads); // skip over regions reserved for Q gradients
-  if (m->inference_debugging) {
-    std::string filename = get_peft_dbg_folder(m, shard_id) + ".devkproj";
-    save_tensor(
-        C, num_tokens * (m->qProjSize * m->num_q_heads), filename.c_str());
+      if (m->inference_debugging) {
+        std::string filename = get_peft_dbg_folder(m, shard_id) + ".devkproj";
+        save_tensor(
+            C, num_tokens * (m->qProjSize * m->num_q_heads), filename.c_str());
+      }
+    }
   }
-  // Step 7: compute gradients w.r.t. input from `peft_bwd_kernel`
+
+  // Step 7: compute gradients w.r.t. input
   {
     float alpha = 1.0f, beta = 0.0f;
     if (!m->reset_input_grads[0]) {
@@ -2938,14 +2951,6 @@ void compute_gradient_of_input(IncMultiHeadSelfAttentionMeta const *m,
     // matrix B: gradients w.r.t. QKV (concatenated in devQKVArray)
     // matrix B's layout: [num_tokens, qProjsize * tot_num_heads]
     DT const *B = static_cast<DT *>(m->devQKVProjArrayBWD);
-
-    if (m->inference_debugging) {
-      std::string filename =
-          get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArrayBWD-flash";
-      save_tensor(
-          B, num_tokens * m->qProjSize * m->num_q_heads, filename.c_str());
-    }
-
     // matrix C: gradients w.r.t. input
     // matrix C's layout: [qProjsize * tot_num_heads, num_tokens]
     DT *C = input_grad_ptr;
@@ -3091,7 +3096,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
     DT *C = static_cast<DT *>(m->devQKVProjArrayBWD) +
             2 * num_tokens * (m->qProjSize * m->num_q_heads);
     std::string dv_raw_fpath =
-        get_peft_dbg_folder(m, shard_id) + ".v_proj.input_gradient_0-flash";
+        get_peft_dbg_folder(m, shard_id) + ".v_proj.input_gradient_0";
     save_tensor(
         C, m->vProjSize * m->num_q_heads * num_tokens, dv_raw_fpath.c_str());
 
@@ -3100,7 +3105,9 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
     std::string dv_fpath = get_peft_dbg_folder(m, shard_id) + ".dv.pt";
     torch::save(dq.clone().detach(), dq_fpath);
     torch::save(dk.clone().detach(), dk_fpath);
-    torch::save(dv.clone().detach(), dv_fpath); // shape: batch_size x seqlen_k x num_heads_k x head_size
+    torch::save(
+        dv.clone().detach(),
+        dv_fpath); // shape: batch_size x seqlen_k x num_heads_k x head_size
 
     std::cout << "the address of devQKVProjArrayBWD: " << m->devQKVProjArrayBWD
               << std::endl;
@@ -3116,6 +3123,11 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
     std::cout << "the address of dq_ptr should be: " << dq_ptr << std::endl;
     std::cout << "the address of dk_ptr should be: " << dk_ptr << std::endl;
     std::cout << "the address of dv_ptr should be: " << dv_ptr << std::endl;
+
+    std::string filename =
+        get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray_pre";
+    save_tensor(
+        C, num_tokens * m->qProjSize * m->num_q_heads * 3, filename.c_str());
 
     // int req_idx = bc->finetuning_request_index();
     // signed long num_heads = m->num_q_heads;
