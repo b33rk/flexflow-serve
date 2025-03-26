@@ -157,9 +157,16 @@ def load_tensor_from_flexflow(base_path="/root/.cache/flexflow/debug/flexflow"):
 def check_closeness_between_forward_and_backward_pass(
     fwd_tensor, bwd_tensor, tensor_type, atol=1e-5, rtol=1e-5
 ):
+    # check if both fwd_tensor and bwd_tensor have overflow
+    if torch.isnan(fwd_tensor).any() and torch.isnan(bwd_tensor).any():
+        print(f"Overflow found in {tensor_type} from forward and backward pass")
+        return False
+
     comparison = torch.allclose(fwd_tensor, bwd_tensor, atol=atol, rtol=rtol)
     if not comparison:
         print(f"Difference found between {tensor_type} from forward and backward pass")
+        print(f"fwd_tensor: {fwd_tensor}")
+        print(f"bwd_tensor: {bwd_tensor}")
         return False
     return True
 
@@ -206,9 +213,18 @@ def flash_attention(q, k, v, is_causal, dout, alibi_slopes=None):
 def check_closeness_between_flexflow_and_flash_attn(
     flexflow_tensor, flash_attn_tensor, tensor_type, atol=1e-5, rtol=1e-5
 ):
+    # check if both flexflow_tensor and flash_attn_tensor have overflow
+    if torch.isnan(flexflow_tensor).any() and torch.isnan(flash_attn_tensor).any():
+        print(f"Overflow found in {tensor_type} from flexflow and flash-attn")
+        return False
+
     comparison = torch.allclose(
         flexflow_tensor, flash_attn_tensor, atol=atol, rtol=rtol
     )
+    # if tensor_type == "dq" or tensor_type == "dk" or tensor_type == "dv":
+    #     print(f"FlexFlow tensor of {tensor_type}: {flexflow_tensor}")
+    #     print(f"Flash-attn tensor of {tensor_type}: {flash_attn_tensor}")
+        
     if not comparison:
         print(f"Difference found between {tensor_type} from flexflow and flash-attn")
         print(f"FlexFlow tensor: {flexflow_tensor}")
@@ -309,7 +325,8 @@ def perform_closeness_test(tensors):
                     )
 
                     if not q_closeness or not k_closeness or not v_closeness:
-                        return False
+                        # return False
+                        test_success = False
 
                     softmax_lse_closeness = (
                         check_closeness_between_forward_and_backward_pass(
@@ -317,7 +334,8 @@ def perform_closeness_test(tensors):
                         )
                     )
                     if not softmax_lse_closeness:
-                        return False
+                        # return False
+                        test_success = False
 
                     # check alibi slopes closeness
                     if fwd_alibi_slopes is not None and bwd_alibi_slopes is not None:
@@ -332,8 +350,10 @@ def perform_closeness_test(tensors):
                         print(
                             "Difference found in alibi slopes tensors between forward and backward pass: only one of the tensors is present"
                         )
-                        return False
+                        # return False
+                        test_success = False
 
+                    print(f"step {step_id}, shard {shard_id}, layer {layer_id}: fwd and bwd buffer matched")
                     # Run flash attention pass (package from pip install flash-attn)
                     is_causal = True
                     flash_out, flash_softmax_lse, flash_dq, flash_dk, flash_dv = (
@@ -384,7 +404,7 @@ def perform_closeness_test(tensors):
                     if not dv_closeness:
                         test_success = False
 
-                    return test_success
+    return test_success
 
 
 if __name__ == "__main__":
