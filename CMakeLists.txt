@@ -23,15 +23,6 @@ set(CMAKE_HIP_FLAGS "-std=c++17 ${CMAKE_HIP_FLAGS} -fPIC -UNDEBUG -D_GLIBCXX_USE
 # set(CMAKE_CUDA_STANDARD 17)
 option(INFERENCE_TESTS "Run inference tests" OFF)
 
-# Peft with Flash Attention
-option(USE_FLASH_ATTENTION "Enable Flash Attention implementation" ON)
-
-if(USE_FLASH_ATTENTION)
-  add_definitions(-DUSE_FLASH_ATTENTION=1)
-else()
-  add_definitions(-DUSE_FLASH_ATTENTION=0)
-endif()
-
 # Set a default build type if none was specified
 set(default_build_type "Debug")
 
@@ -210,9 +201,7 @@ include(optional)
 # flashinfer
 list(APPEND FLEXFLOW_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/deps/flashinfer/include)
 
-# if(USE_FLASH_ATTENTION)
-  include(flash_attn)
-# endif()
+include(flash_attn)
 
 if(FF_GPU_BACKEND STREQUAL "cuda")
   list(APPEND FF_CC_FLAGS

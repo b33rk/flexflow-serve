@@ -3,8 +3,6 @@
 
 #pragma once
 
-#if USE_FLASH_ATTENTION
-
 #include <cuda.h>
 #include <optional>
 #include <torch/extension.h>
@@ -451,5 +449,3 @@ inline std::tuple<int, int> get_compute_capability(int device) {
   return {capability_major, capability_minor};
 }
 }; // namespace flash
-
-#endif // USE_FLASH_ATTENTION

@@ -18,11 +18,8 @@
 #include <hip/hip_complex.h>
 #endif
 
-// Use the USE_FLASH_ATTENTION definition from CMake
-
-#if USE_FLASH_ATTENTION
 #include "flexflow/flash_api.h"
-#endif
+
 
 namespace FlexFlow {
 
@@ -233,7 +230,6 @@ public:
   BatchConfig::PerTokenInfo *peft_token_infos = nullptr;
   BatchConfig::PerTokenInfo *peft_token_infos_device;
 
-#if USE_FLASH_ATTENTION
   // todo(gabriele): memory consumption for softmax_lse + out
   // flash_attn use softmax_lse and out to compute (S-->P) for bwd in one-pass
   // softmax_lse size: seqlen_q * num_heads_q
@@ -250,7 +246,7 @@ public:
   // int64_t flash_attn_rng_state_1; // rng state for dropout
   int flash_attn_window_size_left;
   int flash_attn_window_size_right;
-#endif
+
 };
 
 }; // namespace FlexFlow
