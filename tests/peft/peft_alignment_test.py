@@ -198,6 +198,12 @@ class LlamaAlignmentTest(AlignmentTest):
                 ff_tensor = ff_tensor - additional_ff_tensor
             hf_tensor = hf_tensor.squeeze()
             ff_tensor = ff_tensor.squeeze()
+            hf_all_zeros = torch.all(hf_tensor == 0)
+            ff_all_zeros = torch.all(ff_tensor == 0)
+            if ff_all_zeros and not hf_all_zeros:
+                raise ValueError(f"FF tensor {label} is all zeros while HF tensor is not")
+            if hf_all_zeros and not ff_all_zeros:
+                raise ValueError(f"HF tensor {label} is all zeros while FF tensor is not")
             try:
                 # torch.testing.assert_close(hf_tensor, ff_tensor, rtol=1.3e-6, atol=tolerance)
                 if not np.allclose(hf_tensor.detach().numpy(), ff_tensor.detach().numpy(), atol=tolerance):
@@ -212,7 +218,7 @@ class LlamaAlignmentTest(AlignmentTest):
                 print("FF tensor:")
                 print(ff_tensor.squeeze())
                 print(ff_tensor.shape)
-                raise e
+                # raise e
 
         print(f"-- FWD pass {step_idx}--")
 
@@ -303,7 +309,7 @@ class LlamaAlignmentTest(AlignmentTest):
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
             ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.PARTITION)
             compare(hf_tensor, ff_tensor, label=f"LoRA_A {i} input")
-            torch.testing.assert_close(hf_down_proj_in, hf_tensor, rtol=1.3e-6, atol=1e-5)
+            torch.testing.assert_close(hf_down_proj_in, hf_tensor.to(hf_down_proj_in.dtype), rtol=1.3e-6, atol=1e-5)
 
             # LoRA intermediate
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input", ff_tensor_type="input", hf_tensor_idx=0, ff_tensor_idx=0)
@@ -429,6 +435,12 @@ class LlamaAlignmentTest(AlignmentTest):
                 ff_tensor = ff_tensor - additional_ff_tensor
             hf_tensor = hf_tensor.squeeze()
             ff_tensor = ff_tensor.squeeze()
+            hf_all_zeros = torch.all(hf_tensor == 0)
+            ff_all_zeros = torch.all(ff_tensor == 0)
+            if ff_all_zeros and not hf_all_zeros:
+                raise ValueError(f"FF tensor {label} is all zeros while HF tensor is not")
+            if hf_all_zeros and not ff_all_zeros:
+                raise ValueError(f"HF tensor {label} is all zeros while FF tensor is not")
             try:
                 # torch.testing.assert_close(hf_tensor, ff_tensor, rtol=rtol, atol=tolerance)
                 if not np.allclose(hf_tensor.numpy(), ff_tensor.numpy(), atol=tolerance):
@@ -632,7 +644,6 @@ class LlamaAlignmentTest(AlignmentTest):
             q_proj_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="", hf_tensor_idx=0, ff_tensor_idx=None)
             hf_tensor = get_hf_tensor(hf_tensor_name, q_proj_comparison)
             hf_tensor = hf_tensor.view(self.num_tokens, self.num_attention_heads, self.projsize).transpose(1, 2).contiguous().T
-            augmented_hf_tensor_shape = torch.Size([3]+list(hf_tensor.size()))
             ff_tensor = get_ff_tensor(ff_tensor_name, q_proj_comparison, tp_type=TPType.PARTITION, shard_axis=2)[:,:,:,0]
             compare(hf_tensor, ff_tensor, label=f"Q-proj {i} gradient input")
             

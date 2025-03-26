@@ -388,7 +388,7 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     DT alpha = 1.0f, beta = 0.0f;
     if (*m->qk_prod_scaling) {
       // Scale by sqrt(d_k) as per the original attention paper
-      alpha = static_cast<DT>(1.0f / sqrt(m->kProjSize));
+      alpha = 1.0f / sqrt(m->kProjSize);
     }
     // after transpositions
     int m_ = num_new_tokens;
@@ -416,6 +416,8 @@ void compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     // matrix C: qk_prods (current req only)
     // matrix C's layout: [num_new_tokens, total_tokens, num_q_heads]
     DT *C = static_cast<DT *>(m->handle.workSpace);
+    assert(m->handle.workSpaceSize >=
+           sizeof(DT) * num_new_tokens * total_tokens * m->num_q_heads);
     run_batched_matmul<DT>(m,
                            m->handle.peft_blas,
                            CUBLAS_OP_T,
@@ -1408,7 +1410,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
 
   // Step 1: compute gradients w.r.t. value
   {
-    float alpha = 1.0f, beta = 0.0f;
+    DT alpha = 1.0f, beta = 0.0f;
     // matrix A: qk_prods_softmax
     // matrix A's layout: [num_new_tokens, total_tokens, num_q_heads]
     DT const *A = static_cast<DT *>(m->qk_prods_softmax);
@@ -1436,7 +1438,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     int strideA = num_tokens * num_tokens; // num_new_tokens * total_tokens
     int strideB = m->vProjSize;
     int strideC = num_tokens * m->vProjSize;
-    checkCUDA(cublasGemmStridedBatchedEx(m->handle.blas,
+    checkCUDA(cublasGemmStridedBatchedEx(m->handle.peft_blas,
                                          CUBLAS_OP_T,
                                          CUBLAS_OP_T,
                                          m_,
@@ -1477,7 +1479,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   }
   // Step 2: compute gradients w.r.t. the qk_prods_softmax tensor
   {
-    float alpha = 1.0f, beta = 0.0f;
+    DT alpha = 1.0f, beta = 0.0f;
     // matrix A: attn_heads gradients
     // matrix A's layout: [vProjSize * num_q_heads, num_new_tokens]
     DT const *A = output_grad_ptr;
@@ -1546,7 +1548,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   }
   // Step 3: softmax backpropagation
   {
-    float alpha = 1.0f, beta = 0.0f;
+    DT alpha = 1.0f, beta = 0.0f;
     int n_param = m->num_q_heads;
     int c_param = num_tokens;
     int h_param = 1;
@@ -1611,7 +1613,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   }
   // Step 4: compute gradients w.r.t. key
   {
-    float alpha = 1.0f, beta = 0.0f;
+    DT alpha = 1.0f, beta = 0.0f;
     if (*m->qk_prod_scaling) {
       alpha = 1.0f / sqrt(m->kProjSize);
     }
@@ -1681,7 +1683,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   }
   // Step 5: compute gradients w.r.t query
   {
-    float alpha = 1.0f, beta = 0.0f;
+    DT alpha = 1.0f, beta = 0.0f;
     if (*m->qk_prod_scaling) {
       alpha = 1.0f / sqrt(m->kProjSize);
     }
@@ -1800,7 +1802,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
 
   // Step 7: compute gradients w.r.t. input
   {
-    float alpha = 1.0f, beta = 0.0f;
+    DT alpha = 1.0f, beta = 0.0f;
     if (!m->reset_input_grads[0]) {
       beta = 1.0f;
     }
@@ -1820,6 +1822,11 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
     transposeAdd(C, B, n_, k_, alpha, beta, peft_stream);
 
     if (m->inference_debugging) {
+      std::string filename2 =
+          get_peft_dbg_folder(m, shard_id) + ".self_attn.input_gradient_x.pt";
+      at::Tensor tensor2 = createTorchTensorFromCuda<DT>(
+          B, {num_tokens, m->qProjSize * (m->num_q_heads + 2 * m->num_kv_heads)});
+      torch::save(tensor2, filename2.c_str());
       std::string filename =
           get_peft_dbg_folder(m, shard_id) + ".self_attn.input_gradient_0.pt";
       at::Tensor tensor = createTorchTensorFromCuda<DT>(
