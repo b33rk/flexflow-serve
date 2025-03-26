@@ -405,7 +405,8 @@ class LlamaAlignmentTest(AlignmentTest):
                         tensor_comparison_idx.ff_tensor_type == "input_gradient"
                     )
                 ) and
-                not ff_tensor_name.endswith(".self_attn.qkv_proj")
+                not ff_tensor_name.endswith(".self_attn.qkv_proj") and
+                not "self_attn.o_proj" in ff_tensor_name
             )
             
             ff_tensors = [load_and_unpack_ff_tensor(ff_tensor_path.replace("shard_0", f"shard_{tp_idx}")) for tp_idx in range(self.tp_degree)]
@@ -604,12 +605,11 @@ class LlamaAlignmentTest(AlignmentTest):
             # Attn O-proj
             hf_tensor_name = f"layers.{i}.self_attn.o_proj"
             ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.o_proj"
-            # ff_tensor_name = f"layers.{i}.layers.{i}.self_attn"
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
-            # hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            # ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.TO_REDUCE)
-            # compare(hf_tensor, ff_tensor, label=f"Attn O-proj {i} gradient output")
-            ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.o_proj"
+            hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.TO_REDUCE)
+            compare(hf_tensor, ff_tensor, label=f"Attn O-proj {i} gradient output")
+            
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
             ff_tensor = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.PARTITION)

@@ -2304,46 +2304,6 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
         get_peft_dbg_folder(m, shard_id) + ".devQKVPRojArray_pre";
     save_tensor(
         C, num_tokens * m->qProjSize * m->num_q_heads * 3, filename.c_str());
-
-    // int req_idx = bc->finetuning_request_index();
-    // signed long num_heads = m->num_q_heads;
-    // signed long num_heads_k = m->num_kv_heads;
-    // signed long head_size = m->qProjSize;
-    // signed long seqlen_q = bc->requestsInfo[req_idx].num_tokens_in_batch;
-    // signed long seqlen_k =
-    //     bc->requestsInfo[req_idx].first_token_depth_in_request +
-    //     bc->requestsInfo[req_idx].num_tokens_in_batch;
-    // auto dq2 =
-    //     createTorchTensorFromCuda<DT>(dq_ptr, {head_size, num_heads,
-    //     seqlen_q});
-    // auto dk2 = createTorchTensorFromCuda<DT>(
-    //     dk_ptr, {head_size, num_heads_k, seqlen_k});
-    // auto dv2 = createTorchTensorFromCuda<DT>(
-    //     dv_ptr, {head_size, num_heads_k, seqlen_k});
-    // dq2 = dq2.permute({2, 1, 0}).unsqueeze(0);
-    // dk2 = dk2.permute({2, 1, 0}).unsqueeze(0);
-    // dv2 = dv2.permute({2, 1, 0}).unsqueeze(0);
-
-    // // save dq2, dk2, dv2 to files
-    // std::string dq2_fpath = get_peft_dbg_folder(m, shard_id) + ".pre_dq2.pt";
-    // std::string dk2_fpath = get_peft_dbg_folder(m, shard_id) + ".pre_dk2.pt";
-    // std::string dv2_fpath = get_peft_dbg_folder(m, shard_id) + ".pre_dv2.pt";
-    // torch::save(dq2.clone().detach(), dq2_fpath);
-    // torch::save(dk2.clone().detach(), dk2_fpath);
-    // torch::save(dv2.clone().detach(), dv2_fpath);
-
-    // // copy dq into dq2
-    // dq2.copy_(dq);
-    // dk2.copy_(dk);
-    // dv2.copy_(dv);
-
-    // // save dq2, dk2, dv2 to files
-    // dq2_fpath = get_peft_dbg_folder(m, shard_id) + ".post_dq2.pt";
-    // dk2_fpath = get_peft_dbg_folder(m, shard_id) + ".post_dk2.pt";
-    // dv2_fpath = get_peft_dbg_folder(m, shard_id) + ".post_dv2.pt";
-    // torch::save(dq2.clone().detach(), dq2_fpath);
-    // torch::save(dk2.clone().detach(), dk2_fpath);
-    // torch::save(dv2.clone().detach(), dv2_fpath);
   }
 
   // compute gradients w.r.t. input
