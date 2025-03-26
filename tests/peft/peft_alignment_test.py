@@ -447,7 +447,8 @@ class LlamaAlignmentTest(AlignmentTest):
                 if not np.allclose(hf_tensor.numpy(), ff_tensor.numpy(), atol=tolerance):
                     mismatches = np.where(~np.isclose(hf_tensor, ff_tensor, atol=tolerance))[0]
                     print(f"Pct mismatch {label}: {100.0*(np.prod(mismatches.shape) / ff_tensor.numel()):.3f}%")
-                    assert(np.prod(mismatches.shape) <= .03 * ff_tensor.numel())
+                    if not np.prod(mismatches.shape) <= .05 * ff_tensor.numel():
+                        raise ArithmeticError(f"Mismatch in {label} exceeds 5% of tensor size")
             except Exception as e:
                 print(f"Error in comparison {label}:\n{e}\n")
                 print("HF tensor:")
@@ -456,7 +457,7 @@ class LlamaAlignmentTest(AlignmentTest):
                 print("FF tensor:")
                 print(ff_tensor.squeeze())
                 print(ff_tensor.shape)
-                # raise e
+                raise e
         
         print(f"-- BWD pass {step_idx}--")
         
@@ -619,11 +620,13 @@ class LlamaAlignmentTest(AlignmentTest):
             # FF shape: [num_tokens, qProjSize*num_heads]
             # todo(gabriele): ff shape is [qProjSize*num_heads, num_tokens]
             hf_tensor_name = f"layers.{i}.self_attn.v_proj"
-            ff_tensor_name = convert_hf_filename_to_ff(hf_tensor_name)
-            mixed_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
+            ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.dv"
+            mixed_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="", hf_tensor_idx=0, ff_tensor_idx=None)
             hf_tensor = get_hf_tensor(hf_tensor_name, mixed_comparison)
             hf_tensor = hf_tensor.squeeze().T
             ff_tensor = get_ff_tensor(ff_tensor_name, mixed_comparison, tp_type=TPType.PARTITION, shard_axis=1)
+            # merge the last two dimensions of ff_tensor
+            ff_tensor = ff_tensor.view(self.num_tokens, self.num_attention_heads * self.projsize)
             compare(hf_tensor, ff_tensor, label=f"V-proj {i} gradient input")
 
             # K-proj grads
