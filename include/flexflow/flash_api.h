@@ -3,11 +3,6 @@
 
 #pragma once
 
-
-#ifndef USE_FLASH_ATTENTION
-#define USE_FLASH_ATTENTION 0
-#endif
-
 #if USE_FLASH_ATTENTION
 
 #include <cuda.h>

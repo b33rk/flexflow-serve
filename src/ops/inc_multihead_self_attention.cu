@@ -874,9 +874,9 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   signed long seqlen_k =
       bc->requestsInfo[req_idx].first_token_depth_in_request +
       bc->requestsInfo[req_idx].num_tokens_in_batch;
-  int num_new_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
-  int total_tokens = bc->requestsInfo[req_idx].first_token_depth_in_request +
-                     bc->requestsInfo[req_idx].num_tokens_in_batch;
+  // int num_new_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
+  // int total_tokens = bc->requestsInfo[req_idx].first_token_depth_in_request +
+  //                    bc->requestsInfo[req_idx].num_tokens_in_batch;
   int tokens_previous_requests =
       bc->requestsInfo[req_idx].first_token_offset_in_batch;
 
@@ -931,7 +931,7 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
 
   int num_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
   auto dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
-                2 * num_tokens * (m->qProjSize * m->num_q_heads);
+                num_tokens * m->qProjSize * (m->num_q_heads + m->num_kv_heads);
   auto dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
                 num_tokens * (m->qProjSize * m->num_q_heads);
   auto dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
@@ -2869,6 +2869,7 @@ void peft_bwd_kernel(IncMultiHeadSelfAttentionMeta const *m,
   }
 }
 
+#if USE_FLASH_ATTENTION
 template <typename DT>
 void compute_gradient_of_input(IncMultiHeadSelfAttentionMeta const *m,
                                BatchConfig const *bc,
@@ -2966,7 +2967,6 @@ void compute_gradient_of_input(IncMultiHeadSelfAttentionMeta const *m,
   }
 }
 
-#if USE_FLASH_ATTENTION
 // todo(yingyi): replace with flash-attn
 template <typename DT>
 void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
@@ -3085,18 +3085,22 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
   // ================================================================
   // Print the values of dq, dk, dv to files
   if (m->inference_debugging) {
+    int i = bc->finetuning_request_index();
+    int num_tokens = bc->requestsInfo[i].num_tokens_in_batch;
     // save dv
-    // std::string dv_raw_fpath =
-    //     get_peft_dbg_folder(m, shard_id) + ".v_proj.input_gradient_0";
-    // save_tensor(dv.data_ptr(), m->vProjSize * m->num_q_heads * num_tokens,
-    //             dv_raw_fpath.c_str());
+    DT *C = static_cast<DT *>(m->devQKVProjArrayBWD) +
+            2 * num_tokens * (m->qProjSize * m->num_q_heads);
+    std::string dv_raw_fpath =
+        get_peft_dbg_folder(m, shard_id) + ".v_proj.input_gradient_0-flash";
+    save_tensor(
+        C, m->vProjSize * m->num_q_heads * num_tokens, dv_raw_fpath.c_str());
 
     std::string dq_fpath = get_peft_dbg_folder(m, shard_id) + ".dq.pt";
     std::string dk_fpath = get_peft_dbg_folder(m, shard_id) + ".dk.pt";
     std::string dv_fpath = get_peft_dbg_folder(m, shard_id) + ".dv.pt";
     torch::save(dq.clone().detach(), dq_fpath);
     torch::save(dk.clone().detach(), dk_fpath);
-    torch::save(dv.clone().detach(), dv_fpath);
+    torch::save(dv.clone().detach(), dv_fpath); // shape: batch_size x seqlen_k x num_heads_k x head_size
 
     std::cout << "the address of devQKVProjArrayBWD: " << m->devQKVProjArrayBWD
               << std::endl;

@@ -18,9 +18,7 @@
 #include <hip/hip_complex.h>
 #endif
 
-#ifndef USE_FLASH_ATTENTION
-#define USE_FLASH_ATTENTION 0
-#endif
+// Use the USE_FLASH_ATTENTION definition from CMake
 
 #if USE_FLASH_ATTENTION
 #include "flexflow/flash_api.h"
