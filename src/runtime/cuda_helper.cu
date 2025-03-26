@@ -375,6 +375,80 @@ __host__ void save_tensor(int64_t const *ptr,
   free(host_ptr);
 }
 
+template <typename DT>
+torch::Dtype getTorchDtype() {
+  if constexpr (std::is_same_v<DT, at::Half> || std::is_same_v<DT, half>) {
+    return torch::kFloat16;
+  } else if constexpr (std::is_same_v<DT, at::BFloat16> ||
+                       std::is_same_v<DT, nv_bfloat16>) {
+    return torch::kBFloat16;
+  } else if constexpr (std::is_same_v<DT, float>) {
+    return torch::kFloat32;
+  } else if constexpr (std::is_same_v<DT, double>) {
+    return torch::kFloat64;
+  } else if constexpr (std::is_same_v<DT, int32_t>) {
+    return torch::kInt32;
+  } else if constexpr (std::is_same_v<DT, int64_t>) {
+    return torch::kInt64;
+  } else {
+    static_assert(!std::is_same_v<DT, DT>,
+                  "Unsupported datatype. Only fp16 (torch::Half), bf16 "
+                  "(torch::BFloat16), CUDA half, float, double, int32 and "
+                  "int64 are supported.");
+  }
+}
+
+template <typename DT>
+torch::Tensor createTorchTensorFromCuda(void *cudaData,
+                                        std::vector<int64_t> const &dims) {
+  // Compute column-major strides:
+  // For a tensor with dims = {d0, d1, ..., d_{n-1}},
+  // the strides are: {1, d0, d0*d1, ...}
+  std::vector<int64_t> strides(dims.size());
+  if (!dims.empty()) {
+    strides[0] = 1;
+    for (size_t i = 1; i < dims.size(); ++i) {
+      strides[i] = strides[i - 1] * dims[i - 1];
+    }
+  }
+  // Set tensor options to use CUDA and the appropriate data type.
+  auto options =
+      torch::TensorOptions().dtype(getTorchDtype<DT>()).device(torch::kCUDA);
+  // Create the tensor.
+  // The deleter is a no-op since we assume external management of the memory.
+  return torch::from_blob(
+      cudaData, dims, strides, /*deleter=*/[](void *) {}, options);
+}
+
+template <typename DT>
+torch::Tensor createTorchTensorFromCuda(void const *cudaData,
+                                        std::vector<int64_t> const &dims) {
+  return createTorchTensorFromCuda<DT>(const_cast<void *>(cudaData), dims);
+}
+
+torch::Tensor
+    torch_tensor_from_accessor(FlexFlow::GenericTensorAccessorR const &tensor) {
+  int num_tensor_dims = tensor.domain.get_dim();
+  std::vector<int64_t> dims;
+  for (int i = 0; i < num_tensor_dims; ++i) {
+    dims.push_back(tensor.domain.hi()[i] - tensor.domain.lo()[i] + 1);
+  }
+  if (tensor.data_type == DT_FLOAT) {
+    return createTorchTensorFromCuda<float>(tensor.ptr, dims);
+  } else if (tensor.data_type == DT_HALF) {
+    return createTorchTensorFromCuda<half>(tensor.ptr, dims);
+  } else if (tensor.data_type == DT_DOUBLE) {
+    return createTorchTensorFromCuda<double>(tensor.ptr, dims);
+  } else if (tensor.data_type == DT_INT32) {
+    return createTorchTensorFromCuda<int32_t>(tensor.ptr, dims);
+  } else if (tensor.data_type == DT_INT64) {
+    return createTorchTensorFromCuda<int64_t>(tensor.ptr, dims);
+  } else {
+    assert(false && "Unsupported data type");
+  }
+  return torch::Tensor(); // Should never reach here
+}
+
 template <typename T>
 __host__ T *copy_tensor_dev_to_host(T const *ptr, size_t num_elements) {
   cudaStream_t stream;
@@ -760,6 +834,37 @@ template __host__ void save_tensor<int64_t>(int64_t const *ptr,
                                             char const *file_name);
 template __host__ void
     save_tensor<half>(half const *ptr, size_t rect, char const *file_name);
+
+template torch::Tensor
+    createTorchTensorFromCuda<float>(void *cudaData,
+                                     std::vector<int64_t> const &dims);
+template torch::Tensor
+    createTorchTensorFromCuda<half>(void *cudaData,
+                                    std::vector<int64_t> const &dims);
+template torch::Tensor
+    createTorchTensorFromCuda<double>(void *cudaData,
+                                      std::vector<int64_t> const &dims);
+template torch::Tensor
+    createTorchTensorFromCuda<int32_t>(void *cudaData,
+                                       std::vector<int64_t> const &dims);
+template torch::Tensor
+    createTorchTensorFromCuda<int64_t>(void *cudaData,
+                                       std::vector<int64_t> const &dims);
+template torch::Tensor
+    createTorchTensorFromCuda<float>(void const *cudaData,
+                                     std::vector<int64_t> const &dims);
+template torch::Tensor
+    createTorchTensorFromCuda<half>(void const *cudaData,
+                                    std::vector<int64_t> const &dims);
+template torch::Tensor
+    createTorchTensorFromCuda<double>(void const *cudaData,
+                                      std::vector<int64_t> const &dims);
+template torch::Tensor
+    createTorchTensorFromCuda<int32_t>(void const *cudaData,
+                                       std::vector<int64_t> const &dims);
+template torch::Tensor
+    createTorchTensorFromCuda<int64_t>(void const *cudaData,
+                                       std::vector<int64_t> const &dims);
 
 template __host__ float *copy_tensor_dev_to_host<float>(float const *ptr,
                                                         size_t num_elements);

@@ -92,6 +92,9 @@ echo "$json_config" > /tmp/fine_grained_alignment_config.json
 
 python ./inference/python/incr_decoding.py -config-file /tmp/fine_grained_alignment_config.json
 
+# Check alignment
+python ./tests/inference/inference_alignment_test.py -m "$MODEL_NAME" -tp "$TP_DEGREE" -n "$NUM_STEPS"
+
 # C++ test
 echo "C++ test"
 eval ./build/inference/incr_decoding/incr_decoding \

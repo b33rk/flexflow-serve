@@ -314,25 +314,9 @@ public:
       } else {
         filename += "gradient_" + std::to_string(i);
       }
-      if (input_tensors[i].data_type == DT_FLOAT) {
-        save_tensor(input_tensors[i].get_float_ptr(),
-                    input_tensors[i].domain.get_volume(),
-                    filename.c_str());
-      } else if (input_tensors[i].data_type == DT_HALF) {
-        save_tensor(input_tensors[i].get_half_ptr(),
-                    input_tensors[i].domain.get_volume(),
-                    filename.c_str());
-      } else if (input_tensors[i].data_type == DT_INT32) {
-        save_tensor(input_tensors[i].get_int32_ptr(),
-                    input_tensors[i].domain.get_volume(),
-                    filename.c_str());
-      } else if (input_tensors[i].data_type == DT_INT64) {
-        save_tensor(input_tensors[i].get_int64_ptr(),
-                    input_tensors[i].domain.get_volume(),
-                    filename.c_str());
-      } else {
-        assert(false && "Tensor data type not supported");
-      }
+      filename += ".pt";
+      at::Tensor input_tensor = torch_tensor_from_accessor(input_tensors[i]);
+      torch::save(input_tensor, filename.c_str());
     }
 
     // only dump the weights in the forward pass, at the first step
@@ -351,25 +335,10 @@ public:
       for (int i = 0; i < weight_tensors.size(); i++) {
         std::string filename =
             dst_filepath_weights.string() + ".weight_" + std::to_string(i);
-        if (weight_tensors[i].data_type == DT_FLOAT) {
-          save_tensor(weight_tensors[i].get_float_ptr(),
-                      weight_tensors[i].domain.get_volume(),
-                      filename.c_str());
-        } else if (weight_tensors[i].data_type == DT_HALF) {
-          save_tensor(weight_tensors[i].get_half_ptr(),
-                      weight_tensors[i].domain.get_volume(),
-                      filename.c_str());
-        } else if (weight_tensors[i].data_type == DT_INT32) {
-          save_tensor(weight_tensors[i].get_int32_ptr(),
-                      weight_tensors[i].domain.get_volume(),
-                      filename.c_str());
-        } else if (weight_tensors[i].data_type == DT_INT64) {
-          save_tensor(weight_tensors[i].get_int64_ptr(),
-                      weight_tensors[i].domain.get_volume(),
-                      filename.c_str());
-        } else {
-          assert(false && "Tensor data type not supported");
-        }
+        filename += ".pt";
+        at::Tensor weight_tensor =
+            torch_tensor_from_accessor(weight_tensors[i]);
+        torch::save(weight_tensor, filename.c_str());
       }
     }
 
@@ -381,25 +350,9 @@ public:
       } else {
         filename += "gradient_" + std::to_string(i);
       }
-      if (output_tensors[i].data_type == DT_FLOAT) {
-        save_tensor(output_tensors[i].get_float_ptr(),
-                    output_tensors[i].domain.get_volume(),
-                    filename.c_str());
-      } else if (output_tensors[i].data_type == DT_HALF) {
-        save_tensor(output_tensors[i].get_half_ptr(),
-                    output_tensors[i].domain.get_volume(),
-                    filename.c_str());
-      } else if (output_tensors[i].data_type == DT_INT32) {
-        save_tensor(output_tensors[i].get_int32_ptr(),
-                    output_tensors[i].domain.get_volume(),
-                    filename.c_str());
-      } else if (output_tensors[i].data_type == DT_INT64) {
-        save_tensor(output_tensors[i].get_int64_ptr(),
-                    output_tensors[i].domain.get_volume(),
-                    filename.c_str());
-      } else {
-        assert(false && "Tensor data type not supported");
-      }
+      filename += ".pt";
+      at::Tensor output_tensor = torch_tensor_from_accessor(output_tensors[i]);
+      torch::save(output_tensor, filename.c_str());
     }
     // increase count of decoding steps
     if (!before_kernel) {

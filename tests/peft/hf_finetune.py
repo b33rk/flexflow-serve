@@ -61,6 +61,7 @@ def main():
     dname = os.path.dirname(abspath)
     os.chdir(dname)
 
+    # Set default tensor type depending on argument indicating the float type to use
     if not args.use_full_precision:
         torch.set_default_dtype(torch.float16)
     else:
