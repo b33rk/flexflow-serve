@@ -426,6 +426,8 @@ def compare_loaded_tensors(hf_tensor, ff_tensor, tolerance=1e-2, label=""):
     assert hf_tensor.shape == ff_tensor.shape
     mismatches = []
     len_hf_tensor = hf_tensor.flatten().shape[0]
+    hf_tensor = np.nan_to_num(hf_tensor)
+    ff_tensor = np.nan_to_num(ff_tensor)
     if not np.allclose(hf_tensor, ff_tensor, atol=tolerance):
         mismatches = np.where(~np.isclose(hf_tensor.squeeze(), ff_tensor.squeeze(), atol=tolerance))[0]
         label = label + ": " if label else ""

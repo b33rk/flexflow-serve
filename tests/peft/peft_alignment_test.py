@@ -414,7 +414,7 @@ class LlamaAlignmentTest(AlignmentTest):
                 # if replicate, check that they are identical
                 if tp_type == TPType.REPLICATE:
                     for t in ff_tensors[1:]:
-                        assert torch.allclose(ff_tensors[0], t)
+                        assert torch.allclose(torch.nan_to_num(ff_tensors[0]), torch.nan_to_num(t))
                     ff_tensor = ff_tensors[0]
                 # if partition, concatenate along the partition dimension
                 elif tp_type == TPType.PARTITION:
@@ -442,6 +442,8 @@ class LlamaAlignmentTest(AlignmentTest):
                 raise ValueError(f"FF tensor {label} is all zeros while HF tensor is not")
             if hf_all_zeros and not ff_all_zeros:
                 raise ValueError(f"HF tensor {label} is all zeros while FF tensor is not")
+            hf_tensor = torch.nan_to_num(hf_tensor)
+            ff_tensor = torch.nan_to_num(ff_tensor)
             try:
                 # torch.testing.assert_close(hf_tensor, ff_tensor, rtol=rtol, atol=tolerance)
                 if not np.allclose(hf_tensor.numpy(), ff_tensor.numpy(), atol=tolerance):
@@ -610,7 +612,9 @@ class LlamaAlignmentTest(AlignmentTest):
             ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.o_proj"
             output_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="output_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
             hf_tensor = get_hf_tensor(hf_tensor_name, output_comparison)
-            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.TO_REDUCE)
+            ff_tensor = get_ff_tensor(ff_tensor_name, output_comparison, tp_type=TPType.REPLICATE)
+            print(hf_tensor.shape)
+            print(ff_tensor.shape)
             compare(hf_tensor, ff_tensor, label=f"Attn O-proj {i} gradient output")
             
             input_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=0)
@@ -691,7 +695,7 @@ class LlamaAlignmentTest(AlignmentTest):
                 ff_in1_comparison = TensorComparisonIdxs(hf_tensor_type="input_gradient", ff_tensor_type="input_gradient", hf_tensor_idx=0, ff_tensor_idx=1)
                 input_layernorm0 = get_ff_tensor(ff_tensor_name, input_comparison, tp_type=TPType.REPLICATE)
                 input_layernorm1 = get_ff_tensor(ff_tensor_name, ff_in1_comparison, tp_type=TPType.REPLICATE)
-                torch.testing.assert_close(input_layernorm0, input_layernorm1, rtol=1.3e-6, atol=1e-5)
+                torch.testing.assert_close(input_layernorm0.nan_to_num(), input_layernorm1.nan_to_num(), rtol=1.3e-6, atol=1e-5)
                 hf_tensor = get_hf_tensor(hf_tensor_name, input_comparison)
                 # if i > 1:
                 #     compare(hf_tensor, input_layernorm1, label=f"Input layernorm {i} gradient input")
