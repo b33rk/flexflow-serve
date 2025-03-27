@@ -9,8 +9,8 @@ cleanup() {
 # Cd into directory holding this script
 cd "${BASH_SOURCE[0]%/*}/.."
 
-MODEL_NAME=${MODEL_NAME:-"goliaro/llama-160m-lora"}
-BASE_MODEL_NAME=${BASE_MODEL_NAME:-"JackFram/llama-160m"}
+MODEL_NAME=${MODEL_NAME:-"goliaro/llama-3.2-1b-lora"}
+BASE_MODEL_NAME=${BASE_MODEL_NAME:-"unsloth/Llama-3.2-1B-Instruct"}
 MEMORY_PER_GPU=${MEMORY_PER_GPU:-14000}
 ZCOPY_MEMORY=${ZCOPY_MEMORY:-40000}
 TP_DEGREE=${TP_DEGREE:-4}
@@ -85,7 +85,7 @@ END
 echo "$json_config" > /tmp/peft_config.json
 python ./inference/python/ff_peft.py -config-file /tmp/peft_config.json
 # Check alignment
-python ./tests/peft/peft_alignment_test.py -tp ${TP_DEGREE} -lr ${LEARNING_RATE}
+python ./tests/peft/peft_alignment_test.py -m ${MODEL_NAME} -tp ${TP_DEGREE} -lr ${LEARNING_RATE}
 
 # C++ test
 echo "C++ test"
@@ -105,7 +105,7 @@ export LD_LIBRARY_PATH=/root/flexflow-serve/build:/root/flexflow-serve/build/dep
     "${full_precision_flag}" "${fusion_flag}" --inference-debugging
 
 # Check alignment
-python ./tests/peft/peft_alignment_test.py -tp ${TP_DEGREE} -lr ${LEARNING_RATE}
+python ./tests/peft/peft_alignment_test.py -m ${MODEL_NAME} -tp ${TP_DEGREE} -lr ${LEARNING_RATE}
 
 # Print succeess message
 echo ""
