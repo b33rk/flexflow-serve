@@ -15,7 +15,7 @@ MEMORY_PER_GPU=${MEMORY_PER_GPU:-14000}
 ZCOPY_MEMORY=${ZCOPY_MEMORY:-40000}
 TP_DEGREE=${TP_DEGREE:-4}
 PP_DEGREE=${PP_DEGREE:-1}
-CACHE_PATH=${FF_CACHE_PATH:-"~/.cache/flexflow"}
+FF_CACHE_PATH=${FF_CACHE_PATH:-"~/.cache/flexflow"}
 FULL_PRECISION=${FULL_PRECISION:-false}
 FUSION=${FUSION:-false} # false because we save the debugging tensors in lora_linear.cc
 LEARNING_RATE=${LEARNING_RATE:-0.001}
@@ -43,13 +43,13 @@ mkdir -p ./inference/output
 export LEGION_BACKTRACE=1
 
 # Download test model
-python ./inference/utils/download_peft_model.py ${MODEL_NAME}
+python ./inference/utils/download_peft_model.py "${MODEL_NAME}"
 
 if [ "$FULL_PRECISION" = "true" ]; then full_precision_flag="--use-full-precision"; else full_precision_flag=""; fi
 if [ "$FUSION" = "true" ]; then fusion_flag="--fusion"; else fusion_flag=""; fi
 
 # Run PEFT in Huggingface to get ground truth tensors
-eval python ./tests/peft/hf_finetune.py --peft-model-id ${MODEL_NAME} --save-peft-tensors "${full_precision_flag}" -lr ${LEARNING_RATE}
+eval python ./tests/peft/hf_finetune.py --peft-model-id "${MODEL_NAME}" --save-peft-tensors "${full_precision_flag}" -lr "${LEARNING_RATE}"
 
 # Python test
 echo "Python test"
@@ -85,27 +85,27 @@ END
 echo "$json_config" > /tmp/peft_config.json
 python ./inference/python/ff_peft.py -config-file /tmp/peft_config.json
 # Check alignment
-python ./tests/peft/peft_alignment_test.py -m ${MODEL_NAME} -tp ${TP_DEGREE} -lr ${LEARNING_RATE}
+python ./tests/peft/peft_alignment_test.py -m "${MODEL_NAME}" -tp "${TP_DEGREE}" -lr "${LEARNING_RATE}"
 
 # C++ test
 echo "C++ test"
 # set env var for flash_attn:
-export LD_LIBRARY_PATH=/root/flexflow-serve/build:/root/flexflow-serve/build/deps/legion/lib:$(dirname $(/root/flexflow-serve/python/flexflow/findpylib.py)):/opt/conda/lib/python3.12/site-packages/torch/lib:/opt/conda/lib/python3.12/site-packages:$LD_LIBRARY_PATH
+# export LD_LIBRARY_PATH=/root/flexflow-serve/build:/root/flexflow-serve/build/deps/legion/lib:$(dirname $(/root/flexflow-serve/python/flexflow/findpylib.py)):/opt/conda/lib/python3.12/site-packages/torch/lib:/opt/conda/lib/python3.12/site-packages:$LD_LIBRARY_PATH
 ./build/inference/peft/peft \
     -ll:gpu ${NUM_GPUS} -ll:cpu 4 -ll:util 4 \
-    -tensor-parallelism-degree ${TP_DEGREE} \
-    -ll:fsize ${MEMORY_PER_GPU} -ll:zsize ${ZCOPY_MEMORY} \
+    -tensor-parallelism-degree "${TP_DEGREE}" \
+    -ll:fsize "${MEMORY_PER_GPU}" -ll:zsize "${ZCOPY_MEMORY}" \
     --max-requests-per-batch 1 \
     --max-sequence-length 128 \
     --max-tokens-per-batch 128 \
-    -llm-model ${BASE_MODEL_NAME} \
+    -llm-model "${BASE_MODEL_NAME}" \
     -finetuning-dataset ./inference/prompt/peft_dataset.json \
-    -peft-model $MODEL_NAME \
+    -peft-model "$MODEL_NAME" \
     -enable-peft \
     "${full_precision_flag}" "${fusion_flag}" --inference-debugging
 
 # Check alignment
-python ./tests/peft/peft_alignment_test.py -m ${MODEL_NAME} -tp ${TP_DEGREE} -lr ${LEARNING_RATE}
+python ./tests/peft/peft_alignment_test.py -m "${MODEL_NAME}" -tp "${TP_DEGREE}" -lr "${LEARNING_RATE}"
 
 # Print succeess message
 echo ""
