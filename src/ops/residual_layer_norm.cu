@@ -186,8 +186,6 @@ void ResidualLayerNorm::inference_kernel(ResidualLayerNormMeta const *m,
                    output_ptr);
 }
 
-
-
 /*static*/
 void ResidualLayerNorm::inference_kernel_wrapper(
     ResidualLayerNormMeta *m,

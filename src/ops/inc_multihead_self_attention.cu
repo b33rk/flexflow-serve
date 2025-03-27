@@ -26,7 +26,6 @@
 #include "flashinfer/prefill_attention_decl.cuh"
 #include "flexflow/page_manager.h"
 
-
 #include "flexflow/flash_api.h"
 // only for debugging
 #include <torch/nn/functional.h>
@@ -337,7 +336,6 @@ __global__ void store_softmax_activation(DT const *qk_prods_softmax,
   }
 }
 
-
 // TODO(Gabriele): review this inverse `createTorchTensorFromCuda`
 template <typename DT>
 void restoreTorchTensorToCuda(torch::Tensor &torch_tensor, DT *data_ptr) {
@@ -587,15 +585,19 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
   dk = dk.permute({2, 1, 0}).unsqueeze(0);
   dv = dv.permute({2, 1, 0}).unsqueeze(0);
 
-  // todo(gabriele): i fix the data layout for dq, dk, dv, but it's not contiguous at last dimension to flash-attn refuse it
-  // we could try to fix it by the memory layout to match the q, k, v layout (and use the commented-out code above)
-  // but we need to rewrite the rope bwd kernel and input_gradient calculation kernel to match the new layout
-  // auto dq =
-  //     createTorchTensorFromCuda<DT>(dq_ptr, {seqlen_q, head_size, num_heads});
+  // todo(gabriele): i fix the data layout for dq, dk, dv, but it's not
+  // contiguous at last dimension to flash-attn refuse it we could try to fix it
+  // by the memory layout to match the q, k, v layout (and use the commented-out
+  // code above) but we need to rewrite the rope bwd kernel and input_gradient
+  // calculation kernel to match the new layout auto dq =
+  //     createTorchTensorFromCuda<DT>(dq_ptr, {seqlen_q, head_size,
+  //     num_heads});
   // auto dk =
-  //     createTorchTensorFromCuda<DT>(dk_ptr, {seqlen_k, head_size, num_heads_k});
+  //     createTorchTensorFromCuda<DT>(dk_ptr, {seqlen_k, head_size,
+  //     num_heads_k});
   // auto dv =
-  //     createTorchTensorFromCuda<DT>(dv_ptr, {seqlen_k, head_size, num_heads_k});
+  //     createTorchTensorFromCuda<DT>(dv_ptr, {seqlen_k, head_size,
+  //     num_heads_k});
   // dq = dq.permute({0, 2, 1}).unsqueeze(0);
   // dk = dk.permute({0, 2, 1}).unsqueeze(0);
   // dv = dv.permute({0, 2, 1}).unsqueeze(0);
@@ -1327,7 +1329,6 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
   // ========================================================================
 }
 
-
 // only used by MPT model. https://arxiv.org/abs/2108.12409
 template <typename DT>
 __global__ void apply_position_bias_qkprd(DT *input_ptr,
@@ -1471,11 +1472,12 @@ __global__ void
 
     // int complex_part_index =
     //     (q_tensor ? 0 : num_tokens * proj_size * num_q_heads) +
-    //     head_idx * proj_size * num_tokens + pair_idx * num_tokens + token_idx;
+    //     head_idx * proj_size * num_tokens + pair_idx * num_tokens +
+    //     token_idx;
     // int real_part_index = complex_part_index + num_tokens * half_proj;
     int complex_part_index = token_idx * proj_size * tot_num_heads +
-                          (q_tensor ? 0 : proj_size * num_q_heads) +
-                          head_idx * proj_size + pair_idx;
+                             (q_tensor ? 0 : proj_size * num_q_heads) +
+                             head_idx * proj_size + pair_idx;
     int real_part_index = complex_part_index + half_proj;
 
     complex_input[i] = {(float)input_ptr[real_part_index],
@@ -1917,9 +1919,6 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   }
 }
 
-
-
-
 // todo(yingyi): replace with flash-attn
 template <typename DT>
 void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
@@ -2085,21 +2084,21 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
 
   int head_size = m->qProjSize;
   int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
-  auto input_grad_tensor = createTorchTensorFromCuda<DT>(input_grad_ptr, {head_size, tot_num_heads, num_total_tokens});
+  auto input_grad_tensor = createTorchTensorFromCuda<DT>(
+      input_grad_ptr, {head_size, tot_num_heads, num_total_tokens});
 
   auto dq_tensor = input_grad_tensor.narrow(1, 0, m->num_q_heads);
   auto dk_tensor = input_grad_tensor.narrow(1, m->num_q_heads, m->num_kv_heads);
-  auto dv_tensor = input_grad_tensor.narrow(1, m->num_q_heads + m->num_kv_heads, m->num_kv_heads);
+  auto dv_tensor = input_grad_tensor.narrow(
+      1, m->num_q_heads + m->num_kv_heads, m->num_kv_heads);
   // std::cout << "dq_tensor shape: " << dq_tensor.sizes() << std::endl;
   // std::cout << "dk_tensor shape: " << dk_tensor.sizes() << std::endl;
   // std::cout << "dv_tensor shape: " << dv_tensor.sizes() << std::endl;
 
+  dq_tensor.copy_(dq.squeeze().permute({2, 1, 0}));
+  dk_tensor.copy_(dk.squeeze().permute({2, 1, 0}));
+  dv_tensor.copy_(dv.squeeze().permute({2, 1, 0}));
 
-  dq_tensor.copy_(dq.squeeze().permute({2,1,0}));
-  dk_tensor.copy_(dk.squeeze().permute({2,1,0}));
-  dv_tensor.copy_(dv.squeeze().permute({2,1,0}));
-
-  
   if (m->rotary_embedding_meta->apply_rotary_embedding) {
     checkCUDA(cudaMemcpyAsync(m->peft_token_infos_device,
                               m->peft_token_infos,
@@ -2113,9 +2112,9 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
     int kv_proj_work = num_tokens * m->num_kv_heads * half_proj;
     int parallelism = q_proj_work + kv_proj_work;
     apply_rotary_embedding_bwd<<<GET_BLOCKS(parallelism),
-                                  min(CUDA_NUM_THREADS, parallelism),
-                                  0,
-                                  peft_stream>>>(
+                                 min(CUDA_NUM_THREADS, parallelism),
+                                 0,
+                                 peft_stream>>>(
         input_grad_ptr,
         m->complex_input,
         m->peft_token_infos_device,
@@ -2130,10 +2129,6 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
         m->num_q_heads,
         m->num_kv_heads);
   }
-    
-
-
-  
 
   // end step 2
   // ================================================================
@@ -2234,8 +2229,7 @@ void IncMultiHeadSelfAttention::peft_bwd_kernel_wrapper(
         input_grad.get_half_ptr(),
         output_grad.get_half_ptr(),
         stream);
-  }
-  else {
+  } else {
     assert(false && "Unspported data type");
   }
   if (m->profiling) {

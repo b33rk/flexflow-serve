@@ -96,10 +96,10 @@ public:
     DEVICE_COMM,
   };
   FFDevice(std::string const &name,
-         DeviceType type,
-         int node_id,
-         int socket_id,
-         int device_id);
+           DeviceType type,
+           int node_id,
+           int socket_id,
+           int device_id);
   std::string name;
   DeviceType type;
   int node_id;

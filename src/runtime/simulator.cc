@@ -134,10 +134,10 @@ bool MachineResource::is_valid_machine_view(MachineView const &view) const {
 }
 
 FFDevice::FFDevice(std::string const &name,
-               DeviceType type,
-               int node_id,
-               int socket_id,
-               int device_id)
+                   DeviceType type,
+                   int node_id,
+                   int socket_id,
+                   int device_id)
     : name(name), type(type), node_id(node_id), socket_id(socket_id),
       device_id(device_id) {}
 
@@ -1145,7 +1145,8 @@ float Simulator::simulate_runtime(
                   assert(firstR == nextR);
                   assert(synched.find(nextId) == synched.end());
                   synched.insert(nextId);
-                  FFDevice *nextDevice = machine->get_gpu(pc.device_ids[nextId]);
+                  FFDevice *nextDevice =
+                      machine->get_gpu(pc.device_ids[nextId]);
                   // Compute the bandwidth between firstDevice/nextDevice
                   float bandwidth = 0.0f;
                   if (firstDevice->node_id == nextDevice->node_id) {

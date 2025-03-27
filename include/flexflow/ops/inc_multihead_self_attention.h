@@ -20,7 +20,6 @@
 
 #include "flexflow/flash_api.h"
 
-
 namespace FlexFlow {
 
 class IncMultiHeadSelfAttentionMeta;
@@ -246,7 +245,6 @@ public:
   // int64_t flash_attn_rng_state_1; // rng state for dropout
   int flash_attn_window_size_left;
   int flash_attn_window_size_right;
-
 };
 
 }; // namespace FlexFlow
