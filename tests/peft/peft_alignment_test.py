@@ -457,6 +457,8 @@ class LlamaAlignmentTest(AlignmentTest):
                 print("FF tensor:")
                 print(ff_tensor.squeeze())
                 print(ff_tensor.shape)
+                # if not isinstance(e, ArithmeticError):
+                #     raise e
                 raise e
         
         print(f"-- BWD pass {step_idx}--")
@@ -633,24 +635,36 @@ class LlamaAlignmentTest(AlignmentTest):
             # FF shape: (num_tokens, qProjSize, num_heads)
             # todo(gabriele): ff shape is [qProjSize, num_heads, num_tokens]
             hf_tensor_name = f"layers.{i}.self_attn.k_proj"
-            ff_tensor_name = f"layers.{i}.layers.{i}.self_attn"
-            k_proj_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="devkproj", hf_tensor_idx=0, ff_tensor_idx=None)
+            ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.dk"
+            k_proj_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="", hf_tensor_idx=0, ff_tensor_idx=None)
             hf_tensor = get_hf_tensor(hf_tensor_name, k_proj_comparison)
-            hf_tensor = hf_tensor.squeeze().view(self.num_tokens, self.num_attention_heads, self.projsize).transpose(1, 2).contiguous()
-            hf_tensor = hf_tensor.T
+            hf_tensor = hf_tensor.squeeze().T
             ff_tensor = get_ff_tensor(ff_tensor_name, k_proj_comparison, tp_type=TPType.PARTITION, shard_axis=2)
+            ff_tensor = ff_tensor.view(self.num_tokens, self.num_attention_heads * self.projsize)
             compare(hf_tensor, ff_tensor, label=f"K-proj {i} gradient input")
-            
+
             # Q-proj grads
-            # FF shape (devQKVPRojArray): (num_tokens, qProjSize, num_heads, 3)
-            # Q-proj out grad: devQKVPRojArray[:,:,:,0]
             hf_tensor_name = f"layers.{i}.self_attn.q_proj"
-            ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.devQKVPRojArray"
-            q_proj_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="", hf_tensor_idx=0, ff_tensor_idx=None)
-            hf_tensor = get_hf_tensor(hf_tensor_name, q_proj_comparison)
-            hf_tensor = hf_tensor.view(self.num_tokens, self.num_attention_heads, self.projsize).transpose(1, 2).contiguous().T
-            ff_tensor = get_ff_tensor(ff_tensor_name, q_proj_comparison, tp_type=TPType.PARTITION, shard_axis=2)[:,:,:,0]
+            ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.dq"
+            mixed_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="", hf_tensor_idx=0, ff_tensor_idx=None)
+            hf_tensor = get_hf_tensor(hf_tensor_name, mixed_comparison)
+            hf_tensor = hf_tensor.squeeze().T
+            ff_tensor = get_ff_tensor(ff_tensor_name, mixed_comparison, tp_type=TPType.PARTITION, shard_axis=1)
+            # merge the last two dimensions of ff_tensor
+            ff_tensor = ff_tensor.view(self.num_tokens, self.num_attention_heads * self.projsize)
             compare(hf_tensor, ff_tensor, label=f"Q-proj {i} gradient input")
+            
+            
+            # # Q-proj grads
+            # # FF shape (devQKVPRojArray): (num_tokens, qProjSize, num_heads, 3)
+            # # Q-proj out grad: devQKVPRojArray[:,:,:,0]
+            # hf_tensor_name = f"layers.{i}.self_attn.q_proj"
+            # ff_tensor_name = f"layers.{i}.layers.{i}.self_attn.devQKVPRojArray"
+            # q_proj_comparison = TensorComparisonIdxs(hf_tensor_type="output_gradient", ff_tensor_type="", hf_tensor_idx=0, ff_tensor_idx=None)
+            # hf_tensor = get_hf_tensor(hf_tensor_name, q_proj_comparison)
+            # hf_tensor = hf_tensor.view(self.num_tokens, self.num_attention_heads, self.projsize).transpose(1, 2).contiguous().T
+            # ff_tensor = get_ff_tensor(ff_tensor_name, q_proj_comparison, tp_type=TPType.PARTITION, shard_axis=2)[:,:,:,0]
+            # compare(hf_tensor, ff_tensor, label=f"Q-proj {i} gradient input")
             
             # FF Attn input with HF layernorm out
             hf_tensor_name = f"layers.{i}.input_layernorm"

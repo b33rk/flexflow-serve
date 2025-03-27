@@ -1456,23 +1456,27 @@ __global__ void
   int half_proj = proj_size / 2;
   int q_proj_work = num_tokens * num_q_heads * half_proj;
   int kv_proj_work = num_tokens * num_kv_heads * half_proj;
-  // int tot_num_heads = num_q_heads + 2 * num_kv_heads;
+  int tot_num_heads = num_q_heads + 2 * num_kv_heads;
   CUDA_KERNEL_LOOP(i, q_proj_work + kv_proj_work) {
     // compute indexes to visit first half proj_size of each of q/k tensor.
     // devQKVProj has shape [num_tokens, proj_size, tot_num_heads] in peft_bwd
     bool q_tensor = i < q_proj_work;
     int num_heads = q_tensor ? num_q_heads : num_kv_heads;
-    int real_i = q_tensor ? i : i - q_proj_work;
 
-    int token_idx = real_i % num_tokens;
-    int pair_idx = (real_i / num_tokens) % half_proj;
-    int head_idx = real_i / (num_tokens * half_proj);
+    int real_i = q_tensor ? i : i - q_proj_work;
+    int token_idx = real_i / (half_proj * num_heads);
+    int pair_idx = real_i % half_proj;
+    int head_idx = (real_i / half_proj) % num_heads;
     assert(head_idx < num_heads);
 
-    int complex_part_index =
-        (q_tensor ? 0 : num_tokens * proj_size * num_q_heads) +
-        head_idx * proj_size * num_tokens + pair_idx * num_tokens + token_idx;
-    int real_part_index = complex_part_index + num_tokens * half_proj;
+    // int complex_part_index =
+    //     (q_tensor ? 0 : num_tokens * proj_size * num_q_heads) +
+    //     head_idx * proj_size * num_tokens + pair_idx * num_tokens + token_idx;
+    // int real_part_index = complex_part_index + num_tokens * half_proj;
+    int complex_part_index = token_idx * proj_size * tot_num_heads +
+                          (q_tensor ? 0 : proj_size * num_q_heads) +
+                          head_idx * proj_size + pair_idx;
+    int real_part_index = complex_part_index + half_proj;
 
     complex_input[i] = {(float)input_ptr[real_part_index],
                         (float)input_ptr[complex_part_index]};
@@ -1636,68 +1640,6 @@ __global__ void update_kv_cache_kernel_flashinfer_kernel(
     }
   }
 }
-
-// template <typename DT>
-// __global__ void update_kv_cache_kernel_flashinfer_kernel(
-//     DT *qkv_proj_array,
-//     half *qTmp_ptr,
-//     half *kvCache_ptr,
-//     int32_t *kv_indptr,
-//     int32_t *kv_page_indices,
-//     bool const *request_completed,
-//     int peft_req_idx,
-//     BatchConfig::PerTokenInfo const *tokenInfos,
-//     int num_q_heads,
-//     int num_kv_heads,
-//     int head_dim,
-//     int num_new_tokens) {
-//   int const q_hidden_size = num_q_heads * head_dim;
-//   int const kv_hidden_size = num_kv_heads * head_dim;
-
-//   int const thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
-//   int const token_idx = thread_idx / q_hidden_size;
-//   int const offset = thread_idx % q_hidden_size;
-//   if (token_idx >= num_new_tokens) {
-//     return;
-//   }
-//   int const req_idx = tokenInfos[token_idx].request_index;
-//   int token_abs_idx = tokenInfos[token_idx].abs_depth_in_request;
-//   // calculate the compact request index in the easiest way
-//   // TODO: recheck
-//   int req_idx_compact = -1;
-//   int cnt = 0;
-//   while (cnt < req_idx + 1) {
-//     if (!request_completed[cnt] && cnt != peft_req_idx) {
-//       req_idx_compact++;
-//     }
-//     cnt++;
-//   }
-//   assert(req_idx_compact >= 0 && "Invalid request index");
-//   size_t from_idx = token_idx * (q_hidden_size + temp_kv_hidden_size * 2);
-//   qTmp_ptr[token_idx * q_hidden_size + offset] =
-//       static_cast<half>(qkv_proj_array[from_idx + offset]);
-//   if (offset < kv_hidden_size) {
-//     int start = kv_indptr[req_idx_compact];
-//     int end = kv_indptr[req_idx_compact + 1] - 1;
-//     assert(start <= end && "Invalid kv_indptr");
-//     assert(start + (token_abs_idx / kPagesize) <= end && "Invalid page
-//     index"); int page_idx = kv_page_indices[start + (token_abs_idx /
-//     kPagesize)]; size_t to_k_idx = get_k_entry_offset_verify(
-//                token_abs_idx, page_idx, num_kv_heads, head_dim),
-//            to_v_idx = get_v_entry_offset_verify(
-//                token_abs_idx, page_idx, num_kv_heads, head_dim);
-//     // key and value cache should be stored interleaved
-//     int const stride = num_q_heads / num_kv_heads;
-//     int const kv_offset =
-//         offset / head_dim * stride * head_dim + offset % head_dim;
-//     kvCache_ptr[to_k_idx + offset] =
-//         static_cast<half>(qkv_proj_array[from_idx + q_hidden_size +
-//         kv_offset]);
-//     kvCache_ptr[to_v_idx + offset] =
-//         static_cast<half>(qkv_proj_array[from_idx + q_hidden_size +
-//                                          temp_kv_hidden_size + kv_offset]);
-//   }
-// }
 
 template <typename DT>
 void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
@@ -2062,7 +2004,7 @@ void compute_gradient_of_input(IncMultiHeadSelfAttentionMeta const *m,
 
   // Step 6: perform rotary position embeddings (RoPE) bwd
   {
-    if (m->rotary_embedding_meta->apply_rotary_embedding) {
+    if (m->rotary_embedding_meta->apply_rotary_embedding && false) {
       checkCUDA(cudaMemcpyAsync(m->peft_token_infos_device,
                                 m->peft_token_infos,
                                 m->peft_token_infos_size,
@@ -2306,11 +2248,62 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
         C, num_tokens * m->qProjSize * m->num_q_heads * 3, filename.c_str());
   }
 
-  // compute gradients w.r.t. input
-  compute_gradient_of_input(m, bc, shard_id, input_grad_ptr, peft_stream);
+  // print shape of dq
+  std::cout << "dq shape: " << dq.sizes() << std::endl;
+  std::cout << "dk shape: " << dk.sizes() << std::endl;
+  std::cout << "dv shape: " << dv.sizes() << std::endl;
 
-  // todo(gabriele): check the memory buffer here
-  // todo(yingyi): fix 2x memory footprint for dq, dk, dv
+  int head_size = m->qProjSize;
+  int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
+  auto input_grad_tensor = createTorchTensorFromCuda<DT>(input_grad_ptr, {head_size, tot_num_heads, num_total_tokens});
+
+  auto dq_tensor = input_grad_tensor.narrow(1, 0, m->num_q_heads);
+  auto dk_tensor = input_grad_tensor.narrow(1, m->num_q_heads, m->num_kv_heads);
+  auto dv_tensor = input_grad_tensor.narrow(1, m->num_q_heads + m->num_kv_heads, m->num_kv_heads);
+  std::cout << "dq_tensor shape: " << dq_tensor.sizes() << std::endl;
+  std::cout << "dk_tensor shape: " << dk_tensor.sizes() << std::endl;
+  std::cout << "dv_tensor shape: " << dv_tensor.sizes() << std::endl;
+
+
+  dq_tensor.copy_(dq.squeeze().permute({2,1,0}));
+  dk_tensor.copy_(dk.squeeze().permute({2,1,0}));
+  dv_tensor.copy_(dv.squeeze().permute({2,1,0}));
+
+  
+  if (m->rotary_embedding_meta->apply_rotary_embedding) {
+    checkCUDA(cudaMemcpyAsync(m->peft_token_infos_device,
+                              m->peft_token_infos,
+                              m->peft_token_infos_size,
+                              cudaMemcpyHostToDevice,
+                              peft_stream));
+    assert(m->qProjSize == m->kProjSize);
+    /*q&k*/
+    int half_proj = m->qProjSize / 2;
+    int q_proj_work = num_tokens * m->num_q_heads * half_proj;
+    int kv_proj_work = num_tokens * m->num_kv_heads * half_proj;
+    int parallelism = q_proj_work + kv_proj_work;
+    apply_rotary_embedding_bwd<<<GET_BLOCKS(parallelism),
+                                  min(CUDA_NUM_THREADS, parallelism),
+                                  0,
+                                  peft_stream>>>(
+        input_grad_ptr,
+        m->complex_input,
+        m->peft_token_infos_device,
+        m->rotary_embedding_meta->rope_theta,
+        (m->rotary_embedding_meta->rope_type == "llama3"),
+        m->rotary_embedding_meta->factor,
+        m->rotary_embedding_meta->low_freq_factor,
+        m->rotary_embedding_meta->high_freq_factor,
+        m->rotary_embedding_meta->original_max_position_embeddings,
+        m->qProjSize,
+        num_tokens,
+        m->num_q_heads,
+        m->num_kv_heads);
+  }
+    
+
+
+  
 
   // end step 2
   // ================================================================
