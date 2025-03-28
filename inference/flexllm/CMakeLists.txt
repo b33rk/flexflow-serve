@@ -35,7 +35,7 @@ target_include_directories(${project_target1} PRIVATE ${CMAKE_SOURCE_DIR}/infere
 target_link_libraries(${project_target1} -Wl,--whole-archive flexflow -Wl,--no-whole-archive ${FLEXFLOW_EXT_LIBRARIES})
 
 
-set(TARGET_PATH "./${project_target1}")
+set(TARGET_PATH "${project_target1}")
 
 # Configure the normal execution wrapper.
 # Here, LAUNCHER is simply "exec" so that it runs the executable normally.
