@@ -2,7 +2,7 @@
 // https://github.com/Dao-AILab/flash-attention/blob/main/csrc/flash_attn/flash_api.cpp
 
 #pragma once
-
+#ifdef FF_USE_CUDA
 #include <cuda.h>
 #include <optional>
 #include <torch/extension.h>
@@ -449,3 +449,4 @@ inline std::tuple<int, int> get_compute_capability(int device) {
   return {capability_major, capability_minor};
 }
 }; // namespace flash
+#endif // FF_USE_CUDA

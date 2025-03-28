@@ -431,6 +431,7 @@ void LoraLinear::inference_task(Task const *task,
   // int num_peft_tokens = bc->num_finetuning_fwd_tokens();
   inference_kernel_wrapper(m, bc, input, output);
 
+#ifdef FF_USE_CUDA  
   if (m->inference_debugging) {
     assert(task->index_point.get_dim() == 1);
     int shard_id = task->index_point.point_data[0];
@@ -531,6 +532,7 @@ void LoraLinear::inference_task(Task const *task,
 
     m->decoding_step++;
   }
+#endif
 }
 
 FutureMap LoraLinear::peft_bwd(FFModel const &ff,
@@ -584,6 +586,7 @@ void lora_inference_debugging(LoraLinearMeta *m,
                               GenericTensorAccessorW input_grad,
                               GenericTensorAccessorR output_grad,
                               int shard_id) {
+#ifdef FF_USE_CUDA  
   int in_dim = input_grad.domain.hi()[0] - input_grad.domain.lo()[0] + 1;
   int out_dim = output_grad.domain.hi()[0] - output_grad.domain.lo()[0] + 1;
   // get layer name
@@ -688,6 +691,7 @@ void lora_inference_debugging(LoraLinearMeta *m,
   torch::save(output_grad_tensor, filename.c_str());
 
   m->bwd_step++;
+#endif
 }
 
 template <typename DT>

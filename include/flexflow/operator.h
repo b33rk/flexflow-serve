@@ -270,6 +270,7 @@ public:
     }
     return op_name_without_uid;
   }
+#ifdef FF_USE_CUDA
   template <typename OpMetaType>
   static void save_inference_tensors_to_file(
       OpMetaType *m,
@@ -363,6 +364,18 @@ public:
       }
     }
   }
+#else
+  template <typename OpMetaType>
+  static void save_inference_tensors_to_file(
+      OpMetaType *m,
+      int shard_id,
+      BatchConfig const *bc,
+      std::vector<GenericTensorAccessorR> input_tensors,
+      std::vector<GenericTensorAccessorR> weight_tensors,
+      std::vector<GenericTensorAccessorR> output_tensors,
+      bool fwd_pass = true,
+      bool before_kernel = false) {}
+#endif // FF_USE_CUDA
   virtual bool measure_operator_cost(Simulator *sim,
                                      MachineView const &mv,
                                      CostMetrics &cost_metrics) const = 0;
