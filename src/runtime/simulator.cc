@@ -133,11 +133,11 @@ bool MachineResource::is_valid_machine_view(MachineView const &view) const {
   }
 }
 
-Device::Device(std::string const &name,
-               DeviceType type,
-               int node_id,
-               int socket_id,
-               int device_id)
+FFDevice::FFDevice(std::string const &name,
+                   DeviceType type,
+                   int node_id,
+                   int socket_id,
+                   int device_id)
     : name(name), type(type), node_id(node_id), socket_id(socket_id),
       device_id(device_id) {}
 
@@ -146,7 +146,7 @@ CompDevice::CompDevice(std::string const &name,
                        int node_id,
                        int socket_id,
                        int device_id)
-    : Device(name, Device::DEVICE_COMP, node_id, socket_id, device_id),
+    : FFDevice(name, FFDevice::DEVICE_COMP, node_id, socket_id, device_id),
       comp_type(comp_type) {}
 
 MemDevice::MemDevice(std::string const &name,
@@ -155,7 +155,7 @@ MemDevice::MemDevice(std::string const &name,
                      int socket_id,
                      int device_id,
                      size_t capacity)
-    : Device(name, Device::DEVICE_MEM, node_id, socket_id, device_id),
+    : FFDevice(name, FFDevice::DEVICE_MEM, node_id, socket_id, device_id),
       mem_type(mem_type), capacity(capacity) {}
 
 CommDevice::CommDevice(std::string const &name,
@@ -165,7 +165,7 @@ CommDevice::CommDevice(std::string const &name,
                        int device_id,
                        float latency,
                        float bandwidth)
-    : Device(name, Device::DEVICE_COMM, node_id, socket_id, device_id),
+    : FFDevice(name, FFDevice::DEVICE_COMM, node_id, socket_id, device_id),
       comm_type(comm_type), latency(latency), bandwidth(bandwidth) {}
 
 static std::random_device rd;
@@ -1015,7 +1015,7 @@ float Simulator::simulate_runtime(
   }
   // Step 5: perform simulation
   float sim_time = 0.0f;
-  std::map<Device *, float> device_times;
+  std::map<FFDevice *, float> device_times;
   size_t idx = 0;
   DotFile<SimTask *> taskGraph;
   bool export_taskgraph = (export_file_name != "");
@@ -1134,7 +1134,7 @@ float Simulator::simulate_runtime(
             if (synched.find(firstId) == synched.end()) {
               synched.insert(firstId);
               Domain firstR = op->get_weight_tensor_shape(pc, j, firstId);
-              Device *firstDevice = machine->get_gpu(pc.device_ids[firstId]);
+              FFDevice *firstDevice = machine->get_gpu(pc.device_ids[firstId]);
               float nccl_time = 0.0f;
               for (int nextId = firstId + 1; nextId < pc.num_parts();
                    nextId++) {
@@ -1145,7 +1145,8 @@ float Simulator::simulate_runtime(
                   assert(firstR == nextR);
                   assert(synched.find(nextId) == synched.end());
                   synched.insert(nextId);
-                  Device *nextDevice = machine->get_gpu(pc.device_ids[nextId]);
+                  FFDevice *nextDevice =
+                      machine->get_gpu(pc.device_ids[nextId]);
                   // Compute the bandwidth between firstDevice/nextDevice
                   float bandwidth = 0.0f;
                   if (firstDevice->node_id == nextDevice->node_id) {
@@ -1360,8 +1361,8 @@ float LogicalTaskgraphBasedSimulator::simulate_runtime(
   // Step 5: perform simulation
 
   float sim_time = 0.0f;
-  std::map<Device *, float> device_times;
-  // map<Device*, SimTask*> device_schedule;
+  std::map<FFDevice *, float> device_times;
+  // map<FFDevice*, SimTask*> device_schedule;
   size_t idx = 0;
   while (!ready_queue.empty()) {
     // Find the task with the earliest start time
@@ -1470,7 +1471,7 @@ float LogicalTaskgraphBasedSimulator::simulate_runtime(
 float LogicalTaskgraphBasedSimulator::route_transfer(
     SimTask *transfer_task,
     float start_time,
-    std::map<Device *, float> &device_times) {
+    std::map<FFDevice *, float> &device_times) {
   std::vector<CommDevice *> route =
       static_cast<NominalCommDevice *>(transfer_task->device)
           ->expand_to_physical();
@@ -1559,7 +1560,7 @@ float LogicalTaskgraphBasedSimulator::route_transfer(
 float LogicalTaskgraphBasedSimulator::route_transfer_seg(
     SimTask *transfer_task,
     float start_time,
-    std::map<Device *, float> &device_times,
+    std::map<FFDevice *, float> &device_times,
     bool &finished) {
   std::vector<CommDevice *> route =
       static_cast<NominalCommDevice *>(transfer_task->device)

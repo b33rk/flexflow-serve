@@ -48,7 +48,7 @@ get_cuda_docker_image() {
   while true; do
       local response new_tags
       response=$(curl -s "https://hub.docker.com/v2/repositories/${docker_user}/${docker_image}/tags?page=${page}&page_size=${per_page}")
-      new_tags=$(echo "$response" | jq -r --arg v "$ubuntu_version" '.results[].name | select(contains("cudnn") and contains("devel-ubuntu") and test("ubuntu"+$v+"$"))')
+      new_tags=$(echo "$response" | jq -r --arg v "$ubuntu_version" '.results[].name | select(contains("devel-ubuntu") and test("ubuntu"+$v+"$"))')
       if [[ -z "$new_tags" ]]; then
           break
       fi
@@ -57,6 +57,9 @@ get_cuda_docker_image() {
       done <<< "$new_tags"
       ((page++))
   done
+
+  # Filter out tags that do not contain "cudnn"
+  mapfile -t tags_list < <(printf "%s\n" "${tags_list[@]}" | grep "cudnn")
 
   if [ ${#tags_list[@]} -eq 0 ]; then
       echo "Error: No docker images found matching criteria." >&2

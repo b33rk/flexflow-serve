@@ -34,7 +34,7 @@ def print_trainable_parameters(model):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-name", type=str, default="meta-llama/Llama-2-7b-hf")
+    parser.add_argument("--model-name", type=str, default="meta-llama/Llama-3.2-1B-Instruct")
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument(
@@ -76,19 +76,10 @@ def main():
     )
 
     # Get Tokenizer
-    hf_config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
-    hf_arch = getattr(hf_config, "architectures")[0]
-    if hf_arch == "LLaMAForCausalLM" or hf_arch == "LlamaForCausalLM":
-        tokenizer = LlamaTokenizer.from_pretrained(
-            model_name,
-            use_fast=True,
-            torch_dtype=torch.float32 if use_full_precision else torch.float16,
-        )
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            torch_dtype=torch.float32 if use_full_precision else torch.float16,
-        )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name,
+        torch_dtype=torch.float32 if use_full_precision else torch.float16,
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = "[PAD]"
         tokenizer.padding_side = "left"

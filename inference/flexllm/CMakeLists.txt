@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 project(FlexFlow_PeftTrain)
 
 # Normal PEFT
-set(project_target1 peft_train)
+set(project_target1 peft_train_unwrapped)
 set(CPU_SRC1
   ${FLEXFLOW_CPP_DRV_SRC}
   peft_train.cc
@@ -33,5 +33,41 @@ endif()
 target_include_directories(${project_target1} PRIVATE ${FLEXFLOW_INCLUDE_DIRS} ${CMAKE_INSTALL_INCLUDEDIR})
 target_include_directories(${project_target1} PRIVATE ${CMAKE_SOURCE_DIR}/inference)
 target_link_libraries(${project_target1} -Wl,--whole-archive flexflow -Wl,--no-whole-archive ${FLEXFLOW_EXT_LIBRARIES})
+
+
+set(TARGET_PATH "${project_target1}")
+
+# Configure the normal execution wrapper.
+# Here, LAUNCHER is simply "exec" so that it runs the executable normally.
+set(LAUNCHER "exec")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/../inference_wrapper.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/peft_train"
+  @ONLY
+)
+
+file(CHMOD "${CMAKE_CURRENT_BINARY_DIR}/peft_train"
+     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+     GROUP_READ GROUP_EXECUTE
+     WORLD_READ WORLD_EXECUTE
+)
+
+# Configure the debugging launcher wrapper.
+# Here, LAUNCHER is set to "gdb --args" so that it runs under gdb.
+set(LAUNCHER "gdb -ex run --args")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/../inference_wrapper.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/gdb_peft_train"
+  @ONLY
+)
+file(CHMOD "${CMAKE_CURRENT_BINARY_DIR}/gdb_peft_train"
+     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+     GROUP_READ GROUP_EXECUTE
+     WORLD_READ WORLD_EXECUTE
+)
+
+
 set(BIN_DEST "bin")
 install(TARGETS ${project_target1} DESTINATION ${BIN_DEST})
+install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/peft_train" DESTINATION ${BIN_DEST})
+install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/gdb_peft_train" DESTINATION ${BIN_DEST})

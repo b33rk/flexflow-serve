@@ -1,0 +1,46 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Debug FlexFlow PEFT",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/build/inference/peft/peft",
+        "args": [
+          "-ll:gpu", "1",
+          "-ll:cpu", "4",
+          "-ll:util", "4",
+          "-tensor-parallelism-degree", "1",
+          "-ll:fsize", "8192",
+          "-ll:zsize", "12000",
+          "--max-requests-per-batch", "1",
+          "--max-sequence-length", "128",
+          "--max-tokens-per-batch", "128",
+          "-llm-model", "JackFram/llama-160m",
+          "-finetuning-dataset", "./inference/prompt/peft_dataset.json",
+          "-peft-model", "goliaro/llama-160m-lora",
+          "-enable-peft",
+          "--use-full-precision",
+          "--inference-debugging"
+        ],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}",
+        "environment": [
+          {
+            "name": "LD_LIBRARY_PATH",
+            "value": "/root/flexflow-serve/build:/root/flexflow-serve/build/deps/legion/lib:/opt/conda/lib/python3.12/site-packages/torch/lib:/opt/conda/lib/python3.12/site-packages:/opt/conda/lib"
+          }
+        ],
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "miDebuggerPath": "/usr/bin/gdb",
+        "setupCommands": [
+          {
+            "description": "Enable pretty-printing for gdb",
+            "text": "-enable-pretty-printing",
+            "ignoreFailures": true
+          }
+        ]
+      }
+    ]
+  }

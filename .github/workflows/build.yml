@@ -50,6 +50,10 @@ jobs:
           activate-environment: flexflow
           environment-file: conda/flexflow.yml
           auto-activate-base: false
+      
+      - name: Install flash attention
+        if: ${{ matrix.gpu_backend == 'cuda' }}
+        run: pip install flash-attn
 
       - name: Build and Install FlexFlow Serve
         run: |

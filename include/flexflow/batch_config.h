@@ -96,7 +96,7 @@ public:
   // Maximum possible values for different parameters
   // These maximum values are used for copying BatchConfig
   // across workers
-  static int const MAX_NUM_REQUESTS = 65;
+  static int const MAX_NUM_REQUESTS = 260;
   static int const MAX_NUM_TOKENS = 3000;
   static int const MAX_SPEC_TREE_TOKEN_NUM = 64;
   static int const MAX_PEFT_CONFIG_SIZE = 1024;

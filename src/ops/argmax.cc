@@ -53,6 +53,8 @@ Tensor FFModel::argmax(const Tensor input, bool beam_search, char const *name) {
                         0 /*weights*/,
                         beam_search ? 2 : 1 /*outputs*/,
                         input);
+
+  printf("Adding argmax layer\n");
   {
     int numdims = input->num_dims;
     int dims[MAX_TENSOR_DIM];

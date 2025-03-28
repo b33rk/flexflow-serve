@@ -88,18 +88,18 @@ public:
   size_t op_total_mem = 0;
 };
 
-class Device {
+class FFDevice {
 public:
   enum DeviceType {
     DEVICE_COMP,
     DEVICE_MEM,
     DEVICE_COMM,
   };
-  Device(std::string const &name,
-         DeviceType type,
-         int node_id,
-         int socket_id,
-         int device_id);
+  FFDevice(std::string const &name,
+           DeviceType type,
+           int node_id,
+           int socket_id,
+           int device_id);
   std::string name;
   DeviceType type;
   int node_id;
@@ -107,7 +107,7 @@ public:
   int device_id;
 };
 
-class CompDevice : public Device {
+class CompDevice : public FFDevice {
 public:
   enum CompDevType {
     LOC_PROC, // CPU
@@ -122,7 +122,7 @@ public:
              int device_id);
 };
 
-class MemDevice : public Device {
+class MemDevice : public FFDevice {
 public:
   enum MemDevType {
     SYSTEM_MEM, // DRAM on a single node
@@ -140,7 +140,7 @@ public:
             size_t capacity);
 };
 
-class CommDevice : public Device {
+class CommDevice : public FFDevice {
 public:
   enum CommDevType {
     MEMBUS_COMM,
@@ -635,7 +635,7 @@ public:
 public:
   float ready_time, run_time;
   SimTaskType type;
-  Device *device;
+  FFDevice *device;
   MemDevice *mem;
   int counter;
   size_t xfer_size;
@@ -802,10 +802,10 @@ public:
                        std::string const &export_file_name);
   virtual float route_transfer(SimTask *transfer_task,
                                float start_time,
-                               std::map<Device *, float> &device_times);
+                               std::map<FFDevice *, float> &device_times);
   virtual float route_transfer_seg(SimTask *transfer_task,
                                    float start_time,
-                                   std::map<Device *, float> &device_times,
+                                   std::map<FFDevice *, float> &device_times,
                                    bool &finished);
   virtual void expand_allreduce(
       SimTask *allreduce_task,

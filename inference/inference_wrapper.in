@@ -1,0 +1,5 @@
+#!/bin/bash
+# Set the LD_LIBRARY_PATH using LIBTORCH_PYTHON_DIR from CMake.
+export LD_LIBRARY_PATH="@LIBTORCH_PYTHON_DIR@:$LD_LIBRARY_PATH"
+# Launch the executable using the specified launcher.
+@LAUNCHER@ "${BASH_SOURCE[0]%/*}/@TARGET_PATH@" "$@"

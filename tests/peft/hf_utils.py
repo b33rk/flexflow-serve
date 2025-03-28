@@ -272,22 +272,23 @@ def build_peft_config(args, finetuning=False):
     return peft_config
 
 
-def prepare_model_for_lora_finetuning(model, save_peft_tensors=False):
+def prepare_model_for_lora_finetuning(model, use_full_precision=False, save_peft_tensors=False):
     # Freeze all layers except the LORA ones. Cast small layers to full precision for stability
     for name, param in model.named_parameters():
         if "lora" not in name:
             param.requires_grad = False  # freeze the model - train adapters later
         else:
             param.requires_grad = True
-        if param.ndim == 1:
-            # cast the small parameters (e.g. layernorm) to fp32 for stability
-            param.data = param.data.to(torch.float32)
+            if not use_full_precision:
+                param.data = param.data.to(torch.float16)  # cast to fp16 for speed
+        # if param.ndim == 1:
+        #     # cast the small parameters (e.g. layernorm) to fp32 for stability
+        #     param.data = param.data.to(torch.float32)
     if not save_peft_tensors:
         model.gradient_checkpointing_enable()  # reduce number of stored activations
     model.enable_input_require_grads()
-    model.lm_head = CastOutputToFloat(model.lm_head)
+    # model.lm_head = CastOutputToFloat(model.lm_head)
     return model
-
 
 def build_peft_model(args, peft_config):
     # Load base model, and apply the PEFT layer
@@ -297,8 +298,9 @@ def build_peft_model(args, peft_config):
         device_map="auto",
         attn_implementation="eager",
     )
-    model = PeftModel.from_pretrained(model, args.peft_model_id, config=peft_config)
-    model = prepare_model_for_lora_finetuning(model, args.save_peft_tensors)
+    model = PeftModel.from_pretrained(model, args.peft_model_id, config=peft_config,
+                                      torch_dtype=torch.float32 if args.use_full_precision else torch.float16,)
+    model = prepare_model_for_lora_finetuning(model, args.use_full_precision, args.save_peft_tensors)
     return model
 
 

@@ -13,10 +13,10 @@ class ArgMaxMeta : public OpMeta {
 public:
   bool beam_search;
   float *probs;
-  void *d_temp_storage;
-  size_t temp_storage_bytes = 0;
-  int *d_offsets;
-  void *d_out;
+  // void *d_temp_storage;
+  // size_t temp_storage_bytes = 0;
+  // int *d_offsets;
+  // void *d_out;
   float *d_loss;
   Realm::RegionInstance reserveInst;
   ArgMaxMeta(FFHandler handler,

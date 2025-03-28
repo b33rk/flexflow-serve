@@ -18,6 +18,8 @@
 #include <hip/hip_complex.h>
 #endif
 
+#include "flexflow/flash_api.h"
+
 namespace FlexFlow {
 
 class IncMultiHeadSelfAttentionMeta;
@@ -195,6 +197,7 @@ public:
   size_t complex_size = 0, complex_size_bwd = 0;             // numel
   size_t qk_prod_size = 0;                                   // numel
   size_t allocated_peft_buffer_size1 = 0, allocated_peft_buffer_size2 = 0,
+         flash_attn_softmax_lse_size = 0, flash_attn_out_size = 0,
          peft_token_infos_size = 0;
 
   void *devQKVProjArray, *devQKVProjArrayBWD;
@@ -225,6 +228,23 @@ public:
   void *query_activation_buffer;
   BatchConfig::PerTokenInfo *peft_token_infos = nullptr;
   BatchConfig::PerTokenInfo *peft_token_infos_device;
+
+  // todo(gabriele): memory consumption for softmax_lse + out
+  // flash_attn use softmax_lse and out to compute (S-->P) for bwd in one-pass
+  // softmax_lse size: seqlen_q * num_heads_q
+  // out size: seqlen_q * num_heads_q * head_dim
+  bool flash_attn_recompute;
+  // Flash Attention specific fields: context saved for bwd
+  void *flash_attn_out;           // out size: seqlen_q * num_heads_q * head_dim
+  void *flash_attn_softmax_lse;   // log_sum_exp for one-pass bwd
+  float flash_attn_p_dropout;     // dropout probability
+  bool flash_attn_is_causal;      // whether to apply causal mask
+  bool flash_attn_return_softmax; // whether to return softmax
+  float flash_attn_softcap;       // softcap for dropout
+  // int64_t flash_attn_rng_state_0; // rng state for dropout
+  // int64_t flash_attn_rng_state_1; // rng state for dropout
+  int flash_attn_window_size_left;
+  int flash_attn_window_size_right;
 };
 
 }; // namespace FlexFlow

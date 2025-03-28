@@ -1,40 +1,35 @@
 cmake_minimum_required(VERSION 3.10)
 project(FlexFlow)
 
-
 include(ExternalProject)
 
 # Set policy CMP0074 to eliminate cmake warnings
 cmake_policy(SET CMP0074 NEW)
 cmake_policy(SET CMP0077 NEW)
-if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
+
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
   # Fix DOWNLOAD_EXTRACT_TIMESTAMP warnings
   cmake_policy(SET CMP0135 NEW)
 endif()
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_LIST_DIR}/cmake)
 set(FLEXFLOW_ROOT ${CMAKE_CURRENT_LIST_DIR})
-set(CMAKE_CXX_FLAGS "-std=c++17 ${CMAKE_CXX_FLAGS} -fPIC -UNDEBUG")
-set(CMAKE_HIP_FLAGS "-std=c++17 ${CMAKE_HIP_FLAGS} -fPIC -UNDEBUG")
+# Use pre-cxx11 ABI for compatibility with pre-built LibTorch
+set(CMAKE_CXX_FLAGS "-std=c++17 ${CMAKE_CXX_FLAGS} -fPIC -UNDEBUG -D_GLIBCXX_USE_CXX11_ABI=0")
+set(CMAKE_HIP_FLAGS "-std=c++17 ${CMAKE_HIP_FLAGS} -fPIC -UNDEBUG -D_GLIBCXX_USE_CXX11_ABI=0")
 
 # set std 17
-#set(CMAKE_CXX_STANDARD 17)
-#set(CMAKE_CUDA_STANDARD 17)
-
+# set(CMAKE_CXX_STANDARD 17)
+# set(CMAKE_CUDA_STANDARD 17)
 option(INFERENCE_TESTS "Run inference tests" OFF)
-set(LIBTORCH_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../libtorch" CACHE STRING "LibTorch Path")
-if (INFERENCE_TESTS)
-  find_package(Torch REQUIRED PATHS ${LIBTORCH_PATH} NO_DEFAULT_PATH)
-  set(CMAKE_CXX_FLAGS "-std=c++17 ${CMAKE_CXX_FLAGS} -fPIC ${TORCH_CXX_FLAGS}")
-  message(STATUS "LIBTORCH_PATH: ${LIBTORCH_PATH}")
-  message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
-endif()
 
 # Set a default build type if none was specified
 set(default_build_type "Debug")
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "Setting build type to '${default_build_type}' as none was specified.")
   set(CMAKE_BUILD_TYPE "${default_build_type}" CACHE
-      STRING "Choose the type of build." FORCE)
+    STRING "Choose the type of build." FORCE)
 endif()
 
 # Python
@@ -45,13 +40,14 @@ if(INSTALL_DIR)
   set(CMAKE_INSTALL_PREFIX ${INSTALL_DIR} CACHE PATH "Installation directory" FORCE)
 else()
   # Install DIR not set. Use default, unless a conda environment is in use
-  if ((DEFINED ENV{CONDA_PREFIX} OR (Python3_EXECUTABLE AND Python3_EXECUTABLE MATCHES "conda")) AND NOT FF_BUILD_FROM_PYPI)
-    if (DEFINED ENV{CONDA_PREFIX})
-        set(CONDA_PREFIX $ENV{CONDA_PREFIX})
+  if((DEFINED ENV{CONDA_PREFIX} OR(Python3_EXECUTABLE AND Python3_EXECUTABLE MATCHES "conda")) AND NOT FF_BUILD_FROM_PYPI)
+    if(DEFINED ENV{CONDA_PREFIX})
+      set(CONDA_PREFIX $ENV{CONDA_PREFIX})
     else()
-        get_filename_component(CONDA_PREFIX "${Python3_EXECUTABLE}" DIRECTORY)
-        get_filename_component(CONDA_PREFIX "${CONDA_PREFIX}" DIRECTORY)
+      get_filename_component(CONDA_PREFIX "${Python3_EXECUTABLE}" DIRECTORY)
+      get_filename_component(CONDA_PREFIX "${CONDA_PREFIX}" DIRECTORY)
     endif()
+
     # Set CMAKE_INSTALL_PREFIX to the Conda environment's installation path
     set(CMAKE_INSTALL_PREFIX ${CONDA_PREFIX} CACHE PATH "Installation directory" FORCE)
     message(STATUS "Active conda environment detected. Setting CMAKE_INSTALL_PREFIX: ${CMAKE_INSTALL_PREFIX}")
@@ -79,7 +75,8 @@ set_property(CACHE FF_GASNET_CONDUIT PROPERTY STRINGS ${FF_GASNET_CONDUITS})
 set(FF_LEGION_NETWORKS "" CACHE STRING "Network backend(s) to use")
 
 message(STATUS "FF_LEGION_NETWORKS: ${FF_LEGION_NETWORKS}")
-if (FF_LEGION_NETWORKS STREQUAL "gasnet")
+
+if(FF_LEGION_NETWORKS STREQUAL "gasnet")
   message(STATUS "FF_GASNET_CONDUIT: ${FF_GASNET_CONDUIT}")
 endif()
 
@@ -89,12 +86,15 @@ set_property(CACHE FF_GPU_BACKEND PROPERTY STRINGS ${FF_GPU_BACKENDS})
 
 # option for cuda arch
 set(FF_CUDA_ARCH "autodetect" CACHE STRING "Target CUDA Arch")
-if ((FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda") AND FF_CUDA_ARCH STREQUAL "")
+
+if((FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda") AND FF_CUDA_ARCH STREQUAL "")
   message(FATAL_ERROR "FF_CUDA_ARCH cannot be an empty string. Set it to `autodetect`, `all`, or pass one or multiple valid CUDA archs.")
 endif()
+
 # option for hip arch
 set(FF_HIP_ARCH "all" CACHE STRING "Target HIP Arch")
-if (FF_GPU_BACKEND STREQUAL "hip_rocm" AND FF_CUDA_ARCH STREQUAL "")
+
+if(FF_GPU_BACKEND STREQUAL "hip_rocm" AND FF_CUDA_ARCH STREQUAL "")
   message(FATAL_ERROR "FF_HIP_ARCH cannot be an empty string. Set it to `all`, or pass one or multiple valid HIP archs.")
 endif()
 
@@ -125,19 +125,20 @@ list(APPEND CC_FLAGS
 list(APPEND NVCC_FLAGS
   -std=c++17)
 
-
 add_compile_options(${CC_FLAGS})
 set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} ${NVCC_FLAGS})
 link_libraries(${LD_FLAGS})
 
 # Detect OS type and Linux version (if it applies)
 set(LINUX_VERSION "")
+
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
   find_program(LSB_RELEASE_EXEC lsb_release)
+
   if(LSB_RELEASE_EXEC)
-    execute_process(COMMAND ${LSB_RELEASE_EXEC} -r --short 
-                    OUTPUT_VARIABLE LINUX_VERSION 
-                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND ${LSB_RELEASE_EXEC} -r --short
+      OUTPUT_VARIABLE LINUX_VERSION
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
     message(STATUS "Linux Version: ${LINUX_VERSION}")
   endif()
 endif()
@@ -150,30 +151,30 @@ if(FF_GPU_BACKEND STREQUAL "hip_cuda" OR FF_GPU_BACKEND STREQUAL "hip_rocm")
 endif()
 
 # CUDA
-if (FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
+if(FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
   include(cuda)
 endif()
 
 # HIP
-if (FF_GPU_BACKEND STREQUAL "hip_rocm" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
+if(FF_GPU_BACKEND STREQUAL "hip_rocm" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
   enable_language(HIP)
   include(hip)
 endif()
 
 # CUDNN
-if (FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
+if(FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
   include(cudnn)
 endif()
 
 # Legion
 include(legion)
 
-
 # NCCL
 if(FF_USE_NCCL)
   if(FF_GPU_BACKEND STREQUAL "hip_cuda" OR FF_GPU_BACKEND STREQUAL "cuda")
     include(nccl)
-  endif() 
+  endif()
+
   list(APPEND FF_CC_FLAGS
     -DFF_USE_NCCL)
   list(APPEND FF_NVCC_FLAGS
@@ -182,10 +183,10 @@ endif()
 
 # Inference tests
 if(INFERENCE_TESTS)
-list(APPEND FF_CC_FLAGS
-  -DINFERENCE_TESTS)
-list(APPEND FF_NVCC_FLAGS
-  -DINFERENCE_TESTS)
+  list(APPEND FF_CC_FLAGS
+    -DINFERENCE_TESTS)
+  list(APPEND FF_NVCC_FLAGS
+    -DINFERENCE_TESTS)
 endif()
 
 # json
@@ -200,17 +201,19 @@ include(optional)
 # flashinfer
 list(APPEND FLEXFLOW_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/deps/flashinfer/include)
 
-if (FF_GPU_BACKEND STREQUAL "cuda")
+include(flash_attn)
+
+if(FF_GPU_BACKEND STREQUAL "cuda")
   list(APPEND FF_CC_FLAGS
     -DFF_USE_CUDA)
   list(APPEND FF_NVCC_FLAGS
     -DFF_USE_CUDA)
-elseif (FF_GPU_BACKEND STREQUAL "hip_cuda")
+elseif(FF_GPU_BACKEND STREQUAL "hip_cuda")
   list(APPEND FF_CC_FLAGS
     -DFF_USE_HIP_CUDA)
   list(APPEND FF_HIPCC_FLAGS
     -DFF_USE_HIP_CUDA)
-elseif (FF_GPU_BACKEND STREQUAL "hip_rocm")
+elseif(FF_GPU_BACKEND STREQUAL "hip_rocm")
   list(APPEND FF_CC_FLAGS
     -DFF_USE_HIP_ROCM)
   list(APPEND FF_HIPCC_FLAGS
@@ -219,7 +222,7 @@ else()
 endif()
 
 # Start build FlexFlow
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   list(APPEND FF_CC_FLAGS
     -DFF_DEBUG)
   list(APPEND FF_NVCC_FLAGS
@@ -275,11 +278,10 @@ add_library(substitution_loader SHARED
 target_include_directories(substitution_loader PRIVATE ${FLEXFLOW_INCLUDE_DIRS})
 target_link_libraries(substitution_loader nlohmann_json::nlohmann_json)
 
-
-#message("FLEXFLOW_INCLUDE_DIRS: ${FLEXFLOW_INCLUDE_DIRS}")
+# message("FLEXFLOW_INCLUDE_DIRS: ${FLEXFLOW_INCLUDE_DIRS}")
 
 # compile flexflow lib
-if (FF_GPU_BACKEND STREQUAL "cuda")
+if(FF_GPU_BACKEND STREQUAL "cuda")
   file(GLOB_RECURSE FLEXFLOW_GPU_SRC
     LIST_DIRECTORIES False
     ${FLEXFLOW_ROOT}/src/*.cu)
@@ -296,10 +298,10 @@ elseif(FF_GPU_BACKEND STREQUAL "hip_cuda" OR FF_GPU_BACKEND STREQUAL "hip_rocm")
     LIST_DIRECTORIES False
     ${FLEXFLOW_ROOT}/src/*.cpp)
 
-    set_source_files_properties(${FLEXFLOW_GPU_SRC} PROPERTIES LANGUAGE HIP)
-    set_source_files_properties(${FLEXFLOW_SRC} PROPERTIES LANGUAGE HIP)
-  
-    if(BUILD_SHARED_LIBS)
+  set_source_files_properties(${FLEXFLOW_GPU_SRC} PROPERTIES LANGUAGE HIP)
+  set_source_files_properties(${FLEXFLOW_SRC} PROPERTIES LANGUAGE HIP)
+
+  if(BUILD_SHARED_LIBS)
     add_library(flexflow SHARED ${FLEXFLOW_GPU_SRC} ${FLEXFLOW_SRC})
   else()
     add_library(flexflow STATIC ${FLEXFLOW_GPU_SRC} ${FLEXFLOW_SRC})
@@ -309,13 +311,13 @@ elseif(FF_GPU_BACKEND STREQUAL "hip_cuda" OR FF_GPU_BACKEND STREQUAL "hip_rocm")
 
   find_package(hip REQUIRED)
 
-  if (FF_GPU_BACKEND STREQUAL "hip_cuda")
+  if(FF_GPU_BACKEND STREQUAL "hip_cuda")
     # The targets defined by the hip cmake config only target amd devices.
     # For targeting nvidia devices, we'll make our own interface target,
-    # hip_device_nvidia, that includes the rocm and hip headers. 
+    # hip_device_nvidia, that includes the rocm and hip headers.
     add_library(hip_device_nvidia INTERFACE)
 
-    if (NOT FF_CUDA_ARCH STREQUAL "")
+    if(NOT FF_CUDA_ARCH STREQUAL "")
       target_compile_options(hip_device_nvidia INTERFACE -arch=compute_${FF_CUDA_ARCH})
     endif()
 
@@ -324,25 +326,28 @@ elseif(FF_GPU_BACKEND STREQUAL "hip_cuda" OR FF_GPU_BACKEND STREQUAL "hip_rocm")
 
     add_compile_definitions(FF_USE_HIP_CUDA)
 
-    # Linking cuda: 
-    # We do not explicitly link cuda. hipcc when targeting nvidia will 
-    # use nvcc under the hood. nvcc when used for linking will handle 
+    # Linking cuda:
+    # We do not explicitly link cuda. hipcc when targeting nvidia will
+    # use nvcc under the hood. nvcc when used for linking will handle
     # linking cuda dependencies
     target_link_libraries(flexflow hip_device_nvidia)
   elseif(FF_GPU_BACKEND STREQUAL "hip_rocm")
     find_package(hipblas REQUIRED)
     find_package(miopen REQUIRED)
+
     if(FF_USE_NCCL)
       find_package(rccl REQUIRED)
     endif()
+
     # find_package(rocrand REQUIRED)
     find_library(HIP_RAND_LIBRARY hiprand REQUIRED)
 
     add_compile_definitions(FF_USE_HIP_ROCM)
 
-    if (FF_HIP_ARCH STREQUAL "")
+    if(FF_HIP_ARCH STREQUAL "")
       message(FATAL_ERROR "FF_HIP_ARCH is undefined")
     endif()
+
     set_property(TARGET flexflow PROPERTY HIP_ARCHITECTURES "${HIP_ARCH_LIST}")
 
     message(STATUS "FF_GPU_BACKEND: ${FF_GPU_BACKEND}")
@@ -352,19 +357,20 @@ elseif(FF_GPU_BACKEND STREQUAL "hip_cuda" OR FF_GPU_BACKEND STREQUAL "hip_rocm")
     message(STATUS "CHECK_HIP_ARCHS: ${CHECK_HIP_ARCHS}")
     message(STATUS "HIP_CLANG_PATH: ${HIP_CLANG_PATH}")
 
-    # The hip cmake config module defines three targets, 
+    # The hip cmake config module defines three targets,
     # hip::amdhip64, hip::host, and hip::device.
     #
-    # hip::host and hip::device are interface targets. hip::amdhip64 is an 
+    # hip::host and hip::device are interface targets. hip::amdhip64 is an
     # imported target for libamdhip.
     #
     # You do not directly link to hip::amdhip64. hip::host links to hip::amdhip64
-    # and hip::device links to hip::host. Link to hip::host to just use hip without 
+    # and hip::device links to hip::host. Link to hip::host to just use hip without
     # compiling any GPU code. Link to hip::device to compile the GPU device code.
     #
     # Docs (outdated):
     # https://rocmdocs.amd.com/en/latest/Installation_Guide/Using-CMake-with-AMD-ROCm.html
     target_link_libraries(flexflow hip::device roc::hipblas MIOpen ${HIP_RAND_LIBRARY})
+
     if(FF_USE_NCCL)
       target_link_libraries(flexflow rccl)
     endif()
@@ -373,82 +379,85 @@ else()
   message(FATAL_ERROR "Unsupported FF_GPU_BACKEND for cmake: ${FF_GPU_BACKEND}")
 endif()
 
-if(FF_USE_NCCL AND (FF_GPU_BACKEND STREQUAL "hip_cuda" OR FF_GPU_BACKEND STREQUAL "cuda"))
+if(FF_USE_NCCL AND(FF_GPU_BACKEND STREQUAL "hip_cuda" OR FF_GPU_BACKEND STREQUAL "cuda"))
   add_dependencies(flexflow ${NCCL_NAME})
 endif()
 
 target_include_directories(flexflow PUBLIC ${FLEXFLOW_INCLUDE_DIRS})
+
 # When building Legion from source, we do so by calling add_subdirectory(), and obtain a library with both the
 # Legion and Realm runtimes. The library's name is saved into the LEGION_LIBRARY variable. Hence, we only need
 # to link FlexFlow to ${LEGION_LIBRARY}
 target_link_libraries(flexflow ${LEGION_LIBRARY} ${FLEXFLOW_EXT_LIBRARIES} nlohmann_json::nlohmann_json mpark_variant optional)
 
-#library api version, bump from time to time
+# library api version, bump from time to time
 set(SOVERSION 1)
 
 set_target_properties(flexflow PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(flexflow PROPERTIES OUTPUT_NAME "flexflow${INSTALL_SUFFIX}")
 set_target_properties(flexflow PROPERTIES SOVERSION ${SOVERSION})
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set_target_properties(flexflow PROPERTIES BUILD_RPATH "\$ORIGIN")
   set_target_properties(flexflow PROPERTIES INSTALL_RPATH "\$ORIGIN")
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
   set_target_properties(flexflow PROPERTIES BUILD_RPATH "@loader_path")
   set_target_properties(flexflow PROPERTIES INSTALL_RPATH "@loader_path")
 endif()
 
 # python related
 find_package(Python COMPONENTS Interpreter Development)
+
 # create flexflow_cffi_header.py
 add_custom_command(TARGET flexflow
-  PRE_BUILD	
+  PRE_BUILD
   COMMAND ${FLEXFLOW_ROOT}/python/flexflow_cffi_build.py --ffhome-dir ${FLEXFLOW_ROOT} --output-dir ${FLEXFLOW_ROOT}/python/flexflow/core
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   COMMENT "Creating flexflow_cffi_header.py..."
 )
-if (NOT FF_BUILD_FROM_PYPI)
+
+if(NOT FF_BUILD_FROM_PYPI)
   # generate the Legion Python bindings library. When building from pip, we need to do this post-install to prevent Legion from overwriting the path to the Legion shared library
   add_custom_command(TARGET flexflow
-    POST_BUILD	
+    POST_BUILD
     COMMAND CMAKE_BUILD_DIR=${Legion_BINARY_DIR}/runtime CMAKE_INSTALL_PREFIX=${Legion_BINARY_DIR} ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/deps/legion/bindings/python/setup.py build --build-lib=${Legion_BINARY_DIR}/bindings/python ${Legion_PYTHON_EXTRA_INSTALL_ARGS}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/deps/legion/bindings/python
   )
+
   # create set_python_envs.sh script
   add_custom_command(TARGET flexflow
-    PRE_BUILD	
+    PRE_BUILD
     COMMAND ${Python_EXECUTABLE} ${FLEXFLOW_ROOT}/python/flexflow_python_build.py --build-dir ${CMAKE_BINARY_DIR}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Creating set_python_envs.sh interpreter..."
   )
 endif()
 
-if (INFERENCE_TESTS)
-  target_link_libraries(flexflow "${TORCH_LIBRARIES}")
-  set_property(TARGET flexflow PROPERTY CXX_STANDARD 14)
-endif()
-
-
 # Ensure Rust is installed
 execute_process(COMMAND rustc --version
-              RESULT_VARIABLE RUST_COMMAND_RESULT
-              OUTPUT_VARIABLE RUSTC_OUTPUT
-              ERROR_QUIET)
+  RESULT_VARIABLE RUST_COMMAND_RESULT
+  OUTPUT_VARIABLE RUSTC_OUTPUT
+  ERROR_QUIET)
+
 if(NOT RUST_COMMAND_RESULT EQUAL 0)
-  message(FATAL_ERROR 
-  "Rust is not installed on the system. Please install it by running: \n"
-  "'curl https://sh.rustup.rs -sSf | sh -s -- -y' \n"
-  "and follow the instructions on the screen.")
+  message(FATAL_ERROR
+    "Rust is not installed on the system. Please install it by running: \n"
+    "'curl https://sh.rustup.rs -sSf | sh -s -- -y' \n"
+    "and follow the instructions on the screen.")
 endif()
+
 # Ensure Cargo is installed
 execute_process(COMMAND cargo --version
-                RESULT_VARIABLE CARGO_RESULT
-                OUTPUT_QUIET ERROR_QUIET)
+  RESULT_VARIABLE CARGO_RESULT
+  OUTPUT_QUIET ERROR_QUIET)
+
 if(NOT CARGO_RESULT EQUAL 0)
-  message(FATAL_ERROR 
-  "Rust is installed, but cargo is not. Please install it by running: \n"
-  "'curl https://sh.rustup.rs -sSf | sh -s -- -y' \n"
-  "and follow the instructions on the screen.")
+  message(FATAL_ERROR
+    "Rust is installed, but cargo is not. Please install it by running: \n"
+    "'curl https://sh.rustup.rs -sSf | sh -s -- -y' \n"
+    "and follow the instructions on the screen.")
 endif()
+
 set(MLC_ENABLE_SENTENCEPIECE_TOKENIZER ON)
 add_subdirectory(deps/tokenizers-cpp tokenizers EXCLUDE_FROM_ALL)
 target_include_directories(flexflow PUBLIC deps/tokenizers-cpp/include)
@@ -459,21 +468,21 @@ add_subdirectory(inference/incr_decoding)
 add_subdirectory(inference/peft)
 add_subdirectory(inference/flexllm)
 
-
 # installation
 set(INCLUDE_DEST "include")
 set(LIB_DEST "lib")
 install(FILES ${FLEXFLOW_HDR} DESTINATION ${INCLUDE_DEST})
 install(TARGETS flexflow DESTINATION ${LIB_DEST})
-# install python
 
+# install python
 find_package(Python COMPONENTS Interpreter Development)
 execute_process(COMMAND ${Python_EXECUTABLE} -c "import site, os; print([pkg for func in (site.getsitepackages(), site.getusersitepackages()) for pkg in ([func] if isinstance(func, str) else func) if os.access(pkg, os.W_OK)][0])" OUTPUT_VARIABLE PY_DEST OUTPUT_STRIP_TRAILING_WHITESPACE)
-if (NOT FF_BUILD_FROM_PYPI)
+
+if(NOT FF_BUILD_FROM_PYPI)
   install(
     DIRECTORY ${FLEXFLOW_ROOT}/python/flexflow/
     DESTINATION ${PY_DEST}/flexflow
-    FILES_MATCHING 
+    FILES_MATCHING
     PATTERN "*.py")
 else()
   # pip automatically installs all *.py files in the python/flexflow folder, but because flexflow_cffi_header.py is generated at build time, we have to install it manually.
@@ -481,9 +490,9 @@ else()
     PROGRAMS ${FLEXFLOW_ROOT}/python/flexflow/core/flexflow_cffi_header.py
     DESTINATION ${PY_DEST}/flexflow/core
   )
-  # Use setup.py script to re-install the Python bindings library with the right library paths. 
+
+  # Use setup.py script to re-install the Python bindings library with the right library paths.
   # Need to put the instructions in a subfolder because of issue below:
   # https://stackoverflow.com/questions/43875499/do-post-processing-after-make-install-in-cmake
   add_subdirectory(cmake/pip_install)
 endif()
-

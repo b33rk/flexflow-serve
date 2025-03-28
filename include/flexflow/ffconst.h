@@ -36,6 +36,7 @@ enum DataType {
   DT_INT4 = 46,
   DT_INT8 = 47,
   DT_NONE = 49,
+  DT_BFLOAT16 = 50, // placeholder for bfloat16
 };
 
 enum LossType {

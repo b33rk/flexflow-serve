@@ -44,10 +44,13 @@ jobs:
           environment-file: conda/flexflow.yml
           auto-activate-base: false
 
+      - name: Install flash attention
+        run: pip install flash-attn
+      
       - name: Build and Install FlexFlow
         run: |
           export FF_CUDA_ARCH=80
-          pip install . --verbose
+          pip install . --verbose --no-build-isolation
           # Remove build folder to check that the installed version can run independently of the build files
           rm -rf build
 
