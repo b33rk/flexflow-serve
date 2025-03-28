@@ -31,6 +31,8 @@ message(STATUS "Detected torch installation path: ${Torch_INSTALL_PATH}")
 # # Assume that the Torch CMake files are under: <Torch_INSTALL_PATH>/torch/share/cmake/Torch
 set(Torch_DIR "${Torch_INSTALL_PATH}/torch/share/cmake/Torch")
 message(STATUS "Using Torch_DIR: ${Torch_DIR}")
+set(LIBTORCH_PYTHON_DIR "${Torch_INSTALL_PATH}/torch/lib")
+message(STATUS "Using LIBTORCH_PYTHON_DIR: ${LIBTORCH_PYTHON_DIR}")
 find_package(Torch REQUIRED)
 message(STATUS "LIBTORCH_PATH: ${LIBTORCH_PATH}")
 message(STATUS "TORCH_LIBRARIES: ${TORCH_LIBRARIES}")

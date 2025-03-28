@@ -89,8 +89,7 @@ python ./tests/peft/peft_alignment_test.py -m "${MODEL_NAME}" -tp "${TP_DEGREE}"
 
 # C++ test
 echo "C++ test"
-# set env var for flash_attn:
-# export LD_LIBRARY_PATH=/root/flexflow-serve/build:/root/flexflow-serve/build/deps/legion/lib:$(dirname $(/root/flexflow-serve/python/flexflow/findpylib.py)):/opt/conda/lib/python3.12/site-packages/torch/lib:/opt/conda/lib/python3.12/site-packages:$LD_LIBRARY_PATH
+
 ./build/inference/peft/peft \
     -ll:gpu ${NUM_GPUS} -ll:cpu 4 -ll:util 4 \
     -tensor-parallelism-degree "${TP_DEGREE}" \
