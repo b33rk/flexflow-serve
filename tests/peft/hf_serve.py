@@ -75,21 +75,10 @@ def main():
     print(model)
     
     # Get tokenizer
-    hf_config = AutoConfig.from_pretrained(
-        config.base_model_name_or_path, trust_remote_code=True
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.base_model_name_or_path,
+        torch_dtype=torch.float32 if args.use_full_precision else torch.float16,
     )
-    hf_arch = getattr(hf_config, "architectures")[0]
-    if hf_arch == "LLaMAForCausalLM" or hf_arch == "LlamaForCausalLM":
-        tokenizer = LlamaTokenizer.from_pretrained(
-            config.base_model_name_or_path,
-            use_fast=True,
-            torch_dtype=torch.float32 if args.use_full_precision else torch.float16,
-        )
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(
-            config.base_model_name_or_path,
-            torch_dtype=torch.float32 if args.use_full_precision else torch.float16,
-        )
     
     # Generation config
     generation_config = GenerationConfig.from_pretrained(config.base_model_name_or_path)

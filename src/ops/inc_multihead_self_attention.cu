@@ -1111,6 +1111,7 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
          "kv_indptr is null!");
   assert(m->handle.incr_attention_metadata->kv_last_page_len != nullptr &&
          "kv_last_page_len is null!");
+
   paged_kv_t<PageStorage::kIndices, half, int32_t> paged_kv(
       num_kv_heads,
       kPagesize,
@@ -1161,40 +1162,40 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   // printf("obtained handler\n");
   assert(sizeof(DT) == 2 && "FlashInfer only supports half precision");
   DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
-    // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
-    cudaError_t result =
-        BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
-                                                      HEAD_DIM,
-                                                      LogitsPostHook::kNone,
-                                                      PosEncodingMode::kNone,
-                                                      false,
-                                                      MaskMode::kCausal,
-                                                      half,
-                                                      half,
-                                                      half,
-                                                      int32_t>(
-            static_cast<BatchPrefillHandler *>(handler),
-            q,
-            m->handle.incr_attention_metadata->q_indptr,
-            /*q_offset=*/nullptr,
-            paged_kv,
-            /*custom_mask=*/nullptr,
-            /*qk_indptr=*/nullptr,
-            o,
-            /*lse=*/nullptr,
-            num_q_heads,
-            /*window_left=*/-1,
-            /*logits_soft_cap=*/0.f,
-            sm_scale,
-            /*rope_scale=*/1.f,
-            /*rope_theta=*/static_cast<float>(1e4),
-            stream);
-    if (result != cudaSuccess) {
-      throw std::runtime_error("Failed to run "
-                               "IncrementalDecodingAttentionForwardKernel: " +
-                               std::string(cudaGetErrorString(result)));
-    }
-  });
+     // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
+     cudaError_t result =
+         BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
+                                                       HEAD_DIM,
+                                                       LogitsPostHook::kNone,
+                                                       PosEncodingMode::kNone,
+                                                       false,
+                                                       MaskMode::kCausal,
+                                                       half,
+                                                       half,
+                                                       half,
+                                                       int32_t>(
+             static_cast<BatchPrefillHandler *>(handler),
+             q,
+             m->handle.incr_attention_metadata->q_indptr,
+             /*q_offset=*/nullptr,
+             paged_kv,
+             /*custom_mask=*/nullptr,
+             /*qk_indptr=*/nullptr,
+             o,
+             /*lse=*/nullptr,
+             num_q_heads,
+             /*window_left=*/-1,
+             /*logits_soft_cap=*/0.f,
+             sm_scale,
+             /*rope_scale=*/1.f,
+             /*rope_theta=*/static_cast<float>(1e4),
+             stream);
+     if (result != cudaSuccess) {
+       throw std::runtime_error("Failed to run "
+                                "IncrementalDecodingAttentionForwardKernel: " +
+                                std::string(cudaGetErrorString(result)));
+     }
+   });
 }
 
 template <typename DT>

@@ -72,6 +72,7 @@ def get_configs():
             "max_requests_per_batch": 4,
             "max_seq_length": 256,
             "max_tokens_per_batch": 64,
+            "num_kv_cache_slots": -1,
             "max_length": 128,
         }
         # Merge dictionaries
@@ -104,9 +105,10 @@ def main():
     )
     llm.compile(
         generation_config,
-        max_requests_per_batch = configs_dict.get("max_requests_per_batch", 4),
-        max_seq_length = configs_dict.get("max_seq_length", 256),
-        max_tokens_per_batch = configs_dict.get("max_tokens_per_batch", 64),
+        max_requests_per_batch=configs_dict.get("max_requests_per_batch", 4),
+        max_seq_length=configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch=configs_dict.get("max_tokens_per_batch", 64),
+        num_kv_cache_slots=configs_dict.get("num_kv_cache_slots", -1),
     )
 
     llm.start_server()
