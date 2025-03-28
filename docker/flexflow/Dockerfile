@@ -1,5 +1,6 @@
 ARG FF_GPU_BACKEND=cuda
 ARG gpu_backend_version=12.1
+ARG SM_ARCH=86
 FROM flexflow-environment-$FF_GPU_BACKEND$gpu_backend_version:latest
 
 LABEL org.opencontainers.image.source=https://github.com/flexflow/flexflow-serve
@@ -26,6 +27,7 @@ RUN for pair in $BUILD_CONFIGS; do \
 # Build and install C++ and Python versions of flexflow-serve
 RUN mkdir -p build && cd build && \
     eval "$BUILD_CONFIGS" ../config/config.linux && \
+    cmake -DCMAKE_CUDA_ARCHITECTURES=$SM_ARCH .. && \
     make -j $N_BUILD_CORES install && \
     ldconfig
 
