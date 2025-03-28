@@ -15,6 +15,7 @@ dependencies:
     - torch
     - torchaudio
     - torchvision
+    - flash-attn
     - regex
     - transformers>=4.47.1
     - sentencepiece
