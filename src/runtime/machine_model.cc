@@ -84,8 +84,8 @@ SimpleMachineModel::SimpleMachineModel(int num_nodes,
   // Create inter GPU comm devices (NVLinks)
   for (int i = 0; i < num_gpus; i++) {
     for (int j = 0; j < num_gpus; j++) {
-      Device *src = id_to_gpu[i];
-      Device *dst = id_to_gpu[j];
+      FFDevice *src = id_to_gpu[i];
+      FFDevice *dst = id_to_gpu[j];
       if (src->node_id == dst->node_id && src != dst) {
         int device_id = i * num_gpus + j;
         std::string nvlink_name = "NVLINK " + std::to_string(device_id);
@@ -995,8 +995,8 @@ NetworkedMachineModel::NetworkedMachineModel(int num_nodes,
   // Create inter GPU comm devices (NVLinks)
   for (int i = 0; i < num_gpus; i++) {
     for (int j = 0; j < num_gpus; j++) {
-      Device *src = id_to_gpu[i];
-      Device *dst = id_to_gpu[j];
+      FFDevice *src = id_to_gpu[i];
+      FFDevice *dst = id_to_gpu[j];
       if (src->node_id == dst->node_id && src != dst) {
         int device_id = i * num_gpus + j;
         std::string nvlink_name = "NVLINK " + std::to_string(device_id);

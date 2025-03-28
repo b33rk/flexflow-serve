@@ -1,0 +1,34 @@
+# Memo for peft debug steps
+
+#export libtorch as env var (add to docker build later):
+export LD_LIBRARY_PATH=/opt/conda/lib/python3.12/site-packages/torch/lib:$LD_LIBRARY_PATH
+
+#before running the tests, run:
+source ./build/set_python_envs.sh
+
+# perform peft test:
+./tests/peft_test.sh
+
+# build debug:
+export BUILD_TYPE=Debug
+
+# build:
+../config/config.linux
+make -j
+
+# install build
+make -j install
+
+# Steps to debug:
+# 1. install gdb-python3
+# apt-get update && apt-get install -y python3-dbg
+# 2. do not do env setup before this, run in gdb and set env in gdb:
+gdb -ex run --args ./build/inference/peft/peft -ll:gpu 1 -ll:cpu 4 -ll:util 4 -tensor-parallelism-degree 1 -ll:fsize 8192 -ll:zsize 12000 --max-requests-per-batch 1 --max-sequence-length 128 --max-tokens-per-batch 128 -llm-model JackFram/llama-160m -finetuning-dataset ./inference/prompt/peft_dataset.json -peft-model goliaro/llama-160m-lora -enable-peft  --inference-debugging
+# --use-full-precision: ignore this case for now
+# 3.in gdb, export all in /build/set_python_envs.sh
+set environment LD_LIBRARY_PATH=/root/flexflow-serve/build:/root/flexflow-serve/build/deps/legion/lib:$(dirname $(/root/flexflow-serve/python/flexflow/findpylib.py)):/opt/conda/lib/python3.12/site-packages/torch/lib:/opt/conda/lib/python3.12/site-packages:$LD_LIBRARY_PATH
+# 4. and then run
+run
+
+# single C++ tests:
+./build/inference/peft/peft -ll:gpu 2 -ll:cpu 4 -ll:util 4 -tensor-parallelism-degree 2 -ll:fsize 8192 -ll:zsize 12000 --max-requests-per-batch 1 --max-sequence-length 128 --max-tokens-per-batch 128 -llm-model JackFram/llama-160m -finetuning-dataset ./inference/prompt/peft_dataset.json -peft-model goliaro/llama-160m-lora -enable-peft  --inference-debugging

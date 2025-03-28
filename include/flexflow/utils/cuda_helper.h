@@ -8,6 +8,7 @@
 #ifdef FF_USE_NCCL
 #include <nccl.h>
 #endif
+#include <torch/torch.h>
 
 #define FatalError(s)                                                          \
   do {                                                                         \
@@ -151,6 +152,16 @@ void print_beam_tensor(T const *ptr,
                        int skip,
                        int channel,
                        char const *prefix);
+
+template <typename DT>
+torch::Tensor createTorchTensorFromCuda(void *cudaData,
+                                        std::vector<int64_t> const &dims);
+template <typename DT>
+torch::Tensor createTorchTensorFromCuda(void const *cudaData,
+                                        std::vector<int64_t> const &dims);
+
+torch::Tensor
+    torch_tensor_from_accessor(FlexFlow::GenericTensorAccessorR const &tensor);
 
 template <typename T>
 void save_tensor(T const *ptr, size_t num_elements, char const *file_name);

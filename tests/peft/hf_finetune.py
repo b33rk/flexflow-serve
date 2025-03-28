@@ -61,6 +61,12 @@ def main():
     dname = os.path.dirname(abspath)
     os.chdir(dname)
 
+    # Set default tensor type depending on argument indicating the float type to use
+    if not args.use_full_precision:
+        torch.set_default_dtype(torch.float16)
+    else:
+        torch.set_default_dtype(torch.float32)
+
     # Get PEFT config, model, tokenizer, and optimizer type
     peft_config = build_peft_config(args, finetuning=True)
     tokenizer = get_peft_tokenizer(args, peft_config)
@@ -70,7 +76,8 @@ def main():
     # Print model with PEFT
     print(model)
     for name, params in model.named_parameters():
-        print(name)
+        print(name, params.shape, params.dtype)
+
     print_trainable_parameters(model)
 
     # Add hooks to save PEFT tensors, save any weights of interest before finetuning
@@ -98,7 +105,7 @@ def main():
             warmup_steps=0,
             max_steps=args.max_steps,
             learning_rate=args.learning_rate,
-            fp16=True if not args.use_full_precision else False,
+            # fp16=True if not args.use_full_precision else False,
             logging_steps=1,
             report_to="none",
             output_dir=os.path.join(

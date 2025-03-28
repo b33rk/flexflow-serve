@@ -431,6 +431,7 @@ void LoraLinear::inference_task(Task const *task,
   // int num_peft_tokens = bc->num_finetuning_fwd_tokens();
   inference_kernel_wrapper(m, bc, input, output);
 
+#ifdef FF_USE_CUDA
   if (m->inference_debugging) {
     assert(task->index_point.get_dim() == 1);
     int shard_id = task->index_point.point_data[0];
@@ -465,16 +466,9 @@ void LoraLinear::inference_task(Task const *task,
       bc->save_to_file(dst_filepath.string() + ".batch_config");
     }
 
-    std::string filename = dst_filepath.string() + ".input_0";
-    if (input.data_type == DT_FLOAT) {
-      save_tensor(
-          input.get_float_ptr(), input.domain.get_volume(), filename.c_str());
-    } else if (input.data_type == DT_HALF) {
-      save_tensor(
-          input.get_half_ptr(), input.domain.get_volume(), filename.c_str());
-    } else {
-      assert(false);
-    }
+    std::string filename = dst_filepath.string() + ".input_0.pt";
+    at::Tensor input_tensor = torch_tensor_from_accessor(input);
+    torch::save(input_tensor, filename.c_str());
 
     for (int i = 0; i < bc->max_requests_per_batch(); i++) {
       if (bc->request_completed[i] ||
@@ -493,23 +487,23 @@ void LoraLinear::inference_task(Task const *task,
       fs::path dst_filepath_weights =
           get_dst_folder("weights", m->decoding_step, shard_id) / layername;
       std::string filenameA =
-          dst_filepath_weights.string() + ".weight_A.original";
+          dst_filepath_weights.string() + ".weight_A.original.pt";
       std::string filenameB =
-          dst_filepath_weights.string() + ".weight_B.original";
+          dst_filepath_weights.string() + ".weight_B.original.pt";
       if (m->input_type[0] == DT_FLOAT) {
-        save_tensor((float *)weight.w0_ptr,
-                    lora_config.rank * in_dim,
-                    filenameA.c_str());
-        save_tensor((float *)weight.w1_ptr,
-                    lora_config.rank * out_dim,
-                    filenameB.c_str());
+        at::Tensor tensor1 = createTorchTensorFromCuda<float>(
+            weight.w0_ptr, {lora_config.rank, in_dim});
+        torch::save(tensor1, filenameA.c_str());
+        at::Tensor tensor2 = createTorchTensorFromCuda<float>(
+            weight.w0_ptr, {lora_config.rank, out_dim});
+        torch::save(tensor2, filenameB.c_str());
       } else if (m->input_type[0] == DT_HALF) {
-        save_tensor((half *)weight.w0_ptr,
-                    lora_config.rank * in_dim,
-                    filenameA.c_str());
-        save_tensor((half *)weight.w1_ptr,
-                    lora_config.rank * out_dim,
-                    filenameB.c_str());
+        at::Tensor tensor1 = createTorchTensorFromCuda<half>(
+            weight.w0_ptr, {lora_config.rank, in_dim});
+        torch::save(tensor1, filenameA.c_str());
+        at::Tensor tensor2 = createTorchTensorFromCuda<half>(
+            weight.w0_ptr, {lora_config.rank, out_dim});
+        torch::save(tensor2, filenameB.c_str());
       } else {
         assert(false && "Data type not supported");
       }
@@ -517,34 +511,28 @@ void LoraLinear::inference_task(Task const *task,
       if (bc->requestsInfo[i].finetuning_request) {
         int num_tokens = input.domain.get_volume() / in_dim;
         // input activation (intermediate)
-        filename = dst_filepath.string() + ".low_rank_activation";
+        filename = dst_filepath.string() + ".low_rank_activation.pt";
         if (output.data_type == DT_FLOAT) {
-          save_tensor((float *)weight.low_rank_activation,
-                      lora_config.rank * num_tokens,
-                      filename.c_str());
+          at::Tensor tensor = createTorchTensorFromCuda<float>(
+              weight.low_rank_activation, {lora_config.rank, num_tokens});
+          torch::save(tensor, filename.c_str());
         } else if (output.data_type == DT_HALF) {
-          save_tensor((half *)weight.low_rank_activation,
-                      lora_config.rank * num_tokens,
-                      filename.c_str());
+          at::Tensor tensor = createTorchTensorFromCuda<half>(
+              weight.low_rank_activation, {lora_config.rank, num_tokens});
+          torch::save(tensor, filename.c_str());
         } else {
           assert(false);
         }
       }
     }
 
-    filename = dst_filepath.string() + ".output_0";
-    if (output.data_type == DT_FLOAT) {
-      save_tensor(
-          output.get_float_ptr(), output.domain.get_volume(), filename.c_str());
-    } else if (output.data_type == DT_HALF) {
-      save_tensor(
-          output.get_half_ptr(), output.domain.get_volume(), filename.c_str());
-    } else {
-      assert(false);
-    }
+    filename = dst_filepath.string() + ".output_0.pt";
+    at::Tensor tensor = torch_tensor_from_accessor(output);
+    torch::save(tensor, filename.c_str());
 
     m->decoding_step++;
   }
+#endif
 }
 
 FutureMap LoraLinear::peft_bwd(FFModel const &ff,
@@ -598,6 +586,7 @@ void lora_inference_debugging(LoraLinearMeta *m,
                               GenericTensorAccessorW input_grad,
                               GenericTensorAccessorR output_grad,
                               int shard_id) {
+#ifdef FF_USE_CUDA
   int in_dim = input_grad.domain.hi()[0] - input_grad.domain.lo()[0] + 1;
   int out_dim = output_grad.domain.hi()[0] - output_grad.domain.lo()[0] + 1;
   // get layer name
@@ -648,77 +637,61 @@ void lora_inference_debugging(LoraLinearMeta *m,
   LoraLinearWeight weight = m->peft_memory_manager->get_peft(
       bc->requestsInfo[i].peft_model_id, lora_config);
   std::string filename_weight_A =
-      dst_filepath_weights.string() + ".weight_A.finetuned";
+      dst_filepath_weights.string() + ".weight_A.finetuned.pt";
   std::string filename_weight_B =
-      dst_filepath_weights.string() + ".weight_B.finetuned";
+      dst_filepath_weights.string() + ".weight_B.finetuned.pt";
   std::string filename_grad_A =
-      dst_filepath_weights.string() + ".weight_A.gradient";
+      dst_filepath_weights.string() + ".weight_A.gradient.pt";
   std::string filename_grad_B =
-      dst_filepath_weights.string() + ".weight_B.gradient";
+      dst_filepath_weights.string() + ".weight_B.gradient.pt";
   if (m->input_type[0] == DT_FLOAT) {
     // weight A
-    save_tensor((float *)weight.w0_ptr,
-                lora_config.rank * in_dim,
-                filename_weight_A.c_str());
+    at::Tensor tensorA = createTorchTensorFromCuda<float>(
+        weight.w0_ptr, {in_dim, lora_config.rank});
+    torch::save(tensorA, filename_weight_A.c_str());
     // weight grad A
-    save_tensor((float *)weight.w0_grad_ptr,
-                lora_config.rank * in_dim,
-                filename_grad_A.c_str());
+    at::Tensor tensorGradA = createTorchTensorFromCuda<float>(
+        weight.w0_grad_ptr, {in_dim, lora_config.rank});
+    torch::save(tensorGradA, filename_grad_A.c_str());
     // weight B
-    save_tensor((float *)weight.w1_ptr,
-                lora_config.rank * out_dim,
-                filename_weight_B.c_str());
+    at::Tensor tensorB = createTorchTensorFromCuda<float>(
+        weight.w1_ptr, {lora_config.rank, out_dim});
+    torch::save(tensorB, filename_weight_B.c_str());
     // weight grad B
-    save_tensor((float *)weight.w1_grad_ptr,
-                lora_config.rank * out_dim,
-                filename_grad_B.c_str());
+    at::Tensor tensorGradB = createTorchTensorFromCuda<float>(
+        weight.w1_grad_ptr, {lora_config.rank, out_dim});
+    torch::save(tensorGradB, filename_grad_B.c_str());
   } else if (m->input_type[0] == DT_HALF) {
     // weight A
-    save_tensor((half *)weight.w0_ptr,
-                lora_config.rank * in_dim,
-                filename_weight_A.c_str());
+    at::Tensor tensorA = createTorchTensorFromCuda<half>(
+        weight.w0_ptr, {in_dim, lora_config.rank});
+    torch::save(tensorA, filename_weight_A.c_str());
     // weight grad A
-    save_tensor((half *)weight.w0_grad_ptr,
-                lora_config.rank * in_dim,
-                filename_grad_A.c_str());
+    at::Tensor tensorGradA = createTorchTensorFromCuda<half>(
+        weight.w0_grad_ptr, {in_dim, lora_config.rank});
+    torch::save(tensorGradA, filename_grad_A.c_str());
     // weight B
-    save_tensor((half *)weight.w1_ptr,
-                lora_config.rank * out_dim,
-                filename_weight_B.c_str());
+    at::Tensor tensorB = createTorchTensorFromCuda<half>(
+        weight.w1_ptr, {lora_config.rank, out_dim});
+    torch::save(tensorB, filename_weight_B.c_str());
     // weight grad B
-    save_tensor((half *)weight.w1_grad_ptr,
-                lora_config.rank * out_dim,
-                filename_grad_B.c_str());
+    at::Tensor tensorGradB = createTorchTensorFromCuda<half>(
+        weight.w1_grad_ptr, {lora_config.rank, out_dim});
+    torch::save(tensorGradB, filename_grad_B.c_str());
   } else {
     assert(false && "Data type not supported");
   }
 
-  std::string filename = dst_filepath.string() + ".input_gradient_0";
-  if (input_grad.data_type == DT_FLOAT) {
-    save_tensor(input_grad.get_float_ptr(),
-                input_grad.domain.get_volume(),
-                filename.c_str());
-  } else if (input_grad.data_type == DT_HALF) {
-    save_tensor(input_grad.get_half_ptr(),
-                input_grad.domain.get_volume(),
-                filename.c_str());
-  } else {
-    assert(false);
-  }
+  std::string filename = dst_filepath.string() + ".input_gradient_0.pt";
+  at::Tensor input_grad_tensor = torch_tensor_from_accessor(input_grad);
+  torch::save(input_grad_tensor, filename.c_str());
 
-  filename = dst_filepath.string() + ".output_gradient_0";
-  if (output_grad.data_type == DT_FLOAT) {
-    save_tensor(output_grad.get_float_ptr(),
-                output_grad.domain.get_volume(),
-                filename.c_str());
-  } else if (output_grad.data_type == DT_HALF) {
-    save_tensor(output_grad.get_half_ptr(),
-                output_grad.domain.get_volume(),
-                filename.c_str());
-  } else {
-    assert(false);
-  }
+  filename = dst_filepath.string() + ".output_gradient_0.pt";
+  at::Tensor output_grad_tensor = torch_tensor_from_accessor(output_grad);
+  torch::save(output_grad_tensor, filename.c_str());
+
   m->bwd_step++;
+#endif
 }
 
 template <typename DT>

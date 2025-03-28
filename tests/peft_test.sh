@@ -9,6 +9,18 @@ cleanup() {
 # Cd into directory holding this script
 cd "${BASH_SOURCE[0]%/*}/.."
 
+MODEL_NAME=${MODEL_NAME:-"goliaro/llama-3.2-1b-lora"}
+BASE_MODEL_NAME=${BASE_MODEL_NAME:-"unsloth/Llama-3.2-1B-Instruct"}
+MEMORY_PER_GPU=${MEMORY_PER_GPU:-14000}
+ZCOPY_MEMORY=${ZCOPY_MEMORY:-40000}
+TP_DEGREE=${TP_DEGREE:-4}
+PP_DEGREE=${PP_DEGREE:-1}
+FF_CACHE_PATH=${FF_CACHE_PATH:-"~/.cache/flexflow"}
+FULL_PRECISION=${FULL_PRECISION:-false}
+FUSION=${FUSION:-false} # false because we save the debugging tensors in lora_linear.cc
+LEARNING_RATE=${LEARNING_RATE:-0.001}
+NUM_GPUS=$((TP_DEGREE * PP_DEGREE))
+
 # Token to access private huggingface models (e.g. LLAMA-2)
 HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-none}
 if [[ "$HUGGINGFACE_TOKEN" != "none" ]]; then
@@ -31,32 +43,35 @@ mkdir -p ./inference/output
 export LEGION_BACKTRACE=1
 
 # Download test model
-python ./inference/utils/download_peft_model.py goliaro/llama-160m-lora
+python ./inference/utils/download_peft_model.py "${MODEL_NAME}"
 
-# # Run PEFT in Huggingface to get ground truth tensors
-python ./tests/peft/hf_finetune.py --peft-model-id goliaro/llama-160m-lora --save-peft-tensors --use-full-precision -lr 0.001
+if [ "$FULL_PRECISION" = "true" ]; then full_precision_flag="--use-full-precision"; else full_precision_flag=""; fi
+if [ "$FUSION" = "true" ]; then fusion_flag="--fusion"; else fusion_flag=""; fi
+
+# Run PEFT in Huggingface to get ground truth tensors
+eval python ./tests/peft/hf_finetune.py --peft-model-id "${MODEL_NAME}" --save-peft-tensors "${full_precision_flag}" -lr "${LEARNING_RATE}"
 
 # Python test
 echo "Python test"
 json_config=$(cat <<-END
     {
-        "num_gpus": 4,
-        "memory_per_gpu": 14000,
-        "zero_copy_memory_per_node": 10000,
+        "num_gpus": ${NUM_GPUS},
+        "memory_per_gpu": ${MEMORY_PER_GPU},
+        "zero_copy_memory_per_node": ${ZCOPY_MEMORY},
         "num_cpus": 4,
         "legion_utility_processors": 4,
         "data_parallelism_degree": 1,
-        "tensor_parallelism_degree": 4,
-        "pipeline_parallelism_degree": 1,
+        "tensor_parallelism_degree": ${TP_DEGREE},
+        "pipeline_parallelism_degree": ${PP_DEGREE},
         "enable_peft": true,
         "inference_debugging": true,
-        "fusion": false,
+        "fusion": ${FUSION},
         "refresh_cache": false,
-        "base_model": "JackFram/llama-160m",
-        "inference_peft_model_id": "goliaro/llama-160m-lora",
-        "finetuning_peft_model_id": "goliaro/llama-160m-lora",
+        "base_model": "${BASE_MODEL_NAME}",
+        "inference_peft_model_id": "${MODEL_NAME}",
+        "finetuning_peft_model_id": "${MODEL_NAME}",
         "cache_path": "${FF_CACHE_PATH:-}",
-        "full_precision": true,
+        "full_precision": ${FULL_PRECISION},
         "prompt": "",
         "finetuning_dataset": "./inference/prompt/peft_dataset.json",
         "output_file": "",
@@ -70,25 +85,26 @@ END
 echo "$json_config" > /tmp/peft_config.json
 python ./inference/python/ff_peft.py -config-file /tmp/peft_config.json
 # Check alignment
-python ./tests/peft/peft_alignment_test.py -tp 4 -lr 0.001
+python ./tests/peft/peft_alignment_test.py -m "${MODEL_NAME}" -tp "${TP_DEGREE}" -lr "${LEARNING_RATE}"
 
 # C++ test
 echo "C++ test"
+
 ./build/inference/peft/peft \
-    -ll:gpu 4 -ll:cpu 4 -ll:util 4 \
-    -tensor-parallelism-degree 4 \
-    -ll:fsize 8192 -ll:zsize 12000 \
+    -ll:gpu ${NUM_GPUS} -ll:cpu 4 -ll:util 4 \
+    -tensor-parallelism-degree "${TP_DEGREE}" \
+    -ll:fsize "${MEMORY_PER_GPU}" -ll:zsize "${ZCOPY_MEMORY}" \
     --max-requests-per-batch 1 \
     --max-sequence-length 128 \
     --max-tokens-per-batch 128 \
-    -llm-model JackFram/llama-160m \
+    -llm-model "${BASE_MODEL_NAME}" \
     -finetuning-dataset ./inference/prompt/peft_dataset.json \
-    -peft-model goliaro/llama-160m-lora \
+    -peft-model "$MODEL_NAME" \
     -enable-peft \
-    --use-full-precision \
-    --inference-debugging
+    "${full_precision_flag}" "${fusion_flag}" --inference-debugging
+
 # Check alignment
-python ./tests/peft/peft_alignment_test.py -tp 4 -lr 0.001
+python ./tests/peft/peft_alignment_test.py -m "${MODEL_NAME}" -tp "${TP_DEGREE}" -lr "${LEARNING_RATE}"
 
 # Print succeess message
 echo ""

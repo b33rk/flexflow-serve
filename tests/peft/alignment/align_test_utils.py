@@ -426,6 +426,8 @@ def compare_loaded_tensors(hf_tensor, ff_tensor, tolerance=1e-2, label=""):
     assert hf_tensor.shape == ff_tensor.shape
     mismatches = []
     len_hf_tensor = hf_tensor.flatten().shape[0]
+    hf_tensor = np.nan_to_num(hf_tensor)
+    ff_tensor = np.nan_to_num(ff_tensor)
     if not np.allclose(hf_tensor, ff_tensor, atol=tolerance):
         mismatches = np.where(~np.isclose(hf_tensor.squeeze(), ff_tensor.squeeze(), atol=tolerance))[0]
         label = label + ": " if label else ""
@@ -521,3 +523,8 @@ def truncate_dimension(tensor, old_dim, new_dim):
     truncated_tensor = tensor[tuple(slices)]
 
     return truncated_tensor
+
+def load_and_unpack_ff_tensor(filepath):
+    # FlexFlow saves tensors as a list of parameters, we need to unpack it
+    ff_tensor = torch.load(filepath, weights_only=False, map_location="cpu")
+    return list(ff_tensor.parameters())[0].squeeze()

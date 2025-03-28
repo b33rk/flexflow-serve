@@ -94,6 +94,13 @@ if(CUDA_FOUND)
   message( STATUS "CUDA_GENCODE: ${CUDA_GENCODE}")
   message( STATUS "CMAKE_CUDA_COMPILER: ${CMAKE_CUDA_COMPILER}")
 
+  # set TORCH_CUDA_ARCH_LIST to the contents of FF_CUDA_ARCH, dividing each value by 10 (e.g. 80 -> 8.0)
+  string(REPLACE "," ";" CUDA_ARCH_LIST2 "${FF_CUDA_ARCH}")
+  foreach(CODE ${CUDA_ARCH_LIST2})
+    string(REGEX REPLACE "([0-9]+)([0-9]+)" "\\1.\\2" CODE "${CODE}")
+    list(APPEND TORCH_CUDA_ARCH_LIST ${CODE})
+  endforeach()
+
   list(APPEND FLEXFLOW_INCLUDE_DIRS
     ${CUDA_INCLUDE_DIRS})
 

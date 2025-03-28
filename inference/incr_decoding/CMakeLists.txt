@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 project(FlexFlow_IncrDecoding)
-set(project_target incr_decoding)
+set(project_target incr_decoding_unwrapped)
 
 
 set(CPU_SRC
@@ -34,5 +34,38 @@ target_include_directories(${project_target} PRIVATE ${FLEXFLOW_INCLUDE_DIRS} ${
 target_include_directories(${project_target} PRIVATE ${CMAKE_SOURCE_DIR}/inference)
 target_link_libraries(${project_target} -Wl,--whole-archive flexflow -Wl,--no-whole-archive ${FLEXFLOW_EXT_LIBRARIES})
 
+set(TARGET_PATH "${project_target}")
+
+# Configure the normal execution wrapper.
+# Here, LAUNCHER is simply "exec" so that it runs the executable normally.
+set(LAUNCHER "exec")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/../inference_wrapper.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/incr_decoding"
+  @ONLY
+)
+
+file(CHMOD "${CMAKE_CURRENT_BINARY_DIR}/incr_decoding"
+     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+     GROUP_READ GROUP_EXECUTE
+     WORLD_READ WORLD_EXECUTE
+)
+
+# Configure the debugging launcher wrapper.
+# Here, LAUNCHER is set to "gdb --args" so that it runs under gdb.
+set(LAUNCHER "gdb -ex run --args")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/../inference_wrapper.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/gdb_incr_decoding"
+  @ONLY
+)
+file(CHMOD "${CMAKE_CURRENT_BINARY_DIR}/gdb_incr_decoding"
+     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+     GROUP_READ GROUP_EXECUTE
+     WORLD_READ WORLD_EXECUTE
+)
+
 set(BIN_DEST "bin")
 install(TARGETS ${project_target} DESTINATION ${BIN_DEST})
+install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/incr_decoding" DESTINATION ${BIN_DEST})
+install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/gdb_incr_decoding" DESTINATION ${BIN_DEST})
