@@ -11,6 +11,10 @@ st.set_page_config(page_title="🚀💻 FlexLLM Server", layout="wide")
 CHAT_URL = "http://localhost:8080/chat/completions/"  # Adjust the port if necessary
 FINETUNE_URL = "http://localhost:8080/finetuning/"
 REGISTER_ADAPTER_URL = "http://localhost:8080/register_adapter/"
+GET_DATASET_CONFIGS_URL = "http://localhost:8080/get_dataset_configs/"
+GET_DATASET_SPLITS_URL = "http://localhost:8080/get_dataset_splits/"
+GET_DATASET_COLUMNS_URL = "http://localhost:8080/get_dataset_columns/"
+UPLOAD_PEFT_MODEL_URL = "http://localhost:8080/upload_peft_model/"
 
 # Initialize session state variables
 if 'added_adapters' not in st.session_state:
@@ -57,6 +61,8 @@ def generate_llama3_response(prompt_input):
             return result["response"]
     else:
         return f"{result['detail']}"
+
+finetune_result = None
 
 # Sidebar
 with st.sidebar:
@@ -116,7 +122,6 @@ with st.sidebar:
         st.header("🏋️‍♂️ LoRA Finetuning")
         
         # Hugging Face token input
-        # hf_token = st.text_input("Enter your Hugging Face token:", type="password")
         if 'hf_token' in st.session_state.keys():
             st.success('HF token already provided!', icon='✅')
             hf_token = st.session_state.hf_token
@@ -143,15 +148,78 @@ with st.sidebar:
                 dataset = json.load(uploaded_file)
                 st.success("Dataset uploaded successfully!")
         else:
+            if "selected_dataset" not in st.session_state:
+                st.session_state.selected_dataset = None
+                st.session_state.selected_config = None
+                st.session_state.selected_split = None
+
             dataset_name = st.text_input(
                 "Enter Hugging Face dataset name:",
                 help="The dataset name should follow the format 'username/dataset-name'"
             )
-            file_name = st.text_input(
-                "Enter the specific file name:",
-                help="The file name should include the exact JSON file to be used. E.g., xx.json"
-            )
-        
+
+            # Initialize placeholders with disabled state
+            config_placeholder = st.empty()
+            split_placeholder = st.empty()
+            column_placeholder = st.empty()
+            # Disable UI elements initially
+            config_select = config_placeholder.selectbox("Select config name:", ["..."], disabled=True)
+            split_select = split_placeholder.selectbox("Select dataset split:", ["..."], disabled=True)
+            column_select = column_placeholder.selectbox("Select column for finetuning:", ["..."], disabled=True)
+
+            if dataset_name and dataset_name != st.session_state.selected_dataset:
+                st.session_state.selected_dataset = dataset_name
+                # Get config names
+                response = requests.get(f"{GET_DATASET_CONFIGS_URL}?dataset_name={dataset_name}")
+                result = response.json()
+                st.session_state.selected_config = None # Reset selected_config
+                if response.status_code == 200: # Get config_names
+                    st.session_state.config_names = result["config_names"]
+                else:
+                    st.session_state.config_names = None
+                    config_select = config_placeholder.selectbox("Select config name:", ["Error"], disabled=True)
+                    st.error(f"{result['detail']}")
+            selected_config = []
+            if "config_names" in st.session_state and st.session_state["config_names"]:
+                selected_config = config_placeholder.selectbox("Select config name:", st.session_state.config_names, disabled=False)
+            
+            if dataset_name and selected_config != st.session_state.selected_config:
+                st.session_state.selected_config = selected_config
+                split_url = f"{GET_DATASET_SPLITS_URL}?dataset_name={dataset_name}"
+                if selected_config:  # Ensure config_name is added only if it's not None
+                    split_url += f"&config_name={selected_config}"
+                # Get splits
+                response = requests.get(split_url)
+                result = response.json()
+                st.session_state.selected_split = None 
+                if response.status_code == 200:
+                    st.session_state.splits = result["splits"]
+                else:
+                    st.session_state.splits = None
+                    split_select = split_placeholder.selectbox("Select dataset split:", ["Error"], disabled=True)
+                    st.error(f"{result['detail']}")
+            selected_split = []
+            if "splits" in st.session_state and st.session_state["splits"]:
+                selected_split = split_placeholder.selectbox("Select dataset split:", st.session_state.splits, disabled=False) if "splits" in st.session_state else None
+
+            if dataset_name and selected_split != st.session_state.selected_split:
+                st.session_state.selected_split = selected_split
+                columns_url = f"{GET_DATASET_COLUMNS_URL}?dataset_name={dataset_name}&split={selected_split}"
+                if selected_config:  # Add only if selected_config is not None
+                    columns_url += f"&config_name={selected_config}"
+                # Get available columns
+                response = requests.get(columns_url)
+                result = response.json()
+                if response.status_code == 200:
+                    st.session_state.columns = result["columns"]
+                else:
+                    st.session_state.columns = None
+                    column_select = column_placeholder.selectbox("Select column for finetuning:", ["Error"], disabled=True)
+                    st.error(f"Failed to get dataset columns: {result['detail']}")
+            selected_column = []
+            if "columns" in st.session_state and st.session_state["columns"]:
+                selected_column = column_placeholder.selectbox("Select column for finetuning:", st.session_state.columns, disabled=False) if "columns" in st.session_state else None
+
         # Finetuning parameters
         st.subheader("Finetuning parameters")
         lora_rank = st.number_input("LoRA rank", min_value=2, max_value=64, value=16, step=2)
@@ -162,16 +230,24 @@ with st.sidebar:
         momentum = st.number_input("Momentum", min_value=0.0, max_value=1.0, value=0.0, step=0.01)
         weight_decay = st.number_input("Weight decay", min_value=0.0, max_value=1.0, value=0.0, step=0.01)
         nesterov = st.checkbox("Nesterov")
-        max_steps = st.number_input("Max steps", min_value=1000, max_value=100000, value=10000, step=1000)
-        
+        max_training_epochs = st.number_input("Max training epochs", min_value=1, max_value=5000, value=10, step=50)
+
+        # Upload model information
+        st.subheader("Upload to Hugging Face")
+        upload_peft_model_id = st.text_input(
+            "Enter the HF Model ID to upload:",
+            help="Example: 'username/my-finetuned-model'"
+        )
+        private = st.checkbox("Upload as a private model")
+
         # Start finetuning button
         if st.button("Start Finetuning"):
             if not hf_token:
                 st.error("Please enter your Hugging Face token.")
             elif dataset_option == "Upload JSON" and uploaded_file is None:
                 st.error("Please upload a JSON dataset.")
-            elif dataset_option == "Hugging Face Dataset" and (not dataset_name or not file_name):
-                st.error("Please enter a Hugging Face dataset name and file name.")
+            elif dataset_option == "Hugging Face Dataset" and (not dataset_name or not selected_split or not selected_column):
+                st.error("Please enter all Hugging Face dataset information.")
             else:
                 # Prepare the request data
                 request_data = {
@@ -186,27 +262,45 @@ with st.sidebar:
                     "momentum": momentum,
                     "weight_decay": weight_decay,
                     "nesterov": nesterov,
-                    "max_steps": max_steps,
+                    "max_training_epochs": max_training_epochs,
                 }
                 
                 if dataset_option == "Upload JSON":
                     request_data["dataset"] = dataset
                 else:
                     request_data["dataset_name"] = dataset_name
-                    request_data["file_name"] = file_name
-                
+                    request_data["config_name"] = selected_config
+                    request_data["selected_split"] = selected_split
+                    request_data["selected_column"] = selected_column
+
                 print("---Front: here is request data----")
                 print(request_data)
                 # Send finetuning request to FastAPI server
                 with st.spinner("Finetuning in progress..."):
-                    response = requests.post(FINETUNE_URL, json=request_data)
+                    finetune_response = requests.post(FINETUNE_URL, json=request_data)
 
-                result = response.json()
-                if response.status_code == 200:
+                finetune_result = finetune_response.json()
+                if finetune_response.status_code == 200:
                     st.success("Finetuning completed successfully!")
+
+                    # Start uploading model to hf
+                    upload_request_data = {
+                        "token": hf_token,
+                        "peft_model_id": peft_model_name,
+                        "upload_peft_model_id": upload_peft_model_id,
+                        "private": private
+                    }
+
+                    with st.spinner("Uploading fine-tuned model to Hugging Face..."):
+                        upload_response = requests.post(UPLOAD_PEFT_MODEL_URL, json=upload_request_data)
+
+                    upload_result = upload_response.json()
+                    if upload_response.status_code == 200:
+                        st.success(f"{upload_peft_model_id} Model uploaded successfully to Hugging Face!")
+                    else:
+                        st.error(f"Upload failed: {upload_result.get('detail', 'Unknown error occurred.')}")
                 else:
-                    error_msg = result.get("detail", "Unknown error occurred.")
-                    st.error(f"Finetuning failed. {error_msg}")
+                    st.error(f"Finetuning failed: {finetune_result.get('detail', 'Unknown error occurred.')}")
 
 if page == "Chat":
     # Display or clear chat messages
@@ -234,4 +328,9 @@ if page == "Chat":
         message = {"role": "assistant", "content": full_response}
         st.session_state.messages.append(message)
 elif page == "Finetune":
-    st.write("Use the sidebar to configure and start finetuning.")
+    # Print out the number of entries
+    if finetune_result and finetune_result.get("total_entries") and finetune_result.get("remaining_entries"):
+        st.write(f"Dataset loaded: {finetune_result['total_entries']} entries found.")
+        st.write(f"{finetune_result['remaining_entries']} entries remaining after filtering with max sequence length.")
+    else:
+        st.write("Use the sidebar to configure and start finetuning.")
