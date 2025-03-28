@@ -44,6 +44,9 @@ jobs:
           environment-file: conda/flexflow.yml
           auto-activate-base: false
 
+      - name: Install flash attention
+        run: pip install flash-attn
+      
       - name: Build and Install FlexFlow
         run: |
           export FF_CUDA_ARCH=80

@@ -54,6 +54,9 @@ jobs:
           auto-activate-base: false
           auto-update-conda: false
           
+      - name: Install flash attention
+        run: pip install flash-attn
+      
       - name: Build FlexFlow
         run: |
           mkdir build
@@ -117,6 +120,9 @@ jobs:
           auto-activate-base: false
           auto-update-conda: false
 
+      - name: Install flash attention
+        run: pip install flash-attn
+      
       - name: Build FlexFlow
         run: |
           mkdir build
