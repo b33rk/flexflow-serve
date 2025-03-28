@@ -448,5 +448,5 @@ inline std::tuple<int, int> get_compute_capability(int device) {
       &capability_minor, cudaDevAttrComputeCapabilityMinor, device));
   return {capability_major, capability_minor};
 }
-}; // namespace flash
+};     // namespace flash
 #endif // FF_USE_CUDA
