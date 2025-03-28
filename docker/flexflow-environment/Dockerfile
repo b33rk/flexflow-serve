@@ -116,7 +116,11 @@ RUN pip3 install tensorflow notebook
 RUN pip3 install scipy bitsandbytes datasets accelerate loralib triton peft pytest
 RUN pip3 install streamlit
 # flash-attn
-RUN pip3 install flash-attn
+RUN if [ "$FF_GPU_BACKEND" = "cuda" ]; then \
+        pip3 install flash-attn; \
+    else \
+        echo "Skipping flash-attn installation for FF_GPU_BACKEND=$FF_GPU_BACKEND"; \
+    fi
 # tf-keras
 RUN pip3 install tf-keras
 
