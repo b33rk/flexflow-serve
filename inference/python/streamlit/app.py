@@ -2,7 +2,10 @@ import streamlit as st
 import requests
 import os, json
 from huggingface_hub import model_info
-
+import threading
+import time
+import pandas as pd
+from multiprocessing import Process, Pipe
 
 # App title
 st.set_page_config(page_title="🚀💻 FlexLLM Server", layout="wide")
@@ -15,6 +18,7 @@ GET_DATASET_CONFIGS_URL = "http://localhost:8080/get_dataset_configs/"
 GET_DATASET_SPLITS_URL = "http://localhost:8080/get_dataset_splits/"
 GET_DATASET_COLUMNS_URL = "http://localhost:8080/get_dataset_columns/"
 UPLOAD_PEFT_MODEL_URL = "http://localhost:8080/upload_peft_model/"
+PROGRESS_URL = "http://localhost:8080/training_progress/"
 
 # Initialize session state variables
 if 'added_adapters' not in st.session_state:
@@ -275,12 +279,59 @@ with st.sidebar:
 
                 print("---Front: here is request data----")
                 print(request_data)
+
+                from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+
                 # Send finetuning request to FastAPI server
                 with st.spinner("Finetuning in progress..."):
-                    finetune_response = requests.post(FINETUNE_URL, json=request_data)
+                    # Send the finetuning request in a separate thread                    
+                    def run_finetune_request():
+                        finetune_response = requests.post(FINETUNE_URL, json=request_data)
+                        st.session_state.finetune_response = finetune_response
+                        st.session_state.finetune_done = True
 
-                finetune_result = finetune_response.json()
-                if finetune_response.status_code == 200:
+                    t = threading.Thread(target=run_finetune_request)
+                    add_script_run_ctx(t, get_script_run_ctx())
+                    t.start()
+
+                    # 2. Meanwhile: poll training progress and update UI
+                    progress_placeholder = st.empty()
+                    chart_placeholder = st.empty()
+                    status_placeholder = st.empty()
+
+                    while True:
+                        try:
+                            response = requests.get(PROGRESS_URL)
+                            st.session_state.progress = response.json()
+                        except:
+                            st.warning("Failed to get training progress.")
+                            continue
+
+                        current_epoch = st.session_state.progress["current_epoch"]
+                        max_epochs = st.session_state.progress.get("max_epochs", 1)
+                        loss_history = st.session_state.progress.get("loss_history", [])
+
+                        # Progress bar
+                        progress_pct = current_epoch / max_epochs if max_epochs else 0
+                        progress_placeholder.progress(progress_pct, text=f"Epoch {current_epoch}/{max_epochs}")
+
+                        # Live loss chart
+                        if loss_history:
+                            loss_df = pd.DataFrame({"Loss": loss_history})
+                            loss_df.index += 1  # Epochs start from 1
+                            chart_placeholder.line_chart(loss_df)
+                            status_placeholder.info(f"Latest Loss: {loss_history[-1]:.4f}")
+
+                        if st.session_state.progress["status"] == "done":
+                            break
+                        
+                        time.sleep(2)  # update every 2 seconds
+
+                    while not "finetune_response" in st.session_state:
+                        time.sleep(2)
+
+                finetune_result = st.session_state.finetune_response.json()
+                if st.session_state.finetune_response.status_code == 200:
                     st.success("Finetuning completed successfully!")
 
                     # Start uploading model to hf
@@ -328,9 +379,36 @@ if page == "Chat":
         message = {"role": "assistant", "content": full_response}
         st.session_state.messages.append(message)
 elif page == "Finetune":
+    st.subheader("📈 Training Progress")
+    # progress_placeholder = st.empty()
+    # chart_placeholder = st.empty()
+    # status_placeholder = st.empty()
+
+    # Display current progress if available
+    # if "progress" in st.session_state:
+    #     progress = st.session_state.progress
+
+    #     current_epoch = progress.get("current_epoch", 0)
+    #     max_epochs = progress.get("max_epochs", 1)
+    #     loss_history = progress.get("loss_history", [])
+
+    #     # Progress bar
+    #     progress_pct = current_epoch / max_epochs if max_epochs else 0
+    #     progress_placeholder.progress(progress_pct, text=f"Epoch {current_epoch}/{max_epochs}")
+
+    #     # Live loss chart
+    #     if loss_history:
+    #         loss_df = pd.DataFrame({"Loss": loss_history})
+    #         loss_df.index += 1  # Epochs start from 1
+    #         chart_placeholder.line_chart(loss_df)
+    #         status_placeholder.info(f"Latest Loss: {loss_history[-1]:.4f}")
+
+    #     if progress.get("status") == "done":
+    #         st.success("🎉 Finetuning complete!")
+
     # Print out the number of entries
     if finetune_result and finetune_result.get("total_entries") and finetune_result.get("remaining_entries"):
         st.write(f"Dataset loaded: {finetune_result['total_entries']} entries found.")
         st.write(f"{finetune_result['remaining_entries']} entries remaining after filtering with max sequence length.")
-    else:
+    elif not "progress" in st.session_state:
         st.write("Use the sidebar to configure and start finetuning.")

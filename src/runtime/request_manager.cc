@@ -1591,10 +1591,22 @@ void RequestManager::process_finetuning_req_bwd_progress(
   if (request.peft_finetuning_info.completed_training_steps %
           ((int)request.dataset.size()) ==
       0) {
-    log_req_mgr.print("Completed finetuning epoch %i/%i",
-                      request.peft_finetuning_info.completed_training_steps /
-                          ((int)request.dataset.size()),
-                      request.peft_finetuning_info.max_training_epochs);
+    int curr_epoch = request.peft_finetuning_info.completed_training_steps / ((int)request.dataset.size());
+    int total_epochs = request.peft_finetuning_info.max_training_epochs;
+    float curr_loss = request.peft_finetuning_info.finetuning_losses.back();
+    // Format the log line
+    std::ostringstream log_stream;
+    log_stream << "Completed finetuning epoch " << curr_epoch
+               << "/" << total_epochs
+               << ", Loss: " << std::fixed << std::setprecision(4) << curr_loss;
+    std::string log_line = log_stream.str();
+    log_req_mgr.print("%s", log_line.c_str());
+    // Append to file
+    std::ofstream log_file(request.peft_finetuning_info.log_filepath, std::ios::app);
+    if (log_file.is_open()) {
+        log_file << log_line << "\n";
+        log_file.close();
+    }
   }
   if (request.peft_finetuning_info.completed_training_steps == tot_steps ||
       inference_finished) {

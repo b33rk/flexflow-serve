@@ -23,7 +23,7 @@ Running Instructions:
 """
 
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 import flexflow.serve as ff
 from flexflow.core import *
@@ -37,7 +37,6 @@ from typing import Optional, List, Dict
 import time
 from huggingface_hub import hf_hub_download, HfFolder
 from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset
-import time
 
 # Initialize FastAPI application
 app = FastAPI()
@@ -306,122 +305,179 @@ async def get_dataset_columns(dataset_name: str, split: str, config_name: Option
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching dataset columns: {str(e)}")
 
+import re, threading, io, sys, time
+from fastapi.responses import JSONResponse
+
+training_progress = {
+    "current_epoch": 0,
+    "max_epochs": 0,
+    "loss_history": [],
+    "status": "idle",
+}
+
+from fastapi.concurrency import run_in_threadpool
+seen_lines = set()
+
+@app.get("/training_progress/")
+async def get_training_progress():
+    cache_folder = os.path.expanduser(llm.cache_path)
+    log_file_path = os.path.join(cache_folder, "logs", "finetune_log.log")
+
+    pattern = r"Completed finetuning epoch (\d+)/(\d+), Loss: ([0-9.]+)"
+    try:
+        with open(log_file_path, "r") as f:
+            log_data = f.readlines()
+    except FileNotFoundError:
+        return JSONResponse(content={"error": "Log file not found"}, status_code=404)
+
+    for line in log_data:
+        if line in seen_lines:
+            continue
+        seen_lines.add(line)
+
+        match = re.search(pattern, line)
+        if match:
+            epoch, max_epoch, loss = match.groups()
+            training_progress["current_epoch"] = int(epoch)
+            training_progress["max_epochs"] = int(max_epoch)
+            training_progress["loss_history"].append(float(loss))
+
+    if training_progress["current_epoch"] >= training_progress["max_epochs"]:
+        training_progress["status"] = "done"
+
+    return JSONResponse(content=training_progress)
+
+
 # API endpoint for finetuning request
 @app.post("/finetuning/")
 async def finetune(request: FinetuneRequest):
     """
     Endpoint to start LoRA finetuning based on the provided parameters.
     """
-    try:
-        if llm is None:
-            raise HTTPException(status_code=503, detail="LLM model is not initialized.")
+    # try:
+    if llm is None:
+        raise HTTPException(status_code=503, detail="LLM model is not initialized.")
 
-        print("received request:", request)
+    print("received request:", request)
 
-        llm.download_peft_adapter_if_needed(request.peft_model_id)
+    llm.download_peft_adapter_if_needed(request.peft_model_id)
 
-        if request.optimizer_type not in OPTIMIZER_TYPE_MAP:
-            raise ValueError(f"Unsupported optimizer type: {request.optimizer_type}")
+    if request.optimizer_type not in OPTIMIZER_TYPE_MAP:
+        raise ValueError(f"Unsupported optimizer type: {request.optimizer_type}")
 
-        optimizer_type = OPTIMIZER_TYPE_MAP[request.optimizer_type]
+    optimizer_type = OPTIMIZER_TYPE_MAP[request.optimizer_type]
 
-        # Prepare LoRA configuration for finetuning
-        lora_finetuning_config = ff.LoraLinearConfig(
-            llm.cache_path,
-            request.peft_model_id.lower(),
-            trainable=True,
-            init_lora_weights=True,
-            base_model_name_or_path=llm.model_name,
-            optimizer_type=optimizer_type,
-            target_modules=request.target_modules,
-            optimizer_kwargs={
-                "learning_rate": request.learning_rate,
-                "momentum": request.momentum,
-                "weight_decay": request.weight_decay,
-                "nesterov": request.nesterov,
-            },
-        )
+    # Prepare LoRA configuration for finetuning
+    lora_finetuning_config = ff.LoraLinearConfig(
+        llm.cache_path,
+        request.peft_model_id.lower(),
+        trainable=True,
+        init_lora_weights=True,
+        base_model_name_or_path=llm.model_name,
+        optimizer_type=optimizer_type,
+        target_modules=request.target_modules,
+        optimizer_kwargs={
+            "learning_rate": request.learning_rate,
+            "momentum": request.momentum,
+            "weight_decay": request.weight_decay,
+            "nesterov": request.nesterov,
+        },
+    )
 
-        llm.register_peft_adapter(lora_finetuning_config)
+    llm.register_peft_adapter(lora_finetuning_config)
 
-        cache_folder = os.path.expanduser(llm.cache_path)
-        # Load the dataset
-        file_path = None
-        total_entries = None
-        remaining_entries = None
-        if request.dataset_option == "Upload JSON":
-            dataset_dir = os.path.join(cache_folder, "datasets", "uploaded")
-            os.makedirs(dataset_dir, exist_ok=True)
+    cache_folder = os.path.expanduser(llm.cache_path)
+    # Load the dataset
+    file_path = None
+    total_entries = None
+    remaining_entries = None
+    if request.dataset_option == "Upload JSON":
+        dataset_dir = os.path.join(cache_folder, "datasets", "uploaded")
+        os.makedirs(dataset_dir, exist_ok=True)
 
-            file_path = os.path.join(dataset_dir, "dataset.json")
-            with open(file_path, "w") as f:
-                json.dump(request.dataset, f)
-        elif request.dataset_option == "Hugging Face Dataset":
-            dataset_dir = os.path.join(cache_folder, "datasets", "huggingface")
-            os.makedirs(dataset_dir, exist_ok=True)
+        file_path = os.path.join(dataset_dir, "dataset.json")
+        with open(file_path, "w") as f:
+            json.dump(request.dataset, f)
+    elif request.dataset_option == "Hugging Face Dataset":
+        dataset_dir = os.path.join(cache_folder, "datasets", "huggingface")
+        os.makedirs(dataset_dir, exist_ok=True)
 
-            json_subdir = os.path.join(dataset_dir, request.dataset_name)
-            os.makedirs(json_subdir, exist_ok=True)
-            
-            from transformers import AutoTokenizer
-            # Load dataset from Hugging Face
-            dataset_info = f"{request.dataset_name}/{request.config_name}/{request.selected_split}" \
-                if request.config_name else f"{request.dataset_name}/{request.selected_split}"
-            json_filename = f"{dataset_info.replace('/', '_')}.json"
+        json_subdir = os.path.join(dataset_dir, request.dataset_name)
+        os.makedirs(json_subdir, exist_ok=True)
+        
+        from transformers import AutoTokenizer
+        # Load dataset from Hugging Face
+        dataset_info = f"{request.dataset_name}/{request.config_name}/{request.selected_split}" \
+            if request.config_name else f"{request.dataset_name}/{request.selected_split}"
+        json_filename = f"{dataset_info.replace('/', '_')}.json"
 
-            print(f"Loading dataset: {dataset_info}")
-            dataset = load_dataset(request.dataset_name, data_dir=request.config_name, split=request.selected_split)
+        print(f"Loading dataset: {dataset_info}")
+        dataset = load_dataset(request.dataset_name, data_dir=request.config_name, split=request.selected_split)
 
-            total_entries = len(dataset)
-            print(f"Found {total_entries} entries in the dataset.")
+        total_entries = len(dataset)
+        print(f"Found {total_entries} entries in the dataset.")
 
-            max_length = 10000 # Change if needed
+        max_length = 10000 # Change if needed
 
-            # Load a pre-trained tokenizer.
-            tokenizer = AutoTokenizer.from_pretrained(request.peft_model_id)
+        # Load a pre-trained tokenizer.
+        tokenizer = AutoTokenizer.from_pretrained(request.peft_model_id)
 
-            # Function to tokenize text and add a token count.
-            def tokenize_count(example):
-                # Tokenize the selected field
-                tokens = tokenizer.tokenize(example[request.selected_column])
-                # Save the number of tokens to a new field
-                example["token_count"] = len(tokens)
-                return example
+        # Function to tokenize text and add a token count.
+        def tokenize_count(example):
+            # Tokenize the selected field
+            tokens = tokenizer.tokenize(example[request.selected_column])
+            # Save the number of tokens to a new field
+            example["token_count"] = len(tokens)
+            return example
 
-            # Apply the function to each example in the dataset.
-            tokenized_dataset = dataset.map(tokenize_count)
-            # Filter entries with token_count less than max_length.
-            filtered_dataset = tokenized_dataset.filter(lambda example: example["token_count"] < min(max_length, llm.max_seq_length))
-            # Extract the original selected field from the filtered examples.
-            text_list = filtered_dataset[request.selected_column]
+        # Apply the function to each example in the dataset.
+        tokenized_dataset = dataset.map(tokenize_count)
+        # Filter entries with token_count less than max_length.
+        filtered_dataset = tokenized_dataset.filter(lambda example: example["token_count"] < min(max_length, llm.max_seq_length))
+        # Extract the original selected field from the filtered examples.
+        text_list = filtered_dataset[request.selected_column]
 
-            remaining_entries = len(filtered_dataset)
-            print(f"Filtering out entries longer than {llm.max_seq_length} tokens...")
-            print(f"{remaining_entries} entries remaining after filtering.")
+        remaining_entries = len(filtered_dataset)
+        print(f"Filtering out entries longer than {llm.max_seq_length} tokens...")
+        print(f"{remaining_entries} entries remaining after filtering.")
 
-            # Save the text list to a JSON file.
-            file_path = os.path.join(json_subdir, json_filename)
-            with open(file_path, "w") as f:
-                json.dump(text_list, f, indent=2)
-            
-        print(f"Dataset saved to {file_path}")
+        # Save the text list to a JSON file.
+        file_path = os.path.join(json_subdir, json_filename)
+        with open(file_path, "w") as f:
+            json.dump(text_list, f, indent=2)
 
-        # Create finetuning request
-        finetuning_request = ff.Request(
-            ff.RequestType.REQ_FINETUNING,
-            peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
-            dataset_filepath=file_path,
-            max_training_epochs=request.max_training_epochs,
-        )
+    # Create log file
+    log_filepath = os.path.join(cache_folder, "logs", "finetune_log.log")
+    os.makedirs(os.path.dirname(log_filepath), exist_ok=True)
+    # Clear the file if it already exists
+    with open(log_filepath, "w"):
+        pass
 
-        results = llm.generate(finetuning_request)
-        print(f"Finish fine-tuning")
+    # Create finetuning request
+    finetuning_request = ff.Request(
+        ff.RequestType.REQ_FINETUNING,
+        peft_model_id=llm.get_ff_peft_id(lora_finetuning_config),
+        dataset_filepath=file_path,
+        max_training_epochs=request.max_training_epochs,
+        log_filepath=log_filepath,
+    )
 
-        return {"results": results, "status": "success", "total_entries": total_entries, "remaining_entries": remaining_entries}
+    # Set training status
+    training_progress.update({
+        "current_epoch": 0,
+        "max_epochs": request.max_training_epochs,
+        "loss_history": [],
+        "status": "training",
+    })
 
-    except Exception as e:
-        error_message = f"Error during finetuning: {str(e)}"
-        raise HTTPException(status_code=500, detail=error_message)
+    results = await run_in_threadpool(llm.generate, finetuning_request)
+    print(f"Finish fine-tuning")
+
+    return {"results": results, "status": "success", "total_entries": total_entries, "remaining_entries": remaining_entries}
+
+    # except Exception as e:
+    #     error_message = f"Error during finetuning: {str(e)}"
+    #     raise HTTPException(status_code=500, detail=error_message)
 
 
 # API endpoint for uploading model request

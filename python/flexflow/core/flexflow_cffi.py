@@ -2138,6 +2138,7 @@ class Request:
     peft_model_id: Optional[PEFTModelID] = None
     dataset_filepath: Optional[str] = None
     max_training_epochs: int = 1
+    log_filepath: str = None
 
 
 # -----------------------------------------------------------------------
@@ -4498,6 +4499,9 @@ class FFModel(object):
         # c_finetuning_losses = ffi.new("float**")
         # TODO: set this value automatically
         c_finetuning_losses = ffi.new("float[]", 10000)
+        log_filepaths = [
+            get_c_name(request.log_filepath) for request in requests_list
+        ]
 
         ffc().flexflow_model_generate(
             self.handle,
@@ -4514,6 +4518,7 @@ class FFModel(object):
             c_output_length_and_tokens,
             num_finetuning_losses,
             c_finetuning_losses,
+            log_filepaths,
         )
         finetuning_losses = []
         if num_finetuning_losses[0] > 0:

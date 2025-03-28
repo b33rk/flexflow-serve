@@ -1568,7 +1568,8 @@ void flexflow_model_generate(flexflow_model_t handle_,
                              int *training_steps,
                              int **output_length_and_tokens,
                              int *num_finetuning_losses,
-                             float *finetuning_losses) {
+                             float *finetuning_losses,
+                             char const **log_filepaths) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
   std::vector<Request> requests;
 
@@ -1598,6 +1599,7 @@ void flexflow_model_generate(flexflow_model_t handle_,
       fine_tuning_req.max_length = max_lengths[i];
       fine_tuning_req.max_new_tokens = max_new_tokens_[i];
       fine_tuning_req.add_special_tokens = add_special_tokens_[i];
+      fine_tuning_req.peft_finetuning_info.log_filepath = log_filepaths[i];
       PEFTModelID *peft_model_id = FFCObjectWrapper::unwrap(peft_model_ids[i]);
       if (peft_model_id != nullptr) {
         fine_tuning_req.peft_model_id = *peft_model_id;
