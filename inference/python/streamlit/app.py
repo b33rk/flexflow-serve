@@ -46,6 +46,9 @@ def clear_chat_history():
 def generate_llama3_response(prompt_input):
     system_prompt="You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Please ensure that your responses are positive in nature."
     
+    print("---Front: here is inference request data----")
+    print(prompt)
+
     # Send request to FastAPI server
     response = requests.post(
         CHAT_URL,
@@ -67,6 +70,8 @@ def generate_llama3_response(prompt_input):
         return f"{result['detail']}"
 
 finetune_result = None
+st.session_state.start_finetune = None
+st.session_state.request_data = None
 
 # Sidebar
 with st.sidebar:
@@ -247,7 +252,7 @@ with st.sidebar:
                 st.error("Please enter all Hugging Face dataset information.")
             else:
                 # Prepare the request data
-                request_data = {
+                st.session_state.request_data = {
                     "token": hf_token,
                     "peft_model_id": peft_model_name,
                     "dataset_option": dataset_option,
@@ -261,17 +266,24 @@ with st.sidebar:
                     "nesterov": nesterov,
                     "max_training_epochs": max_training_epochs,
                 }
-                
-                if dataset_option == "Upload JSON":
-                    request_data["dataset"] = dataset
-                else:
-                    request_data["dataset_name"] = dataset_name
-                    request_data["config_name"] = selected_config
-                    request_data["selected_split"] = selected_split
-                    request_data["selected_column"] = selected_column
 
-                print("---Front: here is request data----")
-                print(request_data)
+                if dataset_option == "Upload JSON":
+                    st.session_state.request_data["dataset"] = dataset
+                else:
+                    st.session_state.request_data["dataset_name"] = dataset_name
+                    st.session_state.request_data["config_name"] = selected_config
+                    st.session_state.request_data["selected_split"] = selected_split
+                    st.session_state.request_data["selected_column"] = selected_column
+                
+                st.session_state.upload_request_data = {
+                    "token": hf_token,
+                    "peft_model_id": peft_model_name,
+                    "upload_peft_model_id": peft_model_name,
+                    "private": private
+                }
+
+                print("---Front: here is finetune request data----")
+                print(st.session_state.request_data)
 
                 st.session_state.start_finetune = True
 
@@ -379,9 +391,10 @@ elif page == "Finetune":
     # Send finetuning request to FastAPI server
     # with st.spinner("Finetuning in progress..."):
     # Send the finetuning request in a separate thread
-    if st.session_state.start_finetune:   
+    if st.session_state.start_finetune:
+        st.subheader("📈 Training Progress")
         def run_finetune_request():
-            finetune_response = requests.post(FINETUNE_URL, json=request_data)
+            finetune_response = requests.post(FINETUNE_URL, json=st.session_state.request_data)
             st.session_state.finetune_response = finetune_response
             st.session_state.finetune_done = True
 
@@ -430,15 +443,8 @@ elif page == "Finetune":
             st.success("Finetuning completed successfully!")
 
             # Start uploading model to hf
-            upload_request_data = {
-                "token": hf_token,
-                "peft_model_id": peft_model_name,
-                "upload_peft_model_id": peft_model_id,
-                "private": private
-            }
-
             with st.spinner("Uploading fine-tuned model to Hugging Face..."):
-                upload_response = requests.post(UPLOAD_PEFT_MODEL_URL, json=upload_request_data)
+                upload_response = requests.post(UPLOAD_PEFT_MODEL_URL, json=st.session_state.upload_request_data)
 
             upload_result = upload_response.json()
             if upload_response.status_code == 200:
