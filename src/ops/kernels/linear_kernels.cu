@@ -28,6 +28,20 @@ LinearMeta::LinearMeta(FFHandler handler,
                        int weightSize)
     : OpMeta(handler, li), weight_ptr(nullptr) {
   DataType data_type = li->data_type;
+  this->activation = li->activation;
+  this->kernel_reg_type = li->kernel_reg_type;
+  this->kernel_reg_lambda = li->kernel_reg_lambda;
+  this->use_bias = li->use_bias;
+  this->add_bias_only_once = li->add_bias_only_once;
+  this->profiling = li->profiling;
+  this->inference_debugging = li->inference_debugging;
+  this->enable_peft_finetuning = li->enable_peft_finetuning;
+  this->trainable_inputs[0] = li->trainable_inputs[0];
+  this->weight_ptr_type = this->input_type[0];
+  this->quantization_type = li->quantization_type;
+  this->offload = li->offload;
+  std::strcpy(this->op_name, li->name);
+  this->layer_guid = li->layer_guid;
   // allocate weight and bias in the reserve space for cpu offloading
   if (li->offload) {
     weight_ptr = gpu_mem_allocator.allocate_reserved_untyped(
@@ -42,10 +56,10 @@ LinearMeta::LinearMeta(FFHandler handler,
   // peft activation
   size_t out_dim =
       li->outputs[0]->dims[0].size / li->outputs[0]->dims[0].degree;
-  allocated_peft_buffer_size =
-      enable_peft_finetuning ? (data_type_size(data_type) *
-                                BatchConfig::max_sequence_length() * out_dim)
-                             : 0;
+  allocated_peft_buffer_size = 0;
+  if (enable_peft_finetuning && (this->activation == AC_MODE_RELU || this->activation == AC_MODE_SIGMOID)) {
+    allocated_peft_buffer_size = data_type_size(data_type) * BatchConfig::max_sequence_length() * out_dim;
+  }
   size_t totalSize =
       data_type_size(data_type) * batch_size + allocated_peft_buffer_size;
   gpu_mem_allocator.create_legion_instance(
@@ -53,9 +67,12 @@ LinearMeta::LinearMeta(FFHandler handler,
   // Allocate an all-one's vector
   one_ptr = gpu_mem_allocator.allocate_instance_untyped(
       data_type_size(data_type) * batch_size);
-  if (enable_peft_finetuning) {
+  if (enable_peft_finetuning && (this->activation == AC_MODE_RELU || this->activation == AC_MODE_SIGMOID)) {
     output_activation_buffer =
         gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
+  } else {
+    // For other activation modes, this buffer is not used
+    output_activation_buffer = nullptr;
   }
   int parallelism = batch_size;
   cudaStream_t stream;
@@ -78,7 +95,6 @@ LinearMeta::LinearMeta(FFHandler handler,
   checkCUDNN(cudnnCreateActivationDescriptor(&actiDesc));
   checkCUDNN(cudnnCreateTensorDescriptor(&outputTensor));
 
-  allocated_peft_buffer_size = 0;
 }
 
 LinearMeta::~LinearMeta(void) {

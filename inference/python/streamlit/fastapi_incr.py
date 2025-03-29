@@ -40,6 +40,7 @@ from datasets import get_dataset_config_names, get_dataset_split_names, load_dat
 import re, threading, io, sys
 from fastapi.responses import JSONResponse
 from fastapi.concurrency import run_in_threadpool
+from transformers import AutoTokenizer
 
 # Initialize FastAPI application
 app = FastAPI()
@@ -116,15 +117,16 @@ def get_configs():
         # Define sample configs
         ff_init_configs = {
             # required parameters
-            "num_gpus": 4,
-	        "memory_per_gpu": 30000,
-            "zero_copy_memory_per_node": 40000,
-            "log_instance_creation": False,
+            "num_gpus": 8,
+	        "memory_per_gpu": 36000,
+            "zero_copy_memory_per_node": 180000,
+            "log_instance_creation": True,
             # optional parameters
-            "num_cpus": 4,
-            "legion_utility_processors": 8,
+            "num_cpus": 16,
+            "cpu_memory_per_node": 2048,
+            "legion_utility_processors": 16,
             "data_parallelism_degree": 1,
-            "tensor_parallelism_degree": 4,
+            "tensor_parallelism_degree": 8,
             "pipeline_parallelism_degree": 1,
             "offload": False,
             "offload_reserve_space_size": 8 * 1024, # 8GB
@@ -138,7 +140,7 @@ def get_configs():
         }
         llm_configs = {
             # required parameters
-            "llm_model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            "llm_model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
             # optional parameters
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,
@@ -146,7 +148,7 @@ def get_configs():
             "prompt": "",
             "output_file": "",
             "max_requests_per_batch": 128,
-            "max_seq_length": 2048,
+            "max_seq_length": 1200,
             "max_tokens_per_batch": 128,
             "max_concurrent_adapters": 4,
             "num_kv_cache_slots": 100000,
@@ -423,7 +425,7 @@ async def finetune(request: FinetuneRequest):
         json_subdir = os.path.join(dataset_dir, request.dataset_name)
         os.makedirs(json_subdir, exist_ok=True)
         
-        from transformers import AutoTokenizer
+        
         # Load dataset from Hugging Face
         dataset_info = f"{request.dataset_name}/{request.config_name}/{request.selected_split}" \
             if request.config_name else f"{request.dataset_name}/{request.selected_split}"
@@ -438,7 +440,7 @@ async def finetune(request: FinetuneRequest):
         max_length = 10000 # Change if needed
 
         # Load a pre-trained tokenizer.
-        tokenizer = AutoTokenizer.from_pretrained(request.peft_model_id)
+        tokenizer = AutoTokenizer.from_pretrained(llm.model_name)
 
         # Function to tokenize text and add a token count.
         def tokenize_count(example):

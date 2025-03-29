@@ -85,7 +85,7 @@ with st.sidebar:
         st.sidebar.button('Clear Chat History', on_click=clear_chat_history)
 
         st.subheader('Generation parameters')
-        max_length = st.sidebar.slider('Max generation length', min_value=64, max_value=2048, value=1024, step=8)
+        max_length = st.sidebar.slider('Max generation length', min_value=64, max_value=2048, value=256, step=8)
         # selected_model = st.sidebar.selectbox('Choose a Llama2 model', ['Llama2-7B', 'Llama2-13B', 'Llama2-70B'], key='selected_model')
         decoding_method = st.sidebar.selectbox('Decoding method', ['Greedy decoding (default)', 'Sampling'], key='decoding_method')
         temperature = st.sidebar.slider('temperature', min_value=0.01, max_value=5.0, value=0.1, step=0.01, disabled=decoding_method == 'Greedy decoding (default)')

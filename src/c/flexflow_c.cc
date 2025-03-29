@@ -1573,12 +1573,12 @@ void flexflow_model_generate(flexflow_model_t handle_,
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
   std::vector<Request> requests;
 
-  RequestManager *rm = RequestManager::get_request_manager();
-  int max_sequence_length = rm->get_max_sequence_length();;
+  // RequestManager *rm = RequestManager::get_request_manager();
+  // int max_sequence_length = rm->get_max_sequence_length();;
 
   for (int i = 0; i < num_requests; i++) {
     if (request_types[i] == RequestType::REQ_INFERENCE) {
-      max_lengths[i] = max_sequence_length;
+      // max_lengths[i] = max_sequence_length;
       std::string const text_str(input_texts[i]);
       Request inference_req;
       inference_req.prompt = text_str;
