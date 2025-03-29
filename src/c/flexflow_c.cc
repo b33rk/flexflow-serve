@@ -1578,7 +1578,9 @@ void flexflow_model_generate(flexflow_model_t handle_,
       std::string const text_str(input_texts[i]);
       Request inference_req;
       inference_req.prompt = text_str;
-      inference_req.max_length = max_lengths[i];
+      // inference_req.max_length = max_lengths[i];
+      RequestManager *rm = RequestManager::get_request_manager();
+      inference_req.max_length = rm->get_max_sequence_length();;
       inference_req.max_new_tokens = max_new_tokens_[i];
       inference_req.add_special_tokens = add_special_tokens_[i];
       PEFTModelID *peft_model_id = FFCObjectWrapper::unwrap(peft_model_ids[i]);
@@ -1638,6 +1640,9 @@ void flexflow_model_generate(flexflow_model_t handle_,
         assert(total_tokens <= max_lengths[i] || num_output_tokens == 0);
       }
       output_length_and_tokens[i][0] = results[i].output_tokens.size();
+      std::cout << "Output token size: " << results[i].output_tokens.size()
+          << ", Max length: " << max_lengths[i] << std::endl;
+
       assert(results[i].output_tokens.size() <= max_lengths[i] + 100 &&
              "Exceeding python buffer size for token ids");
       assert(results[i].output_text.length() <= max_lengths[i] * 10 &&

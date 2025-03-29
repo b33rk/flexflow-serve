@@ -114,7 +114,7 @@ def get_configs():
         ff_init_configs = {
             # required parameters
             "num_gpus": 4,
-	        "memory_per_gpu": 20000,
+	        "memory_per_gpu": 30000,
             "zero_copy_memory_per_node": 40000,
             # optional parameters
             "num_cpus": 4,
@@ -175,8 +175,7 @@ async def startup_event():
     llm.compile(
         generation_config,
         max_requests_per_batch=16,
-        # max_seq_length=2048 will cause memory allocation error
-        max_seq_length=600,
+        max_seq_length=2048,
         max_tokens_per_batch=1024,
         enable_peft_finetuning=True,
     )
@@ -359,8 +358,6 @@ async def finetune(request: FinetuneRequest):
         raise HTTPException(status_code=503, detail="LLM model is not initialized.")
 
     print("received request:", request)
-
-    llm.download_peft_adapter_if_needed(request.peft_model_id)
 
     if request.optimizer_type not in OPTIMIZER_TYPE_MAP:
         raise ValueError(f"Unsupported optimizer type: {request.optimizer_type}")
