@@ -311,47 +311,6 @@ void run_batched_matmul(IncMultiHeadSelfAttentionMeta const *meta,
   }
 }
 
-template <typename DT>
-__global__ void store_softmax_activation(DT const *qk_prods_softmax,
-                                         DT *softmax_activation_buffer,
-                                         int num_new_tokens,
-                                         int total_tokens,
-                                         int max_finetuning_seq_len,
-                                         int num_q_heads) {
-  CUDA_KERNEL_LOOP(i, num_new_tokens * total_tokens * num_q_heads) {
-    // qk_prods_softmax: [num_new_tokens, total_tokens, num_q_heads]
-    // softmax activation buffer: [MAX_FINETUNING_LENGTH(num_new_tokens),
-    // MAX_FINETUNING_LENGTH(total_tokens), num_q_heads]
-    int tokens_previous_steps = total_tokens - num_new_tokens;
-    int new_tokens_idx = i % num_new_tokens;
-    int total_tokens_idx = (i / num_new_tokens) % total_tokens;
-    int head_idx = i / (num_new_tokens * total_tokens);
-    int src_idx = head_idx * num_new_tokens * total_tokens +
-                  total_tokens_idx * num_new_tokens + new_tokens_idx;
-    int dst_idx = head_idx * max_finetuning_seq_len * max_finetuning_seq_len +
-                  total_tokens_idx * max_finetuning_seq_len +
-                  (tokens_previous_steps + new_tokens_idx);
-
-    softmax_activation_buffer[dst_idx] = qk_prods_softmax[src_idx];
-  }
-}
-
-// TODO(Gabriele): review this inverse `createTorchTensorFromCuda`
-template <typename DT>
-void restoreTorchTensorToCuda(torch::Tensor &torch_tensor, DT *data_ptr) {
-  if (!torch_tensor.is_contiguous()) {
-    torch_tensor = torch_tensor.contiguous();
-  }
-  size_t num_bytes = torch_tensor.nbytes();
-
-  // Copy from torch_tensor data to device pointer
-  cudaError_t err = cudaMemcpy(
-      data_ptr, torch_tensor.data_ptr(), num_bytes, cudaMemcpyDeviceToDevice);
-  if (err != cudaSuccess) {
-    throw std::runtime_error("cudaMemcpy failed: " +
-                             std::string(cudaGetErrorString(err)));
-  }
-}
 
 // todo(gabriele): review this function
 // the params should persist after the function returns
@@ -2346,19 +2305,13 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   {
     // 1. GQA pointers for batch matmul. Used by PEFT and spec_inc if
     // num_q_heads > num_kv_heads
-    if (num_q_heads > num_kv_heads &&
-        (infer_mode == BEAM_SEARCH_MODE || enable_peft_finetuning)) {
+    if (num_q_heads > num_kv_heads && (infer_mode == BEAM_SEARCH_MODE)) {
       assert(num_q_heads % num_kv_heads == 0 &&
              "num_q_heads must be divisible by num_kv_heads");
       assert(attn->data_type == DT_FLOAT ||
              attn->data_type == DT_HALF && "Unsupported data type");
       gqa_ptr_array_size = num_q_heads * sizeof(void *);
-      if (infer_mode == BEAM_SEARCH_MODE) {
         inf_instance_size += 3 * gqa_ptr_array_size; // fwd
-      } else if (enable_peft_finetuning) {
-        inf_instance_size += 3 * gqa_ptr_array_size;  // fwd
-        peft_instance_size += 3 * gqa_ptr_array_size; // bwd
-      }
     }
 
     // 2. KV cache
@@ -2417,20 +2370,11 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       qk_prod_size = max_tokens_per_batch * BatchConfig::max_sequence_length() *
                      num_q_heads;
       inf_instance_size += 2 * qk_prod_size * size_of_dt;
-    } else if (enable_peft_finetuning) {
-      // only need one copy as they can be reused by PEFT fwd and PEFT bwd, as
-      // they never run concurrently
-      qk_prod_size = BatchConfig::max_sequence_length() *
-                     BatchConfig::max_sequence_length() * num_q_heads;
-      peft_instance_size += qk_prod_size * size_of_dt;
-    }
+    } 
     // PEFT partial results buffers
     if (enable_peft_finetuning) {
       allocated_peft_buffer_size1 = BatchConfig::max_sequence_length() *
                                     num_q_heads * qProjSize * size_of_dt;
-      allocated_peft_buffer_size2 = BatchConfig::max_sequence_length() *
-                                    BatchConfig::max_sequence_length() *
-                                    num_q_heads * size_of_dt;
       flash_attn_softmax_lse_size =
           BatchConfig::max_sequence_length() * num_q_heads * sizeof(float);
       flash_attn_out_size = qProjSize * num_q_heads *
@@ -2442,7 +2386,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       peft_token_infos_size = sizeof(BatchConfig::PerTokenInfo) *
                               BatchConfig::max_sequence_length();
       peft_instance_size +=
-          allocated_peft_buffer_size1 + allocated_peft_buffer_size2;
+          allocated_peft_buffer_size1;
       peft_instance_size += flash_attn_softmax_lse_size + flash_attn_out_size;
       peft_instance_size += peft_token_infos_size;
     }
@@ -2466,7 +2410,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   // Assign pointers from chunk of memory
   {
     // gqa pointers
-    if (num_q_heads > num_kv_heads) {
+    if (num_q_heads > num_kv_heads && (infer_mode == BEAM_SEARCH_MODE)) {
       assert(num_q_heads % num_kv_heads == 0 &&
              "Num Q heads must be a multiple of num KV heads");
       d_A_array = (void **)inf_mem_allocator.allocate_instance_untyped(
@@ -2475,14 +2419,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
           gqa_ptr_array_size);
       d_C_array = (void **)inf_mem_allocator.allocate_instance_untyped(
           gqa_ptr_array_size);
-      if (enable_peft_finetuning) {
-        d_A_array2 = (void **)peft_mem_allocator.allocate_instance_untyped(
-            gqa_ptr_array_size);
-        d_B_array2 = (void **)peft_mem_allocator.allocate_instance_untyped(
-            gqa_ptr_array_size);
-        d_C_array2 = (void **)peft_mem_allocator.allocate_instance_untyped(
-            gqa_ptr_array_size);
-      }
     }
 
     // KV cache
@@ -2551,16 +2487,10 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       qk_prods_softmax = inf_mem_allocator.allocate_instance_untyped(
           qk_prod_size * size_of_dt);
     }
-    if (enable_peft_finetuning) {
-      qk_prods_softmax = peft_mem_allocator.allocate_instance_untyped(
-          qk_prod_size * size_of_dt);
-    }
     // peft partial result buffers
     if (enable_peft_finetuning) {
       query_activation_buffer = peft_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size1);
-      softmax_activation_buffer = peft_mem_allocator.allocate_instance_untyped(
-          allocated_peft_buffer_size2);
       peft_token_infos_device =
           (BatchConfig::PerTokenInfo *)peft_mem_allocator
               .allocate_instance_untyped(peft_token_infos_size);

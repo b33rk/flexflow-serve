@@ -114,21 +114,21 @@ def get_configs():
         # Define sample configs
         ff_init_configs = {
             # required parameters
-            "num_gpus": 4,
-	        "memory_per_gpu": 20000,
+            "num_gpus": 8,
+	        "memory_per_gpu": 30000,
             "zero_copy_memory_per_node": 40000,
+            "log_instance_creation": True,
             # optional parameters
             "num_cpus": 4,
             "legion_utility_processors": 8,
             "data_parallelism_degree": 1,
-            "tensor_parallelism_degree": 4,
+            "tensor_parallelism_degree": 8,
             "pipeline_parallelism_degree": 1,
             "offload": False,
             "offload_reserve_space_size": 8 * 1024, # 8GB
             "use_4bit_quantization": False,
             "use_8bit_quantization": False,
             "enable_peft": True,
-            "peft_activation_reserve_space_size": 1024, # 1GB
             "profiling": False,
             "benchmarking": False,
             "inference_debugging": False,
@@ -143,6 +143,11 @@ def get_configs():
             "full_precision": False,
             "prompt": "",
             "output_file": "",
+            "max_requests_per_batch": 128,
+            "max_seq_length": 8192,
+            "max_tokens_per_batch": 128,
+            "max_concurrent_adapters": 4,
+            "num_kv_cache_slots": 100000,
         }
         # Merge dictionaries
         ff_init_configs.update(llm_configs)
@@ -175,10 +180,13 @@ async def startup_event():
     )
     llm.compile(
         generation_config,
-        max_requests_per_batch=16,
-        # max_seq_length=2048 will cause memory allocation error
-        max_seq_length=600,
-        max_tokens_per_batch=1024,
+        max_requests_per_batch=configs_dict.get("max_requests_per_batch", 1)
+        + 1,  # +1 for the finetuning request
+        max_seq_length=configs_dict.get("max_seq_length", 256),
+        max_tokens_per_batch=configs_dict.get("max_tokens_per_batch", 128),
+        num_kv_cache_slots=configs_dict.get("num_kv_cache_slots", -1),
+        max_concurrent_adapters=configs_dict.get("max_concurrent_adapters", 1)
+        + 1,  # +1 for the finetuning request
         enable_peft_finetuning=True,
     )
     llm.start_server()
