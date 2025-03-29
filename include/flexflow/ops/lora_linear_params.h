@@ -84,7 +84,7 @@ public:
                    int rank_ = 8,
                    float lora_alpha_ = 8.0f,
                    float lora_dropout_ = 0.0f,
-                   std::vector<std::string> const &target_modules_ = {},);
+                   std::vector<std::string> const &target_modules_ = {});
   // constructor used to support std::unordered_map
   LoraLinearConfig();
   friend bool operator==(LoraLinearConfig const &lhs,

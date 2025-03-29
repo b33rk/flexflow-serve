@@ -72,6 +72,7 @@ def generate_llama3_response(prompt_input):
 finetune_result = None
 st.session_state.start_finetune = None
 st.session_state.request_data = None
+st.session_state.peft_model_id = None
 
 # Sidebar
 with st.sidebar:
@@ -281,84 +282,12 @@ with st.sidebar:
                     "upload_peft_model_id": peft_model_name,
                     "private": private
                 }
+                st.session_state.peft_model_id = peft_model_name
 
                 print("---Front: here is finetune request data----")
                 print(st.session_state.request_data)
 
                 st.session_state.start_finetune = True
-
-                # from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
-
-                # # Send finetuning request to FastAPI server
-                # with st.spinner("Finetuning in progress..."):
-                #     # Send the finetuning request in a separate thread                    
-                #     def run_finetune_request():
-                #         finetune_response = requests.post(FINETUNE_URL, json=request_data)
-                #         st.session_state.finetune_response = finetune_response
-                #         st.session_state.finetune_done = True
-
-                #     t = threading.Thread(target=run_finetune_request)
-                #     add_script_run_ctx(t, get_script_run_ctx())
-                #     t.start()
-
-                #     # 2. Meanwhile: poll training progress and update UI
-                #     progress_placeholder = st.empty()
-                #     chart_placeholder = st.empty()
-                #     status_placeholder = st.empty()
-
-                #     while True:
-                #         try:
-                #             response = requests.get(PROGRESS_URL)
-                #             st.session_state.progress = response.json()
-                #         except:
-                #             st.warning("Failed to get training progress.")
-                #             continue
-
-                #         current_epoch = st.session_state.progress["current_epoch"]
-                #         max_epochs = st.session_state.progress.get("max_epochs", 1)
-                #         loss_history = st.session_state.progress.get("loss_history", [])
-
-                #         # Progress bar
-                #         progress_pct = current_epoch / max_epochs if max_epochs else 0
-                #         progress_placeholder.progress(progress_pct, text=f"Epoch {current_epoch}/{max_epochs}")
-
-                #         # # Live loss chart
-                #         # if loss_history:
-                #         #     loss_df = pd.DataFrame({"Loss": loss_history})
-                #         #     loss_df.index += 1  # Epochs start from 1
-                #         #     chart_placeholder.line_chart(loss_df)
-                #         #     status_placeholder.info(f"Latest Loss: {loss_history[-1]:.4f}")
-
-                #         if st.session_state.progress["status"] == "done":
-                #             break
-                        
-                #         time.sleep(2)  # update every 2 seconds
-
-                #     while not "finetune_response" in st.session_state:
-                #         time.sleep(2)
-
-                # finetune_result = st.session_state.finetune_response.json()
-                # if st.session_state.finetune_response.status_code == 200:
-                #     st.success("Finetuning completed successfully!")
-
-                #     # Start uploading model to hf
-                #     upload_request_data = {
-                #         "token": hf_token,
-                #         "peft_model_id": peft_model_name,
-                #         "upload_peft_model_id": peft_model_id,
-                #         "private": private
-                #     }
-
-                #     with st.spinner("Uploading fine-tuned model to Hugging Face..."):
-                #         upload_response = requests.post(UPLOAD_PEFT_MODEL_URL, json=upload_request_data)
-
-                #     upload_result = upload_response.json()
-                #     if upload_response.status_code == 200:
-                #         st.success(f"{peft_model_id} Model uploaded successfully to Hugging Face!")
-                #     else:
-                #         st.error(f"Upload failed: {upload_result.get('detail', 'Unknown error occurred.')}")
-                # else:
-                #     st.error(f"Finetuning failed: {finetune_result.get('detail', 'Unknown error occurred.')}")
 
 if page == "Chat":
     # Display or clear chat messages
@@ -389,19 +318,22 @@ elif page == "Finetune":
     # st.subheader("📈 Training Progress")
     from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
     # Send finetuning request to FastAPI server
-    # with st.spinner("Finetuning in progress..."):
     # Send the finetuning request in a separate thread
     if st.session_state.start_finetune:
         st.subheader("📈 Training Progress")
         def run_finetune_request():
             finetune_response = requests.post(FINETUNE_URL, json=st.session_state.request_data)
             st.session_state.finetune_response = finetune_response
-            st.session_state.finetune_done = True
 
         t = threading.Thread(target=run_finetune_request)
         add_script_run_ctx(t, get_script_run_ctx())
         t.start()
 
+        time.sleep(3)
+        if "finetune_response" in st.session_state and st.session_state.finetune_response.status_code != 200:
+            st.error(f"{st.session_state.finetune_response.json().get('detail', 'Unknown error occurred.')}")
+            # 409
+        
         # 2. Meanwhile: poll training progress and update UI
         progress_placeholder = st.empty()
         chart_placeholder = st.empty()
@@ -450,8 +382,8 @@ elif page == "Finetune":
             if upload_response.status_code == 200:
                 st.success(f"{peft_model_id} Model uploaded successfully to Hugging Face!")
             else:
-                st.error(f"Upload failed: {upload_result.get('detail', 'Unknown error occurred.')}")
-        else:
+                st.error(f"Upload failed: {upload_result.get('detail', 'Unkifnown error occurred.')}")
+        elif st.session_state.finetune_response.status_code != 409:
             st.error(f"Finetuning failed: {finetune_result.get('detail', 'Unknown error occurred.')}")
 
     # Print out the number of entries

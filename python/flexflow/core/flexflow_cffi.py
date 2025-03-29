@@ -1848,6 +1848,7 @@ class LoraLinearConfig(object):
         target_modules: List[str] = [],
         optimizer_type: OptimizerType = OptimizerType.OPTIMIZER_TYPE_NONE,
         optimizer_kwargs: dict = {},
+        optimizer_config: dict = {},
     ):
         if trainable:
             if (
