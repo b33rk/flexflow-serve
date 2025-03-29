@@ -1641,13 +1641,11 @@ void flexflow_model_generate(flexflow_model_t handle_,
       if (max_lengths[i] >= 0) {
         assert(total_tokens <= max_lengths[i] || num_output_tokens == 0);
       }
+      int max_seq_len = RequestManager::get_request_manager()->get_max_sequence_length();
       output_length_and_tokens[i][0] = results[i].output_tokens.size();
-      std::cout << "Output token size: " << results[i].output_tokens.size()
-          << ", Max length: " << max_lengths[i] << std::endl;
-
-      assert(results[i].output_tokens.size() <= max_lengths[i] + 100 &&
+      assert(results[i].output_tokens.size() <= max_seq_len + 100 &&
              "Exceeding python buffer size for token ids");
-      assert(results[i].output_text.length() <= max_lengths[i] * 10 &&
+      assert(results[i].output_text.length() <= max_seq_len * 10 &&
              "Exceeding python buffer size for output text");
       std::copy(results[i].output_tokens.begin(),
                 results[i].output_tokens.end(),
