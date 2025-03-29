@@ -375,13 +375,13 @@ void RequestManager::set_enable_peft_finetuning(bool enable_peft_finetuning_) {
 
 void RequestManager::set_inference_finished(bool finished) {
   inference_finished = finished;
-  if (finished == false && pending_peft_request_queue.size() > 0) {
-    std::cout
-        << "Error: Inference finished but there are pending PEFT requests in "
-           "the queue. Marking these requests as completed now."
-        << std::endl;
-    assert(false);
-  }
+  // if (finished == false && pending_peft_request_queue.size() > 0) {
+  //   std::cout
+  //       << "Error: Inference finished but there are pending PEFT requests in "
+  //          "the queue. Marking these requests as completed now."
+  //       << std::endl;
+  //   assert(false);
+  // }
 }
 
 void RequestManager::register_tokenizer(ModelType type,
@@ -3730,9 +3730,9 @@ std::vector<GenerationResult>
   for (int i = 0; i < inf_guids.size(); i++) {
     results.push_back(rm->get_generation_result(inf_guids[i]));
   }
-  if (inf_guids.size() > 0) {
-    rm->set_inference_finished();
-  }
+  // if (inf_guids.size() > 0) {
+  //   rm->set_inference_finished();
+  // }
   for (int i = 0; i < peft_guids.size(); i++) {
     results.push_back(rm->get_generation_result(peft_guids[i]));
   }

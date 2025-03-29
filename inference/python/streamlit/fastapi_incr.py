@@ -117,18 +117,18 @@ def get_configs():
         # Define sample configs
         ff_init_configs = {
             # required parameters
-            "num_gpus": 8,
+            "num_gpus": 4,
 	        "memory_per_gpu": 36000,
             # "memory_per_gpu": 30000,
-            "zero_copy_memory_per_node": 180000,
-            # "zero_copy_memory_per_node": 40000,
+            # "zero_copy_memory_per_node": 180000,
+            "zero_copy_memory_per_node": 40000,
             "log_instance_creation": False,
             # optional parameters
             "num_cpus": 16,
             "cpu_memory_per_node": 2048,
             "legion_utility_processors": 16,
             "data_parallelism_degree": 1,
-            "tensor_parallelism_degree": 8,
+            "tensor_parallelism_degree": 4,
             "pipeline_parallelism_degree": 1,
             "offload": False,
             "offload_reserve_space_size": 8 * 1024, # 8GB
@@ -142,8 +142,8 @@ def get_configs():
         }
         llm_configs = {
             # required parameters
-            # "llm_model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
-            "llm_model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            "llm_model": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+            # "llm_model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
             # optional parameters
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,
@@ -151,7 +151,7 @@ def get_configs():
             "prompt": "",
             "output_file": "",
             "max_requests_per_batch": 128,
-            "max_seq_length": 1200,
+            "max_seq_length": 4096,
             "max_tokens_per_batch": 128,
             "max_concurrent_adapters": 4,
             "num_kv_cache_slots": 100000,

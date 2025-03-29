@@ -236,7 +236,7 @@ with st.sidebar:
         lora_rank = st.number_input("LoRA rank", min_value=2, max_value=64, value=16, step=2)
         lora_alpha = st.number_input("LoRA alpha", min_value=2, max_value=64, value=16, step=2)
         target_modules = st.multiselect("Target modules", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "lm_head"], default=["down_proj"])
-        learning_rate = st.number_input("Learning rate", min_value=1e-6, max_value=1e-3, value=1e-5, step=1e-6)
+        learning_rate = st.number_input("Learning rate", min_value=0.00001, max_value=1.0, value=0.001, step=0.0001, format="%.4f")
         optimizer_type = st.selectbox("Optimizer type", ["SGD", "Adam", "AdamW", "Adagrad", "Adadelta", "Adamax", "RMSprop"])
         momentum = st.number_input("Momentum", min_value=0.0, max_value=1.0, value=0.0, step=0.01)
         weight_decay = st.number_input("Weight decay", min_value=0.0, max_value=1.0, value=0.0, step=0.01)
