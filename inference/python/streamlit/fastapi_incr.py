@@ -114,16 +114,16 @@ def get_configs():
         # Define sample configs
         ff_init_configs = {
             # required parameters
-            "num_gpus": 8,
-	        "memory_per_gpu": 30000,
+            "num_gpus": 4,
+	        "memory_per_gpu": 34000,
             "zero_copy_memory_per_node": 40000,
             "log_instance_creation": True,
             # optional parameters
             "num_cpus": 4,
             "legion_utility_processors": 8,
             "data_parallelism_degree": 1,
-            "tensor_parallelism_degree": 8,
-            "pipeline_parallelism_degree": 1,
+            "tensor_parallelism_degree": 1,
+            "pipeline_parallelism_degree": 4,
             "offload": False,
             "offload_reserve_space_size": 8 * 1024, # 8GB
             "use_4bit_quantization": False,
@@ -144,7 +144,7 @@ def get_configs():
             "prompt": "",
             "output_file": "",
             "max_requests_per_batch": 128,
-            "max_seq_length": 8192,
+            "max_seq_length": 3000,
             "max_tokens_per_batch": 128,
             "max_concurrent_adapters": 4,
             "num_kv_cache_slots": 100000,
