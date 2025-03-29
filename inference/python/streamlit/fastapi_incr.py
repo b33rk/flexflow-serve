@@ -119,8 +119,10 @@ def get_configs():
             # required parameters
             "num_gpus": 8,
 	        "memory_per_gpu": 36000,
+            # "memory_per_gpu": 30000,
             "zero_copy_memory_per_node": 180000,
-            "log_instance_creation": True,
+            # "zero_copy_memory_per_node": 40000,
+            "log_instance_creation": False,
             # optional parameters
             "num_cpus": 16,
             "cpu_memory_per_node": 2048,
@@ -140,7 +142,8 @@ def get_configs():
         }
         llm_configs = {
             # required parameters
-            "llm_model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+            # "llm_model": "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+            "llm_model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
             # optional parameters
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,
@@ -280,7 +283,7 @@ async def chat_completions(request: ChatCompletionRequest):
 
         result = results[0].output_text.decode("utf-8")
 
-        print("Returning response:", result)
+        print("----Returning response:", result)
         return {"response": result, "status": "success"}
 
     except Exception as e:
@@ -491,6 +494,7 @@ async def finetune(request: FinetuneRequest):
     })
 
     results = await run_in_threadpool(llm.generate, finetuning_request)
+    # results = llm.generate(finetuning_request)
     print(f"Finish fine-tuning")
 
     return {"results": results, "status": "success", "total_entries": total_entries, "remaining_entries": remaining_entries}
@@ -622,130 +626,6 @@ async def upload_peft_model(request: UploadModelRequest):
     # except Exception as e:
     #     error_message = f"Error during model upload: {str(e)}"
     #     raise HTTPException(status_code=500, detail=error_message)
-
-
-# API endpoint for uploading model request
-@app.post("/upload_peft_model/")
-async def upload_peft_model(request: UploadModelRequest):
-    """
-    Endpoint to upload the fine-tuned PEFT model to Hugging Face Hub.
-    """
-    try:
-        if llm is None:
-            raise HTTPException(status_code=503, detail="LLM model is not initialized.")
-
-        from transformers import AutoModelForCausalLM
-        from peft import get_peft_model
-        import torch
-        import numpy as np
-
-        cache_folder = os.path.expanduser(llm.cache_path)
-        lora_config_filepath = os.path.join(
-            cache_folder, 
-            "finetuned_models", 
-            request.peft_model_id.lower(), 
-            "config", 
-            "ff_config.json"
-        )
-        
-        TIMEOUT_SECONDS = 30
-        start_time = time.time()
-        while not os.path.exists(lora_config_filepath):
-            if time.time() - start_time > TIMEOUT_SECONDS:
-                raise TimeoutError(f"Timeout: {lora_config_filepath} not found after {TIMEOUT_SECONDS} seconds.")
-            time.sleep(0.5)  # Check every 0.5 seconds
-
-        peft_config = ff.LoraLinearConfig.from_jsonfile(lora_config_filepath)
-        hf_peft_config = peft_config.to_hf_config()
-
-        # Load model
-        model = AutoModelForCausalLM.from_pretrained(
-            peft_config.base_model_name_or_path,
-            torch_dtype=torch.float32 if peft_config.precision == "fp32" else torch.float16,
-            device_map=None  # Prevent meta tensor issues
-        )
-        model = get_peft_model(model, hf_peft_config, autocast_adapter_dtype=False)
-        
-        in_dim = model.config.intermediate_size
-        out_dim = model.config.hidden_size
-
-        weight_folder = os.path.join(
-            cache_folder, "finetuned_models", request.peft_model_id.lower(), "weights", "shard_0"
-        )
-        num_shards = 1
-        while os.path.exists(weight_folder.replace("shard_0", f"shard_{num_shards}")):
-            num_shards += 1
-        if not in_dim % num_shards == 0:
-            raise ValueError(
-                f"Number of shards ({num_shards}) must divide the input dimension ({in_dim})"
-            )
-
-        lora_weight_files = os.listdir(weight_folder)
-        for lora_file in sorted(lora_weight_files):
-            lora_filename = ".weight".join(lora_file.split(".weight")[:-1])
-            hf_parameter_name = f"base_model.model.model.{lora_filename}.default.weight"
-            if hf_parameter_name not in model.state_dict().keys():
-                raise KeyError(f"Parameter {lora_file} not found in HF model.")
-
-            ff_dtype = np.float32 if peft_config.precision == "fp32" else np.float16
-            weight_path = os.path.join(weight_folder, lora_file)
-            # LoRA_A: [in_dim, rank]
-            # LoRA_B: [rank, out_dim]
-            if "lora_A" in lora_file:
-                weight_data = []
-                for shard_id in range(num_shards):
-                    weight_path_shard = weight_path.replace("shard_0", f"shard_{shard_id}")
-                    weight_data_shard = np.fromfile(weight_path_shard, dtype=ff_dtype)
-                    weight_data_shard = weight_data_shard.reshape(
-                        (in_dim // num_shards, peft_config.rank), order="F"
-                    )
-                    weight_data.append(weight_data_shard)
-                weight_data = np.concatenate(weight_data, axis=0).T
-            elif "lora_B" in lora_file:
-                weight_data = np.fromfile(weight_path, dtype=ff_dtype)
-                weight_data = weight_data.reshape((peft_config.rank, out_dim), order="F").T
-            weight_tensor = torch.from_numpy(weight_data)
-
-            param = model.state_dict()[hf_parameter_name]
-
-            actual_numel = weight_tensor.numel()
-            expected_numel = param.numel()
-            if actual_numel != expected_numel:
-                raise ValueError(
-                    f"Parameter {lora_file} has unexpected parameter count: {actual_numel} (actual) != {expected_numel} (expected)"
-                )
-
-            if weight_tensor.shape != param.shape:
-                raise ValueError(
-                    f"Parameter {lora_file} has unexpected shape: {weight_tensor.shape} (actual) != {param.shape} (expected)"
-                )
-
-            if weight_tensor.dtype != param.dtype:
-                raise ValueError(
-                    f"Parameter {lora_file} has unexpected dtype: {weight_tensor.dtype} (actual) != {param.dtype} (expected)"
-                )
-
-            with torch.no_grad():
-                param.copy_(weight_tensor)
-
-        # Ensure all parameters are properly initialized
-        for name, param in model.named_parameters():
-            if param.device.type == "meta":
-                print(f"Parameter {name} is still on 'meta' device. Moving to CPU.")
-                param.data = torch.zeros_like(param, device="cpu")  # Allocate real memory
-
-        model = model.to("cpu")
-
-        # Upload model to Hugging Face Hub
-        model.push_to_hub(request.upload_peft_model_id, token=request.token, private=request.private)
-        print(f"Upload process for {request.upload_peft_model_id} completed.")
-        
-        return {"status": "success"}
-
-    except Exception as e:
-        error_message = f"Error during model upload: {str(e)}"
-        raise HTTPException(status_code=500, detail=error_message)
-
 
 # Shutdown event to stop the model server
 @app.on_event("shutdown")
