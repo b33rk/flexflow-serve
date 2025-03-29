@@ -43,7 +43,7 @@ def get_configs():
             # required parameters
             "num_gpus": 4,
             "memory_per_gpu": 14000,
-            "zero_copy_memory_per_node": 30000,
+            "zero_copy_memory_per_node": 10000,
             # optional parameters
             "num_cpus": 4,
             "legion_utility_processors": 4,
@@ -61,16 +61,13 @@ def get_configs():
         }
         model_configs = {
             # required parameters
-            # "base_model": "JackFram/llama-160m",
-            # "inference_peft_model_id": "goliaro/llama-160m-lora",
-            # "finetuning_peft_model_id": "goliaro/llama-160m-lora",
-            "base_model": "meta-llama/Meta-Llama-3-8B",
-            "inference_peft_model_id": "goliaro/llama-3-8b-lora",
-            "finetuning_peft_model_id": "goliaro/llama-3-8b-lora-dolly",
+            "base_model": "unsloth/Llama-3.2-1B-Instruct",
+            "inference_peft_model_id": "goliaro/llama-3.2-1b-lora",
+            "finetuning_peft_model_id": "goliaro/llama-3.2-1b-lora",
             # optional parameters
             "cache_path": os.environ.get("FF_CACHE_PATH", ""),
             "refresh_cache": False,
-            "full_precision": False,
+            "full_precision": True,
             "prompt": "",
             "finetuning_dataset": os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
@@ -140,8 +137,6 @@ def main():
             llm.cache_path,
             configs.inference_peft_model_id,
             trainable=True,
-            init_lora_weights=True,
-            target_modules=["down_proj"],
             base_model_name_or_path=configs.base_model,
             optimizer_type=ff.OptimizerType.OPTIMIZER_TYPE_SGD,
             optimizer_kwargs={
