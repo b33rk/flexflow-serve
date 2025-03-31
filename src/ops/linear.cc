@@ -491,20 +491,6 @@ OpMeta *Linear::init_task_with_dim(Task const *task,
 
   LinearMeta *m = new LinearMeta(
       handle, batch_size, linear, gpu_mem_allocator, in_dim * out_dim);
-  m->activation = linear->activation;
-  m->kernel_reg_type = linear->kernel_reg_type;
-  m->kernel_reg_lambda = linear->kernel_reg_lambda;
-  m->use_bias = linear->use_bias;
-  m->add_bias_only_once = linear->add_bias_only_once;
-  m->profiling = linear->profiling;
-  m->inference_debugging = linear->inference_debugging;
-  m->enable_peft_finetuning = linear->enable_peft_finetuning;
-  m->trainable_inputs[0] = linear->trainable_inputs[0];
-  m->weight_ptr_type = m->input_type[0];
-  m->quantization_type = linear->quantization_type;
-  m->offload = linear->offload;
-  std::strcpy(m->op_name, linear->name);
-  m->layer_guid = linear->layer_guid;
 
   init_kernel(m, batch_size, out_dim);
 

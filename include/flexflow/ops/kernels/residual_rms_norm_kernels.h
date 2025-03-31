@@ -30,12 +30,9 @@ public:
 public:
   float eps;
   void *rms_ptr;
-  void *norm_ptr;
 
   bool inplace_residual;
   int in_dim;
-  int batch_size;
-  int num_elements;
   Realm::RegionInstance reserveInst;
   // PEFT related fields
   void *input_activation;

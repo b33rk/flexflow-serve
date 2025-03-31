@@ -229,7 +229,7 @@ void store_peft_activations(ResidualRMSNormMeta const *m,
   int i = bc->finetuning_request_index();
   int tokens_previous_requests =
       bc->requestsInfo[i].first_token_offset_in_batch;
-  int tokens_previous_steps = bc->requestsInfo[i].first_token_offset_in_batch;
+  int tokens_previous_steps = bc->requestsInfo[i].first_token_depth_in_request;
   assert(bc->requestsInfo[i].num_tokens_in_batch == num_ft_tokens);
 
   size_t batch_offset = in_dim * tokens_previous_requests;

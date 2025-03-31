@@ -552,7 +552,7 @@ void store_peft_activations(LinearMeta const *m,
   int num_ft_tokens = bc->num_finetuning_fwd_tokens();
   int tokens_previous_requests =
       bc->requestsInfo[i].first_token_offset_in_batch;
-  int tokens_previous_steps = bc->requestsInfo[i].first_token_offset_in_batch;
+  int tokens_previous_steps = bc->requestsInfo[i].first_token_depth_in_request;
   size_t data_size = out_dim * num_ft_tokens * sizeof(DT);
   size_t batch_offset = out_dim * tokens_previous_requests;
   size_t request_offset = out_dim * tokens_previous_steps;
