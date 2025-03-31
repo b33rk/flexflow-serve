@@ -1788,9 +1788,6 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   });
 }
 
-// TODO(yingyi): replace with flash-attn
-// qkv_ptr: Q, K, V
-// output_ptr: O
 template <typename DT>
 void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                       BatchConfig const *bc,
