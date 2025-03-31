@@ -1635,7 +1635,8 @@ void flexflow_model_generate(flexflow_model_t handle_,
       if (max_lengths[i] >= 0) {
         assert(total_tokens <= max_lengths[i] || num_output_tokens == 0);
       }
-      int max_seq_len = RequestManager::get_request_manager()->get_max_sequence_length();
+      int max_seq_len =
+          RequestManager::get_request_manager()->get_max_sequence_length();
       output_length_and_tokens[i][0] = results[i].output_tokens.size();
       assert(results[i].output_tokens.size() <= max_seq_len + 100 &&
              "Exceeding python buffer size for token ids");

@@ -311,7 +311,6 @@ void run_batched_matmul(IncMultiHeadSelfAttentionMeta const *meta,
   }
 }
 
-
 // todo(gabriele): review this function
 // the params should persist after the function returns
 template <typename DT>
@@ -2311,7 +2310,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       assert(attn->data_type == DT_FLOAT ||
              attn->data_type == DT_HALF && "Unsupported data type");
       gqa_ptr_array_size = num_q_heads * sizeof(void *);
-        inf_instance_size += 3 * gqa_ptr_array_size; // fwd
+      inf_instance_size += 3 * gqa_ptr_array_size; // fwd
     }
 
     // 2. KV cache
@@ -2370,7 +2369,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       qk_prod_size = max_tokens_per_batch * BatchConfig::max_sequence_length() *
                      num_q_heads;
       inf_instance_size += 2 * qk_prod_size * size_of_dt;
-    } 
+    }
     // PEFT partial results buffers
     if (enable_peft_finetuning) {
       allocated_peft_buffer_size1 = BatchConfig::max_sequence_length() *
@@ -2385,8 +2384,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
               BatchConfig::max_sequence_length());
       peft_token_infos_size = sizeof(BatchConfig::PerTokenInfo) *
                               BatchConfig::max_sequence_length();
-      peft_instance_size +=
-          allocated_peft_buffer_size1;
+      peft_instance_size += allocated_peft_buffer_size1;
       peft_instance_size += flash_attn_softmax_lse_size + flash_attn_out_size;
       peft_instance_size += peft_token_infos_size;
     }
