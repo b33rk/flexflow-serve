@@ -510,11 +510,14 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
                  tokens_previous_requests * m->num_q_heads * m->vProjSize;
 
   int num_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
-  auto dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+  assert(m->handle.workSpaceSize >= m->qProjSize *
+                                        (m->num_q_heads + 2 * m->num_kv_heads) *
+                                        num_tokens * sizeof(DT));
+  auto dv_ptr = static_cast<DT *>(m->handle.workSpace) +
                 num_tokens * m->qProjSize * (m->num_q_heads + m->num_kv_heads);
-  auto dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+  auto dk_ptr = static_cast<DT *>(m->handle.workSpace) +
                 num_tokens * (m->qProjSize * m->num_q_heads);
-  auto dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
+  auto dq_ptr = static_cast<DT *>(m->handle.workSpace);
 
   // re-organize q, k, v tensor to match the layout of flash-attn
   // q size: (batch_size, seqlen_q, num_heads, head_size)
@@ -1844,11 +1847,9 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                       cudaStream_t inf_stream,
                       cudaStream_t peft_stream) {
 
-  // phase 0: copy calculated qkv into devQKVProjArray
-  // [qProjSize, tot_num_heads, num_new_tokens]
+  // qkv_ptr: [qProjSize, tot_num_heads, num_new_tokens]
   assert(m->qProjSize == m->kProjSize && m->qProjSize == m->vProjSize);
   size_t tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
-  size_t qkv_proj_size = m->qProjSize * tot_num_heads * bc->num_active_tokens();
 
   if (m->inference_debugging) {
     std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".devQKVProjArray.pt";
@@ -1895,8 +1896,7 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
       general_params, data_pointers, rope_params);
 
   if (bc->num_finetuning_fwd_tokens() > 0) {
-    // wait until copy to devQKVProjArray and application of scaling & rotary
-    // have finished
+    // wait until preparation has finished
     cudaEvent_t prep_done;
     cudaEventCreate(&prep_done);
     cudaEventRecord(prep_done, inf_stream);
@@ -2040,12 +2040,6 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
     int i = bc->finetuning_request_index();
     int num_tokens = bc->requestsInfo[i].num_tokens_in_batch;
     // save dv
-    // DT *C = static_cast<DT *>(m->devQKVProjArrayBWD) +
-    //         2 * num_tokens * (m->qProjSize * m->num_q_heads);
-    // std::string dv_raw_fpath =
-    //     get_peft_dbg_folder(m, shard_id) + ".v_proj.input_gradient_0";
-    // save_tensor(
-    //     C, m->vProjSize * m->num_q_heads * num_tokens, dv_raw_fpath.c_str());
 
     std::string dq_fpath = get_peft_dbg_folder(m, shard_id) + ".dq.pt";
     std::string dk_fpath = get_peft_dbg_folder(m, shard_id) + ".dk.pt";
@@ -2056,17 +2050,17 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
         dv.clone().detach(),
         dv_fpath); // shape: batch_size x seqlen_k x num_heads_k x head_size
 
-    std::cout << "the address of devQKVProjArrayBWD: " << m->devQKVProjArrayBWD
+    std::cout << "the address of workSpace: " << m->handle.workSpace
               << std::endl;
     std::cout << "the address of dq data: " << dq.data_ptr() << std::endl;
     std::cout << "the address of dk data: " << dk.data_ptr() << std::endl;
     std::cout << "the address of dv data: " << dv.data_ptr() << std::endl;
 
-    auto dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+    auto dv_ptr = static_cast<DT *>(m->handle.workSpace) +
                   2 * num_tokens * (m->qProjSize * m->num_q_heads);
-    auto dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+    auto dk_ptr = static_cast<DT *>(m->handle.workSpace) +
                   num_tokens * (m->qProjSize * m->num_q_heads);
-    auto dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
+    auto dq_ptr = static_cast<DT *>(m->handle.workSpace);
     std::cout << "the address of dq_ptr should be: " << dq_ptr << std::endl;
     std::cout << "the address of dk_ptr should be: " << dk_ptr << std::endl;
     std::cout << "the address of dv_ptr should be: " << dv_ptr << std::endl;
@@ -2318,9 +2312,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   num_q_heads = _num_q_heads;
   num_kv_heads = _num_kv_heads;
 
-  // rotary_embedding_meta =
-  //     (RotaryEmbeddingMeta *)calloc(1, sizeof(RotaryEmbeddingMeta));
-  // *rotary_embedding_meta = _rotary_embedding_meta;
   rotary_embedding_meta = new RotaryEmbeddingMeta(_rotary_embedding_meta);
   scaling_query = (bool *)calloc(1, sizeof(bool));
   *scaling_query = _scaling_query;
@@ -2383,12 +2374,8 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                    : BatchConfig::max_tokens_per_batch();
     // devQKVProjArray
     qkv_max_proj_size = qProjSize * tot_num_heads * max_tokens_per_batch;
-    inf_instance_size += qkv_max_proj_size * size_of_dt;
-    if (enable_peft_finetuning) {
-      qkv_max_proj_size_bwd =
-          qProjSize * tot_num_heads * BatchConfig::max_sequence_length();
-
-      peft_instance_size += qkv_max_proj_size_bwd * size_of_dt;
+    if (infer_mode == BEAM_SEARCH_MODE || infer_mode == TREE_VERIFY_MODE) {
+      inf_instance_size += qkv_max_proj_size * size_of_dt;
     }
     // queryTmp and outputTmp: only for paged attention
     if (infer_mode == INC_DECODING_MODE) {
@@ -2503,12 +2490,11 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     // intermediate buffers
     // devQKVProjArray: used to store QKV proj so that we can modify them (apply
     // rope, etc)
-    devQKVProjArray = inf_mem_allocator.allocate_instance_untyped(
-        qkv_max_proj_size * size_of_dt);
-    // devQKVProjArrayBWD
-    if (enable_peft_finetuning) {
-      devQKVProjArrayBWD = peft_mem_allocator.allocate_instance_untyped(
-          qkv_max_proj_size_bwd * size_of_dt);
+    if (infer_mode == BEAM_SEARCH_MODE || infer_mode == TREE_VERIFY_MODE) {
+      devQKVProjArray = inf_mem_allocator.allocate_instance_untyped(
+          qkv_max_proj_size * size_of_dt);
+    } else {
+      devQKVProjArray = nullptr;
     }
     // queryTmp and outputTmp: only for paged attention
     if (infer_mode == INC_DECODING_MODE) {

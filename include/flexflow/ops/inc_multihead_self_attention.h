@@ -200,7 +200,7 @@ public:
          flash_attn_softmax_lse_size = 0, flash_attn_out_size = 0,
          peft_token_infos_size = 0;
 
-  void *devQKVProjArray, *devQKVProjArrayBWD;
+  void *devQKVProjArray;
   void *kvCache, *keyCache, *valueCache;
   void *keyCachePeft, *valueCachePeft;
   void *qk_prods, *qk_prods_softmax;
