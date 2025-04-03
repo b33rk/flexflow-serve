@@ -67,9 +67,12 @@ public:
   // returns number of inference and finetuning FWD tokens
   int num_active_tokens() const;
 
-  // returns number of inference-only tokens
+  // returns number of inference-only tokens (prefill + decode)
   int num_inference_tokens() const;
+  // returns number of inference-only requests (prefill + decode)
   int num_inference_requests() const;
+  int num_prefill_requests() const;
+  int num_decoding_requests() const;
 
   // return the index where the finetuning request would be stored (i.e. last
   // slot of the batch)

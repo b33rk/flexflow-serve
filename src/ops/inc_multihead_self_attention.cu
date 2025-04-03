@@ -1545,10 +1545,11 @@ struct AttnGeneralParams {
   int num_kv_heads;
   int head_dim;
   int num_tokens;
+  int first_prefill_req_idx;
   int peft_req_idx;
   BatchConfig::PerTokenInfo const *tokenInfos;
-  int32_t *kv_indptr;
-  int32_t *kv_page_indices;
+  int32_t *kv_indptr_pref, *kv_indptr_dec;
+  int32_t *kv_page_indices_pref, *kv_page_indices_dec;
   bool const *request_completed;
 };
 
@@ -1568,22 +1569,16 @@ __global__ void attention_prep_kernel(AttnGeneralParams general_params,
     int global_head_idx = (i / half_proj) % tot_num_heads;
     int token_idx = i / (half_proj * tot_num_heads);
     bool is_q = global_head_idx < general_params.num_q_heads;
-    bool is_k = global_head_idx >= general_params.num_q_heads &&
-                global_head_idx <
-                    general_params.num_q_heads + general_params.num_kv_heads;
-    bool is_v = global_head_idx >=
-                general_params.num_q_heads + general_params.num_kv_heads;
+    bool is_k = global_head_idx >= general_params.num_q_heads && global_head_idx < general_params.num_q_heads + general_params.num_kv_heads;
+    bool is_v = global_head_idx >= general_params.num_q_heads + general_params.num_kv_heads;
     // one and only one of is_q, is_k, is_v is true
-    assert((is_q && !is_k && !is_v) || (!is_q && is_k && !is_v) ||
-           (!is_q && !is_k && is_v));
+    assert((is_q && !is_k && !is_v) || (!is_q && is_k && !is_v) || (!is_q && !is_k && is_v));
     int head_idx = is_q ? global_head_idx
                         : (is_k ? global_head_idx - general_params.num_q_heads
                                 : global_head_idx - general_params.num_q_heads -
                                       general_params.num_kv_heads);
-    bool is_peft_token = general_params.tokenInfos[token_idx].request_index ==
-                         general_params.peft_req_idx;
-    int token_abs_idx =
-        general_params.tokenInfos[token_idx].abs_depth_in_request;
+    bool is_peft_token = general_params.tokenInfos[token_idx].request_index == general_params.peft_req_idx;
+    int token_abs_idx = general_params.tokenInfos[token_idx].abs_depth_in_request;
 
     int src_a_offset = (token_idx * general_params.head_dim * tot_num_heads) +
                        (global_head_idx * general_params.head_dim) + pair_idx;
@@ -1648,19 +1643,34 @@ __global__ void attention_prep_kernel(AttnGeneralParams general_params,
         int const req_idx = general_params.tokenInfos[token_idx].request_index;
         assert(req_idx != general_params.peft_req_idx &&
                "Attempting to use inference KV cache for PEFT tokens");
-        int req_idx_compact = 0;
-        for (int j = 0; j < req_idx; j++) {
-          if (!general_params.request_completed[j]) {
-            req_idx_compact++;
+        bool is_decode_token = req_idx < general_params.first_prefill_req_idx;
+        int page_idx = 0;
+        if (is_decode_token) {
+          int req_idx_compact = 0;
+          for (int j = 0; j < req_idx; j++) {
+            assert(j < general_params.first_prefill_req_idx);
+            if (!general_params.request_completed[j]) {
+              req_idx_compact++;
+            }
           }
+          assert(req_idx_compact >= 0 && req_idx_compact <= req_idx &&
+                "Invalid request index");
+          int logical_page_idx = token_abs_idx / kPagesize;
+          page_idx = general_params.kv_page_indices_dec[general_params.kv_indptr_dec[req_idx_compact] + logical_page_idx];
+        } else {
+          int req_idx_compact = 0;
+          for (int j = general_params.first_prefill_req_idx; j < req_idx; j++) {
+            assert(j >= 0);
+            if (!general_params.request_completed[j]) {
+              req_idx_compact++;
+            }
+          }
+          assert(req_idx_compact >= 0 && req_idx_compact <= req_idx &&
+                "Invalid request index");
+          int logical_page_idx = token_abs_idx / kPagesize;
+          page_idx = general_params.kv_page_indices_pref[general_params.kv_indptr_pref[req_idx_compact] + logical_page_idx];
         }
-        assert(req_idx_compact >= 0 && req_idx_compact <= req_idx &&
-               "Invalid request index");
-        int logical_page_idx = token_abs_idx / kPagesize;
-        int page_idx =
-            general_params
-                .kv_page_indices[general_params.kv_indptr[req_idx_compact] +
-                                 logical_page_idx];
+        
         int to_k_idx = get_k_entry_offset_verify(token_abs_idx,
                                                  page_idx,
                                                  general_params.num_kv_heads,
@@ -1715,10 +1725,8 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   uint32_t const num_q_heads = m->num_q_heads;
   uint32_t const num_kv_heads = m->num_kv_heads;
   uint32_t const head_dim = m->qProjSize;
-  uint32_t const batch_size = bc->num_inference_requests();
   float const sm_scale =
       (*m->qk_prod_scaling) ? 1.0f / sqrt(m->qProjSize) : 1.0f;
-  assert(batch_size > 0);
   assert(num_q_heads > 0);
   assert(num_kv_heads > 0);
   assert(head_dim > 0);
@@ -1729,15 +1737,6 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   assert(q != nullptr && "q is null!");
   assert(kv != nullptr && "kv is null!");
   assert(o != nullptr && "o is null!");
-  assert(m->handle.incr_attention_metadata->q_indptr != nullptr &&
-         "q_indptr is null!");
-  assert(m->handle.incr_attention_metadata->kv_indices != nullptr &&
-         "kv_indices is null!");
-  assert(m->handle.incr_attention_metadata->kv_indptr != nullptr &&
-         "kv_indptr is null!");
-  assert(m->handle.incr_attention_metadata->kv_last_page_len != nullptr &&
-         "kv_last_page_len is null!");
-
   if (m->inference_debugging) {
     // qTmp: [qProjSize, num_q_heads, num_new_tokens]
     std::string fpath_q = get_fwd_dbg_folder(m, shard_id) + ".queryTmp.pt";
@@ -1752,90 +1751,210 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
     torch::save(tensor_kv, fpath_kv.c_str());
   }
 
-  paged_kv_t<PageStorage::kIndices, half, int32_t> paged_kv(
+
+  uint32_t batch_size_pref=0, batch_size_dec=0;
+  for (int req_idx = 0; req_idx < bc->max_requests_per_batch(); req_idx++) {
+    if (bc->request_completed[req_idx] || bc->requestsInfo[req_idx].finetuning_request) {
+      continue;
+    }
+    if (bc->requestsInfo[req_idx].prompt_phase) {
+      batch_size_pref++;
+    } else {
+      batch_size_dec++;
+    }
+  }
+
+
+  // prefilling
+  if (batch_size_pref > 0) {
+    cudaStream_t prefilling_stream;
+    checkCUDA(get_legion_stream(&prefilling_stream));
+    cudaEvent_t prep_done;
+    cudaEventCreate(&prep_done);
+    cudaEventRecord(prep_done, stream);
+    cudaStreamWaitEvent(prefilling_stream, prep_done, 0);
+    assert(m->handle.incr_attention_metadata->q_indptr_pref != nullptr &&
+         "q_indptr_pref is null!");
+    assert(m->handle.incr_attention_metadata->kv_indices_pref != nullptr &&
+          "kv_indices_pref is null!");
+    assert(m->handle.incr_attention_metadata->kv_indptr_pref != nullptr &&
+          "kv_indptr_pref is null!");
+    assert(m->handle.incr_attention_metadata->kv_last_page_len_pref != nullptr &&
+          "kv_last_page_len_pref is null!");
+    paged_kv_t<PageStorage::kIndices, half, int32_t> paged_kv(
       num_kv_heads,
       kPagesize,
       head_dim,
-      batch_size,
+      batch_size_pref,
       QKVLayout::kNHD,
       kv,
-      m->handle.incr_attention_metadata->kv_indices,
-      m->handle.incr_attention_metadata->kv_indptr,
-      m->handle.incr_attention_metadata->kv_last_page_len);
+      m->handle.incr_attention_metadata->kv_indices_pref,
+      m->handle.incr_attention_metadata->kv_indptr_pref,
+      m->handle.incr_attention_metadata->kv_last_page_len_pref);
 
-  if (m->inference_debugging && false) {
-    bc->save_to_file(get_fwd_dbg_folder(m, shard_id) + ".batch_config");
-    std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".q_indptr";
-    save_tensor(
-        static_cast<int32_t *>(m->handle.incr_attention_metadata->q_indptr),
-        batch_size + 1,
-        fpath.c_str());
-    fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indptr";
-    save_tensor(
-        static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indptr),
-        batch_size + 1,
-        fpath.c_str());
-    fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indices";
+    if (m->inference_debugging && false) {
+      bc->save_to_file(get_fwd_dbg_folder(m, shard_id) + ".batch_config");
+      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".q_indptr_pref";
+      save_tensor(
+          static_cast<int32_t *>(m->handle.incr_attention_metadata->q_indptr_pref),
+          batch_size_pref + 1,
+          fpath.c_str());
+      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indptr_pref";
+      save_tensor(
+          static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indptr_pref),
+          batch_size_pref + 1,
+          fpath.c_str());
+      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indices_pref";
 
-    int num_pages;
-    checkCUDA(
-        cudaMemcpy(&num_pages,
-                   m->handle.incr_attention_metadata->kv_indptr + batch_size,
-                   sizeof(int),
-                   cudaMemcpyDeviceToHost));
-    save_tensor(
-        static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indices),
-        num_pages,
-        fpath.c_str());
-    fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_last_page_len";
-    save_tensor(static_cast<int32_t *>(
-                    m->handle.incr_attention_metadata->kv_last_page_len),
-                batch_size,
-                fpath.c_str());
+      int num_pages;
+      checkCUDA(
+          cudaMemcpy(&num_pages,
+                    m->handle.incr_attention_metadata->kv_indptr_pref + batch_size_pref,
+                    sizeof(int),
+                    cudaMemcpyDeviceToHost));
+      save_tensor(
+          static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indices_pref),
+          num_pages,
+          fpath.c_str());
+      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_last_page_len_pref";
+      save_tensor(static_cast<int32_t *>(
+                      m->handle.incr_attention_metadata->kv_last_page_len_pref),
+                  batch_size_pref,
+                  fpath.c_str());
+    }
+  
+    assert(m->handle.incr_attention_metadata->prompt_handler_collections.count(batch_size_pref) != 0 && "Handler is not initialized");
+    void *handler = m->handle.incr_attention_metadata->prompt_handler_collections[batch_size_pref];
+    // printf("obtained handler\n");
+    assert(sizeof(DT) == 2 && "FlashInfer only supports half precision");
+    // Note that num decoding tokens == num decoding requests
+    half *q_prefill = q + head_dim * num_q_heads * batch_size_dec; 
+    half *o_prefill = o + head_dim * num_q_heads * batch_size_dec;
+    DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
+      // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
+      cudaError_t result =
+          BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
+                                                        HEAD_DIM,
+                                                        LogitsPostHook::kNone,
+                                                        PosEncodingMode::kNone,
+                                                        false,
+                                                        MaskMode::kCausal,
+                                                        half,
+                                                        half,
+                                                        half,
+                                                        int32_t>(
+              static_cast<BatchPrefillHandler *>(handler),
+              q_prefill,
+              m->handle.incr_attention_metadata->q_indptr_pref,
+              /*q_offset=*/nullptr,
+              paged_kv,
+              /*custom_mask=*/nullptr,
+              /*qk_indptr=*/nullptr,
+              o_prefill,
+              /*lse=*/nullptr,
+              num_q_heads,
+              /*window_left=*/-1,
+              /*logits_soft_cap=*/0.f,
+              sm_scale,
+              /*rope_scale=*/1.f,
+              /*rope_theta=*/static_cast<float>(1e4),
+              prefilling_stream);
+      if (result != cudaSuccess) {
+        fprintf(stderr, "Failed to run BatchPrefillWithPagedKVCacheWrapperDispatched: %s\n", cudaGetErrorString(result));
+        assert(false);
+      }
+    });
   }
 
-  assert(m->handle.incr_attention_metadata->prompt_handler_collections.count(
-             batch_size) != 0 &&
-         "Handler is not initialized");
-  void *handler =
-      m->handle.incr_attention_metadata->prompt_handler_collections[batch_size];
-  // printf("obtained handler\n");
-  assert(sizeof(DT) == 2 && "FlashInfer only supports half precision");
-  DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
-    // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
-    cudaError_t result =
-        BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
-                                                      HEAD_DIM,
-                                                      LogitsPostHook::kNone,
-                                                      PosEncodingMode::kNone,
-                                                      false,
-                                                      MaskMode::kCausal,
-                                                      half,
-                                                      half,
-                                                      half,
-                                                      int32_t>(
-            static_cast<BatchPrefillHandler *>(handler),
-            q,
-            m->handle.incr_attention_metadata->q_indptr,
-            /*q_offset=*/nullptr,
-            paged_kv,
-            /*custom_mask=*/nullptr,
-            /*qk_indptr=*/nullptr,
-            o,
-            /*lse=*/nullptr,
-            num_q_heads,
-            /*window_left=*/-1,
-            /*logits_soft_cap=*/0.f,
-            sm_scale,
-            /*rope_scale=*/1.f,
-            /*rope_theta=*/static_cast<float>(1e4),
-            stream);
-    if (result != cudaSuccess) {
-      throw std::runtime_error("Failed to run "
-                               "IncrementalDecodingAttentionForwardKernel: " +
-                               std::string(cudaGetErrorString(result)));
+  // decoding
+  if (batch_size_dec > 0) {
+    assert(m->handle.incr_attention_metadata->q_indptr_dec != nullptr &&
+         "q_indptr_dec is null!");
+    assert(m->handle.incr_attention_metadata->kv_indices_dec != nullptr &&
+          "kv_indices_dec is null!");
+    assert(m->handle.incr_attention_metadata->kv_indptr_dec != nullptr &&
+          "kv_indptr_dec is null!");
+    assert(m->handle.incr_attention_metadata->kv_last_page_len_dec != nullptr &&
+          "kv_last_page_len_dec is null!");
+    paged_kv_t<PageStorage::kIndices, half, int32_t> paged_kv(
+      num_kv_heads,
+      kPagesize,
+      head_dim,
+      batch_size_dec,
+      QKVLayout::kNHD,
+      kv,
+      m->handle.incr_attention_metadata->kv_indices_dec,
+      m->handle.incr_attention_metadata->kv_indptr_dec,
+      m->handle.incr_attention_metadata->kv_last_page_len_dec);
+
+    if (m->inference_debugging && false) {
+      bc->save_to_file(get_fwd_dbg_folder(m, shard_id) + ".batch_config");
+      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".q_indptr_dec";
+      save_tensor(
+          static_cast<int32_t *>(m->handle.incr_attention_metadata->q_indptr_dec),
+          batch_size_dec + 1,
+          fpath.c_str());
+      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indptr_dec";
+      save_tensor(
+          static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indptr_dec),
+          batch_size_dec + 1,
+          fpath.c_str());
+      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indices_dec";
+
+      int num_pages;
+      checkCUDA(
+          cudaMemcpy(&num_pages,
+                    m->handle.incr_attention_metadata->kv_indptr_dec + batch_size_dec,
+                    sizeof(int),
+                    cudaMemcpyDeviceToHost));
+      save_tensor(
+          static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indices_dec),
+          num_pages,
+          fpath.c_str());
+      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_last_page_len_dec";
+      save_tensor(static_cast<int32_t *>(
+                      m->handle.incr_attention_metadata->kv_last_page_len_dec),
+                  batch_size_dec,
+                  fpath.c_str());
     }
-  });
+  
+    assert(m->handle.incr_attention_metadata->decode_handler_collections.count(batch_size_dec) != 0 && "Handler is not initialized");
+    void *handler = m->handle.incr_attention_metadata->decode_handler_collections[batch_size_dec];
+    // printf("obtained handler\n");
+    assert(sizeof(DT) == 2 && "FlashInfer only supports half precision");
+    // Note that num decoding tokens == num decoding requests
+    half *q_decode = q; 
+    half *o_decode = o;
+    DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
+      // printf("Launching BatchDecodeWithPagedKVCacheWrapperDispatched\n");
+      cudaError_t result =
+          BatchDecodeWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
+                                                        HEAD_DIM,
+                                                        LogitsPostHook::kNone,
+                                                        PosEncodingMode::kNone,
+                                                        half,
+                                                        half,
+                                                        half,
+                                                        int32_t>(
+              static_cast<BatchDecodeHandler *>(handler),
+              q_decode,
+              /*q_offset=*/nullptr,
+              paged_kv,
+              o_decode,
+              /*lse=*/nullptr,
+              num_q_heads,
+              /*window_left=*/-1,
+              /*logits_soft_cap=*/0.f,
+              sm_scale,
+              /*rope_scale=*/1.f,
+              /*rope_theta=*/static_cast<float>(1e4),
+              stream);
+      if (result != cudaSuccess) {
+        fprintf(stderr, "Failed to run BatchDecodeWithPagedKVCacheWrapperDispatched: %s\n", cudaGetErrorString(result));
+        assert(false);
+      }
+    });
+  }
 }
 
 template <typename DT>
@@ -1844,9 +1963,9 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                       int shard_id,
                       DT const *qkv_ptr,
                       DT *output_ptr,
-                      cudaStream_t inf_stream,
-                      cudaStream_t peft_stream) {
-
+                      cudaStream_t stream) {
+  // Step 0: Preparation (shared by inference and finetuning)
+  // ==========================================================================
   // qkv_ptr: [qProjSize, tot_num_heads, num_new_tokens]
   assert(m->qProjSize == m->kProjSize && m->qProjSize == m->vProjSize);
   size_t tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
@@ -1862,15 +1981,28 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   if (bc->num_finetuning_fwd_requests() > 0) {
     peft_req_idx = bc->finetuning_request_index();
   }
+  int first_prefill_req_idx = -1;
+  for (int req_idx = 0; req_idx < bc->max_requests_per_batch(); req_idx++) {
+    if (bc->request_completed[req_idx] || bc->requestsInfo[req_idx].finetuning_request) {
+      continue;
+    }
+    if (bc->requestsInfo[req_idx].prompt_phase) {
+      first_prefill_req_idx = req_idx;
+      break;
+    }
+  }
   AttnGeneralParams general_params = {
       .num_q_heads = m->num_q_heads,
       .num_kv_heads = m->num_kv_heads,
       .head_dim = m->qProjSize,
       .num_tokens = bc->num_active_tokens(),
+      .first_prefill_req_idx = first_prefill_req_idx,
       .peft_req_idx = peft_req_idx,
       .tokenInfos = m->token_infos,
-      .kv_indptr = m->handle.incr_attention_metadata->kv_indptr,
-      .kv_page_indices = m->handle.incr_attention_metadata->kv_indices,
+      .kv_indptr_pref = m->handle.incr_attention_metadata->kv_indptr_pref,
+      .kv_indptr_dec = m->handle.incr_attention_metadata->kv_indptr_dec,
+      .kv_page_indices_pref = m->handle.incr_attention_metadata->kv_indices_pref,
+      .kv_page_indices_dec = m->handle.incr_attention_metadata->kv_indices_dec,
       .request_completed = m->request_completed};
   RopeParams rope_params = {
       .apply_rotary_embedding =
@@ -1896,14 +2028,18 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   attention_prep_kernel<<<GET_BLOCKS(parallelism),
                           min(CUDA_NUM_THREADS, parallelism),
                           0,
-                          inf_stream>>>(
+                          stream>>>(
       general_params, data_pointers, rope_params);
 
+  // Step 1: Run finetuning FWD on a separate stream
+  // ==========================================================================
   if (bc->num_finetuning_fwd_tokens() > 0) {
+    cudaStream_t peft_stream;
+    checkCUDA(get_legion_stream(&peft_stream));
     // wait until preparation has finished
     cudaEvent_t prep_done;
     cudaEventCreate(&prep_done);
-    cudaEventRecord(prep_done, inf_stream);
+    cudaEventRecord(prep_done, stream);
     cudaStreamWaitEvent(peft_stream, prep_done, 0);
 
     flash_compute_attention_kernel_peft<DT>(
@@ -1923,11 +2059,12 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
     }
   }
 
-  // flashinfer sdpa
+  // Step 2: Run inference
+  // ==========================================================================
   assert(bc->num_finetuning_fwd_tokens() >= 0 &&
          bc->num_finetuning_bwd_tokens() >= 0);
   if (bc->num_inference_tokens() > 0) {
-    flashinfer_incr_attention<DT>(m, bc, shard_id, output_ptr, inf_stream);
+    flashinfer_incr_attention<DT>(m, bc, shard_id, output_ptr, stream);
   }
 }
 
@@ -2152,10 +2289,8 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
     int shard_id,
     GenericTensorAccessorR const &input,
     GenericTensorAccessorW const &output) {
-  cudaStream_t inf_stream;
-  checkCUDA(get_legion_stream(&inf_stream));
-  cudaStream_t peft_stream;
-  checkCUDA(get_legion_stream(&peft_stream));
+  cudaStream_t stream;
+  checkCUDA(get_legion_stream(&stream));
 
   // cudaEvent_t t_start, t_end;
   // if (m->profiling) {
@@ -2172,8 +2307,7 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
                                                      shard_id,
                                                      input.get_half_ptr(),
                                                      output.get_half_ptr(),
-                                                     inf_stream,
-                                                     peft_stream);
+                                                     stream);
   }
   // else if (input.data_type == DT_BFLOAT16) {
   //   Kernels::IncMultiHeadAttention::inference_kernel(m,
@@ -2181,8 +2315,7 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
   //                                                    shard_id,
   //                                                    input.get_bfloat16_ptr(),
   //                                                    output.get_bfloat16_ptr(),
-  //                                                    inf_stream,
-  //                                                    peft_stream);
+  //                                                    stream);
   // }
   else {
     assert(false && "Unspported data type");
