@@ -340,6 +340,74 @@ void load_attention_weights_v2(DT *ptr,
 }
 
 template <typename DT>
+void load_gate_and_up(DT *ptr,
+                      std::string layer_name,
+                      std::string weights_folder,
+                      size_t volume,
+                      int tensor_parallelism_degree) {
+  // Replace the "gate_and_up" with the actual prefix of the file names
+  std::string prefix = layer_name.substr(0, layer_name.find("gate_and_up"));
+  std::string gate_file = prefix + "gate_proj";
+  std::string up_file = prefix + "up_proj";
+  std::string up_file_path = weights_folder + up_file;
+  std::string gate_file_path = weights_folder + gate_file;
+
+  size_t single_weight_size = volume / 2;
+  size_t stride_size = volume / tensor_parallelism_degree;
+  size_t partition_size = volume / tensor_parallelism_degree;
+  //   std::vector<std::string> weight_filenames = {q_file, k_file, v_file};
+  //   int file_index = 0;
+  std::ifstream gate_stream(gate_file_path, std::ios::in | std::ios::binary);
+  if (!gate_stream.good()) {
+    std::cout << "Could not open file: " << gate_file_path << std::endl;
+    assert(false && "incorrect weight file path");
+  }
+  std::cout << "Loading weight file " << gate_file_path << std::endl;
+  std::ifstream up_stream(up_file_path, std::ios::in | std::ios::binary);
+  if (!up_stream.good()) {
+    std::cout << "Could not open file: " << up_file_path << std::endl;
+    assert(false && "incorrect weight file path");
+  }
+  std::cout << "Loading weight file " << up_file_path << std::endl;
+
+  std::vector<DT> gate_array(single_weight_size);
+  std::vector<DT> up_array(single_weight_size);
+
+  size_t loaded_data_size = sizeof(DT) * single_weight_size;
+  gate_stream.seekg(0, gate_stream.end);
+  gate_stream.seekg(0, gate_stream.beg);
+  gate_stream.read((char *)gate_array.data(), loaded_data_size);
+  size_t in_get_size = gate_stream.gcount();
+  if (in_get_size != loaded_data_size) {
+    std::cout << "load gate data error " << in_get_size << ", "
+              << loaded_data_size;
+    assert(false && "data size mismatch");
+  }
+  up_stream.seekg(0, up_stream.end);
+  up_stream.seekg(0, up_stream.beg);
+  up_stream.read((char *)up_array.data(), loaded_data_size);
+  in_get_size = up_stream.gcount();
+  if (in_get_size != loaded_data_size) {
+    std::cout << "load up data error " << in_get_size << ", "
+              << loaded_data_size;
+    assert(false && "data size mismatch");
+  }
+  assert(single_weight_size == gate_array.size());
+  assert(single_weight_size == up_array.size());
+
+  for (int i = 0; i < tensor_parallelism_degree; i++) {
+    for (int j = 0; j < partition_size; j++) {
+      ptr[i * stride_size + j] = gate_array.at(j + i * partition_size);
+      ptr[i * stride_size + j + partition_size] =
+          up_array.at(j + i * partition_size);
+    }
+  }
+
+  gate_stream.close();
+  up_stream.close();
+}
+
+template <typename DT>
 void load_from_file(DT *ptr, size_t size, std::string filepath) {
   std::ifstream in(filepath, std::ios::in | std::ios::binary);
   if (!in.good()) {
@@ -781,6 +849,15 @@ void FileDataLoader::load_single_weight_tensor(FFModel *ff,
       std::string weight_filepath =
           join_path({weights_folder, weight_filename});
       load_from_file(data, volume, weight_filepath);
+    } else if (l->name != nullptr &&
+               std::string(l->name).find("gate_and_up") != std::string::npos) {
+      assert(weight_idx == 0);
+      assert(l->numWeights == 1); // We do not support bias in SwiGLU now
+      load_gate_and_up(data,
+                       weight_filename,
+                       weights_folder,
+                       volume,
+                       tensor_parallelism_degree);
     } else {
       // default op
       assert(weight_idx == 0 || weight_idx == 1);

@@ -38,22 +38,21 @@ SigmoidSiluMultiMeta::~SigmoidSiluMultiMeta(void) {
 }
 
 template <typename T>
-__global__ void SigmoidSiluMultiKernel(int num_elements,
-                                       T const *input1_ptr,
-                                       T const *input2_ptr,
-                                       T *output_ptr) {
+__global__ void
+    SigmoidSiluMultiKernel(int num_elements, T const *input, T *output_ptr) {
   CUDA_KERNEL_LOOP(i, num_elements) {
-    float sigmoid_val = static_cast<float>(input1_ptr[i]);
+    T gate = input[i];
+    T up = input[i + num_elements];
+    float sigmoid_val = static_cast<float>(gate);
     sigmoid_val = 1.0f / (1.0f + exp(-sigmoid_val));
-    output_ptr[i] = input1_ptr[i] * T(sigmoid_val) * input2_ptr[i];
+    output_ptr[i] = gate * T(sigmoid_val) * up;
   }
 }
 
 /*static*/
 void SigmoidSiluMulti::inference_kernel_wrapper(
     SigmoidSiluMultiMeta const *m,
-    GenericTensorAccessorR const &input1,
-    GenericTensorAccessorR const &input2,
+    GenericTensorAccessorR const &input,
     GenericTensorAccessorW const &output,
     int token_size) {
   if (token_size == 0) {
@@ -62,8 +61,7 @@ void SigmoidSiluMulti::inference_kernel_wrapper(
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
 
-  assert(input2.domain.get_volume() == input1.domain.get_volume());
-  assert(output.domain.get_volume() == input1.domain.get_volume());
+  assert(output.domain.get_volume() * 2 == input.domain.get_volume());
 
   int num_elements = token_size * m->intermediate_size;
 
@@ -77,18 +75,14 @@ void SigmoidSiluMulti::inference_kernel_wrapper(
     SigmoidSiluMultiKernel<<<GET_BLOCKS(num_elements),
                              min(CUDA_NUM_THREADS, num_elements),
                              0,
-                             stream>>>(num_elements,
-                                       input1.get_float_ptr(),
-                                       input2.get_float_ptr(),
-                                       output.get_float_ptr());
+                             stream>>>(
+        num_elements, input.get_float_ptr(), output.get_float_ptr());
   } else if (m->input_type[0] == DT_HALF) {
     SigmoidSiluMultiKernel<<<GET_BLOCKS(num_elements),
                              min(CUDA_NUM_THREADS, num_elements),
                              0,
-                             stream>>>(num_elements,
-                                       input1.get_half_ptr(),
-                                       input2.get_half_ptr(),
-                                       output.get_half_ptr());
+                             stream>>>(
+        num_elements, input.get_half_ptr(), output.get_half_ptr());
   } else {
     assert(false && "unsupport datatype in SigmoidSiluMulti");
   }
