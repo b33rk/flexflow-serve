@@ -347,14 +347,14 @@ void load_gate_and_up(DT *ptr,
                       int tensor_parallelism_degree) {
   // Replace the "gate_and_up" with the actual prefix of the file names
   std::string prefix = layer_name.substr(0, layer_name.find("gate_and_up"));
-  std::string gate_file = prefix + "gate_proj";
-  std::string up_file = prefix + "up_proj";
-  std::string up_file_path = weights_folder + up_file;
-  std::string gate_file_path = weights_folder + gate_file;
+  std::string gate_file = prefix + "gate_proj.weight";
+  std::string up_file = prefix + "up_proj.weight";
+  std::string up_file_path = join_path({weights_folder, up_file});
+  std::string gate_file_path = join_path({weights_folder, gate_file});
 
   size_t single_weight_size = volume / 2;
   size_t stride_size = volume / tensor_parallelism_degree;
-  size_t partition_size = volume / tensor_parallelism_degree;
+  size_t partition_size = single_weight_size / tensor_parallelism_degree;
   //   std::vector<std::string> weight_filenames = {q_file, k_file, v_file};
   //   int file_index = 0;
   std::ifstream gate_stream(gate_file_path, std::ios::in | std::ios::binary);
@@ -362,13 +362,14 @@ void load_gate_and_up(DT *ptr,
     std::cout << "Could not open file: " << gate_file_path << std::endl;
     assert(false && "incorrect weight file path");
   }
-  std::cout << "Loading weight file " << gate_file_path << std::endl;
+  std::cout << "Loading weight file " << prefix + "gate_proj.weight"
+            << std::endl;
   std::ifstream up_stream(up_file_path, std::ios::in | std::ios::binary);
   if (!up_stream.good()) {
     std::cout << "Could not open file: " << up_file_path << std::endl;
     assert(false && "incorrect weight file path");
   }
-  std::cout << "Loading weight file " << up_file_path << std::endl;
+  std::cout << "Loading weight file " << prefix + "up_proj.weight" << std::endl;
 
   std::vector<DT> gate_array(single_weight_size);
   std::vector<DT> up_array(single_weight_size);

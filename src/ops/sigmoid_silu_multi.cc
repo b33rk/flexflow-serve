@@ -67,7 +67,7 @@ Tensor FFModel::sigmoid_silu_multi(Tensor const input,
                                    char const *name) {
 
   // Check dims
-  assert(input->dims[input->num_dims - 1] == intermediate_size * 2);
+  assert(input->dims[0] == intermediate_size * 2);
 
   // Tensor Data type
   if (data_type == DT_NONE) {
@@ -87,8 +87,10 @@ Tensor FFModel::sigmoid_silu_multi(Tensor const input,
                          0 /*weights*/,
                          1 /*outputs*/,
                          casted_input);
+  auto dims = input->dims;
+  dims[0] = intermediate_size;
   ssm->outputs[0] = create_tensor_legion_ordering(
-      input->num_dims, input->dims, data_type, ssm, 0, false /*create_grad*/);
+      input->num_dims, dims, data_type, ssm, 0, false /*create_grad*/);
   ssm->add_int_property("intermediate_size", intermediate_size);
   ssm->add_int_property("tensor_parallelism_degree",
                         config.tensor_parallelism_degree);
@@ -142,8 +144,10 @@ SigmoidSiluMulti::SigmoidSiluMulti(FFModel &model,
       tensor_parallelism_degree(_tensor_parallelism_degree) {
   // overwrite layer_guid
   layer_guid = _layer_guid;
+  auto dims = _input->dims;
+  dims[0].size = _intermediate_size;
   outputs[0] = model.create_parallel_tensor_legion_ordering(
-      _input->num_dims, _input->dims, _input->data_type, this, 0 /*owner_idx*/);
+      _input->num_dims, dims, _input->data_type, this, 0 /*owner_idx*/);
 }
 
 void SigmoidSiluMulti::init_inference(
