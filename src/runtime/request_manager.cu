@@ -298,8 +298,10 @@ void RequestManager::load_batch_config_task(
       // prepare attention forward handler
       if (handle.incr_attention_metadata->decode_handler_collections.count(num_decoding_reqs) == 0) {
         handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs] = static_cast<void *>(new flashinfer::BatchDecodeHandler(true));
+        printf("BatchDecodeHandler %p\n", handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs]);
       }
       BatchDecodeHandler *handler = static_cast<BatchDecodeHandler *>(handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs]);
+      assert(handler != nullptr && "BatchDecodeHandler is null");
       
       handler->SetCUDAStream(stream);
       // static int step=0;
@@ -398,8 +400,10 @@ void RequestManager::load_batch_config_task(
       // prepare attention forward handler
       if (handle.incr_attention_metadata->prompt_handler_collections.count(num_prefill_reqs) == 0) {
         handle.incr_attention_metadata->prompt_handler_collections[num_prefill_reqs] = static_cast<void *>(new flashinfer::BatchPrefillHandler(true));
+        printf("BatchPrefillHandler %p\n", handle.incr_attention_metadata->prompt_handler_collections[num_prefill_reqs]);
       }
-      BatchPrefillHandler *handler = static_cast<BatchPrefillHandler *>(handle.incr_attention_metadata->decode_handler_collections[num_prefill_reqs]);
+      BatchPrefillHandler *handler = static_cast<BatchPrefillHandler *>(handle.incr_attention_metadata->prompt_handler_collections[num_prefill_reqs]);
+      assert(handler != nullptr && "BatchPrefillHandler is null");
       
       handler->SetCUDAStream(stream);
       // static int step=0;
