@@ -1752,17 +1752,9 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   }
 
 
-  uint32_t batch_size_pref=0, batch_size_dec=0;
-  for (int req_idx = 0; req_idx < bc->max_requests_per_batch(); req_idx++) {
-    if (bc->request_completed[req_idx] || bc->requestsInfo[req_idx].finetuning_request) {
-      continue;
-    }
-    if (bc->requestsInfo[req_idx].prompt_phase) {
-      batch_size_pref++;
-    } else {
-      batch_size_dec++;
-    }
-  }
+  int batch_size_pref = bc->num_prefill_requests();
+  int batch_size_dec = bc->num_decoding_requests();
+  assert(batch_size_pref + batch_size_dec == bc->num_inference_requests());
 
 
   // prefilling
