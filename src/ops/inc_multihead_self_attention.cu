@@ -1981,7 +1981,7 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   if (bc->num_finetuning_fwd_requests() > 0) {
     peft_req_idx = bc->finetuning_request_index();
   }
-  int first_prefill_req_idx = -1;
+  int first_prefill_req_idx = bc->max_requests_per_batch();
   for (int req_idx = 0; req_idx < bc->max_requests_per_batch(); req_idx++) {
     if (bc->request_completed[req_idx] || bc->requestsInfo[req_idx].finetuning_request) {
       continue;

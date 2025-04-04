@@ -297,7 +297,7 @@ void RequestManager::load_batch_config_task(
                                 stream));
       // prepare attention forward handler
       if (handle.incr_attention_metadata->decode_handler_collections.count(num_decoding_reqs) == 0) {
-        handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs] = static_cast<void *>(new flashinfer::BatchDecodeHandler(true));
+        handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs] = static_cast<void *>(new flashinfer::BatchDecodeHandler(true, num_decoding_reqs));
         printf("BatchDecodeHandler %p\n", handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs]);
       }
       BatchDecodeHandler *handler = static_cast<BatchDecodeHandler *>(handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs]);
