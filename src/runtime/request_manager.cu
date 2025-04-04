@@ -95,7 +95,7 @@ void prepare_inference_params_kernel_h(
     std::vector<int32_t> &kv_indptr_h,
     std::vector<int32_t> &kv_page_indices_h,
     std::vector<int32_t> &kv_last_page_len_h) {
-  printf("Entering prepare_inference_params_kernel_h\n");
+  // printf("Entering prepare_inference_params_kernel_h\n");
 
   PageManager *pm = PageManager::get_page_manager();
 
@@ -150,10 +150,10 @@ void prepare_inference_params_kernel_h(
   }
 
   // check sizes
-  printf("num_prefill_reqs: %d\n", batch_config->num_prefill_requests());
-  printf("num_decoding_reqs: %d\n", batch_config->num_decoding_requests());
-  printf("batch_size: %d\n", batch_size);
-  printf("decoding: %d\n", decoding);
+  // printf("num_prefill_reqs: %d\n", batch_config->num_prefill_requests());
+  // printf("num_decoding_reqs: %d\n", batch_config->num_decoding_requests());
+  // printf("batch_size: %d\n", batch_size);
+  // printf("decoding: %d\n", decoding);
   assert(batch_size > 0);
   assert(batch_size <= batch_config->num_inference_requests());
   if (decoding) {
@@ -259,8 +259,8 @@ void RequestManager::load_batch_config_task(
     int num_prefill_reqs = batch_config->num_prefill_requests();
     int num_decoding_reqs = batch_config->num_decoding_requests();
 
-    printf("num_prefill_reqs: %d\n", num_prefill_reqs);
-    printf("num_decoding_reqs: %d\n", num_decoding_reqs);
+    // printf("num_prefill_reqs: %d\n", num_prefill_reqs);
+    // printf("num_decoding_reqs: %d\n", num_decoding_reqs);
     
     // 1. prepare the indptrs for decoding requests, which occupy the first section in the batch
     // ================================================================
@@ -298,7 +298,7 @@ void RequestManager::load_batch_config_task(
       // prepare attention forward handler
       if (handle.incr_attention_metadata->decode_handler_collections.count(num_decoding_reqs) == 0) {
         handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs] = static_cast<void *>(new flashinfer::BatchDecodeHandler(true, num_decoding_reqs));
-        printf("BatchDecodeHandler %p\n", handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs]);
+        // printf("BatchDecodeHandler %p\n", handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs]);
       }
       BatchDecodeHandler *handler = static_cast<BatchDecodeHandler *>(handle.incr_attention_metadata->decode_handler_collections[num_decoding_reqs]);
       assert(handler != nullptr && "BatchDecodeHandler is null");
@@ -400,7 +400,7 @@ void RequestManager::load_batch_config_task(
       // prepare attention forward handler
       if (handle.incr_attention_metadata->prompt_handler_collections.count(num_prefill_reqs) == 0) {
         handle.incr_attention_metadata->prompt_handler_collections[num_prefill_reqs] = static_cast<void *>(new flashinfer::BatchPrefillHandler(true));
-        printf("BatchPrefillHandler %p\n", handle.incr_attention_metadata->prompt_handler_collections[num_prefill_reqs]);
+        // printf("BatchPrefillHandler %p\n", handle.incr_attention_metadata->prompt_handler_collections[num_prefill_reqs]);
       }
       BatchPrefillHandler *handler = static_cast<BatchPrefillHandler *>(handle.incr_attention_metadata->prompt_handler_collections[num_prefill_reqs]);
       assert(handler != nullptr && "BatchPrefillHandler is null");
