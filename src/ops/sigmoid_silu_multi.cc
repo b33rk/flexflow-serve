@@ -87,7 +87,10 @@ Tensor FFModel::sigmoid_silu_multi(Tensor const input,
                          0 /*weights*/,
                          1 /*outputs*/,
                          casted_input);
-  auto dims = input->dims;
+  int dims[MAX_TENSOR_DIM] = {0};
+  for (int i = 0; i < input->num_dims; i++) {
+    dims[i] = input->dims[i];
+  }
   dims[0] = intermediate_size;
   ssm->outputs[0] = create_tensor_legion_ordering(
       input->num_dims, dims, data_type, ssm, 0, false /*create_grad*/);
@@ -144,7 +147,10 @@ SigmoidSiluMulti::SigmoidSiluMulti(FFModel &model,
       tensor_parallelism_degree(_tensor_parallelism_degree) {
   // overwrite layer_guid
   layer_guid = _layer_guid;
-  auto dims = _input->dims;
+  ParallelDim dims[MAX_TENSOR_DIM];
+  for (int i = 0; i < _input->num_dims; i++) {
+    dims[i] = _input->dims[i];
+  }
   dims[0].size = _intermediate_size;
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       _input->num_dims, dims, _input->data_type, this, 0 /*owner_idx*/);

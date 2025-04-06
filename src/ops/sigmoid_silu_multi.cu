@@ -38,14 +38,20 @@ SigmoidSiluMultiMeta::~SigmoidSiluMultiMeta(void) {
 }
 
 template <typename T>
-__global__ void
-    SigmoidSiluMultiKernel(int num_elements, T const *input, T *output_ptr) {
+__global__ void SigmoidSiluMultiKernel(int num_elements,
+                                       int intermediate_size,
+                                       T const *input,
+                                       T *output_ptr) {
   CUDA_KERNEL_LOOP(i, num_elements) {
-    T gate = input[i];
-    T up = input[i + num_elements];
+    int row = i / intermediate_size;
+    int col = i % intermediate_size;
+    int gate_idx = row * intermediate_size * 2 + col;
+    int up_idx = row * intermediate_size * 2 + col + intermediate_size;
+    T gate = input[gate_idx];
+    T up = input[up_idx];
     float sigmoid_val = static_cast<float>(gate);
-    sigmoid_val = 1.0f / (1.0f + exp(-sigmoid_val));
-    output_ptr[i] = gate * T(sigmoid_val) * up;
+    sigmoid_val = 1.0f / (1.0f + __expf(-sigmoid_val));
+    output_ptr[i] = gate * static_cast<T>(sigmoid_val) * up;
   }
 }
 
@@ -75,14 +81,18 @@ void SigmoidSiluMulti::inference_kernel_wrapper(
     SigmoidSiluMultiKernel<<<GET_BLOCKS(num_elements),
                              min(CUDA_NUM_THREADS, num_elements),
                              0,
-                             stream>>>(
-        num_elements, input.get_float_ptr(), output.get_float_ptr());
+                             stream>>>(num_elements,
+                                       m->intermediate_size,
+                                       input.get_float_ptr(),
+                                       output.get_float_ptr());
   } else if (m->input_type[0] == DT_HALF) {
     SigmoidSiluMultiKernel<<<GET_BLOCKS(num_elements),
                              min(CUDA_NUM_THREADS, num_elements),
                              0,
-                             stream>>>(
-        num_elements, input.get_half_ptr(), output.get_half_ptr());
+                             stream>>>(num_elements,
+                                       m->intermediate_size,
+                                       input.get_half_ptr(),
+                                       output.get_half_ptr());
   } else {
     assert(false && "unsupport datatype in SigmoidSiluMulti");
   }
