@@ -92,6 +92,10 @@ FFHandler
   handle.quantization_type = info->quantization_type;
   handle.allowTensorOpMathConversion = info->allowTensorOpMathConversion;
 
+  // create additional streams for tasks that require more than 1
+  checkCUDA(cudaStreamCreate(&handle.extra_stream1));
+  checkCUDA(cudaStreamCreate(&handle.extra_stream2));
+
   // flashinfer
   handle.incr_attention_metadata = new AttentionMetaData();
   assert(handle.incr_attention_metadata != nullptr &&

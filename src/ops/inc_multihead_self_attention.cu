@@ -1719,7 +1719,8 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
                                BatchConfig const *bc,
                                int shard_id,
                                DT *output_ptr,
-                               cudaStream_t stream) {
+                               cudaStream_t main_stream,
+                               cudaEvent_t prep_done) {
 
   // global constant parameters
   uint32_t const num_q_heads = m->num_q_heads;
@@ -1755,109 +1756,6 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   int batch_size_pref = bc->num_prefill_requests();
   int batch_size_dec = bc->num_decoding_requests();
   assert(batch_size_pref + batch_size_dec == bc->num_inference_requests());
-
-
-  // prefilling
-  if (batch_size_pref > 0) {
-    cudaStream_t prefilling_stream;
-    checkCUDA(get_legion_stream(&prefilling_stream));
-    cudaEvent_t prep_done;
-    cudaEventCreate(&prep_done);
-    cudaEventRecord(prep_done, stream);
-    cudaStreamWaitEvent(prefilling_stream, prep_done, 0);
-    assert(m->handle.incr_attention_metadata->q_indptr_pref != nullptr &&
-         "q_indptr_pref is null!");
-    assert(m->handle.incr_attention_metadata->kv_indices_pref != nullptr &&
-          "kv_indices_pref is null!");
-    assert(m->handle.incr_attention_metadata->kv_indptr_pref != nullptr &&
-          "kv_indptr_pref is null!");
-    assert(m->handle.incr_attention_metadata->kv_last_page_len_pref != nullptr &&
-          "kv_last_page_len_pref is null!");
-    paged_kv_t<PageStorage::kIndices, half, int32_t> paged_kv(
-      num_kv_heads,
-      kPagesize,
-      head_dim,
-      batch_size_pref,
-      QKVLayout::kNHD,
-      kv,
-      m->handle.incr_attention_metadata->kv_indices_pref,
-      m->handle.incr_attention_metadata->kv_indptr_pref,
-      m->handle.incr_attention_metadata->kv_last_page_len_pref);
-
-    if (m->inference_debugging && false) {
-      bc->save_to_file(get_fwd_dbg_folder(m, shard_id) + ".batch_config");
-      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".q_indptr_pref";
-      save_tensor(
-          static_cast<int32_t *>(m->handle.incr_attention_metadata->q_indptr_pref),
-          batch_size_pref + 1,
-          fpath.c_str());
-      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indptr_pref";
-      save_tensor(
-          static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indptr_pref),
-          batch_size_pref + 1,
-          fpath.c_str());
-      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indices_pref";
-
-      int num_pages;
-      checkCUDA(
-          cudaMemcpy(&num_pages,
-                    m->handle.incr_attention_metadata->kv_indptr_pref + batch_size_pref,
-                    sizeof(int),
-                    cudaMemcpyDeviceToHost));
-      save_tensor(
-          static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indices_pref),
-          num_pages,
-          fpath.c_str());
-      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_last_page_len_pref";
-      save_tensor(static_cast<int32_t *>(
-                      m->handle.incr_attention_metadata->kv_last_page_len_pref),
-                  batch_size_pref,
-                  fpath.c_str());
-    }
-  
-    assert(m->handle.incr_attention_metadata->prompt_handler_collections.count(batch_size_pref) != 0 && "Handler is not initialized");
-    void *handler = m->handle.incr_attention_metadata->prompt_handler_collections[batch_size_pref];
-    // printf("obtained handler\n");
-    assert(sizeof(DT) == 2 && "FlashInfer only supports half precision");
-    // Note that num decoding tokens == num decoding requests
-    half *q_prefill = q + head_dim * num_q_heads * batch_size_dec; 
-    half *o_prefill = o + head_dim * num_q_heads * batch_size_dec;
-    DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
-      // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
-      cudaError_t result =
-          BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
-                                                        HEAD_DIM,
-                                                        LogitsPostHook::kNone,
-                                                        PosEncodingMode::kNone,
-                                                        false,
-                                                        MaskMode::kCausal,
-                                                        half,
-                                                        half,
-                                                        half,
-                                                        int32_t>(
-              static_cast<BatchPrefillHandler *>(handler),
-              q_prefill,
-              m->handle.incr_attention_metadata->q_indptr_pref,
-              /*q_offset=*/nullptr,
-              paged_kv,
-              /*custom_mask=*/nullptr,
-              /*qk_indptr=*/nullptr,
-              o_prefill,
-              /*lse=*/nullptr,
-              num_q_heads,
-              /*window_left=*/-1,
-              /*logits_soft_cap=*/0.f,
-              sm_scale,
-              /*rope_scale=*/1.f,
-              /*rope_theta=*/static_cast<float>(1e4),
-              prefilling_stream);
-      if (result != cudaSuccess) {
-        fprintf(stderr, "Failed to run BatchPrefillWithPagedKVCacheWrapperDispatched: %s\n", cudaGetErrorString(result));
-        assert(false);
-      }
-    });
-  }
-
   // decoding
   if (batch_size_dec > 0) {
     assert(m->handle.incr_attention_metadata->q_indptr_dec != nullptr &&
@@ -1911,7 +1809,8 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
     }
   
     assert(m->handle.incr_attention_metadata->decode_handler_collections.count(batch_size_dec) != 0 && "Handler is not initialized");
-    void *handler = m->handle.incr_attention_metadata->decode_handler_collections[batch_size_dec];
+    BatchDecodeHandler *handler = static_cast<BatchDecodeHandler *>(m->handle.incr_attention_metadata->decode_handler_collections[batch_size_dec]);
+    handler->SetCUDAStream(main_stream);
     // printf("obtained handler\n");
     assert(sizeof(DT) == 2 && "FlashInfer only supports half precision");
     // Note that num decoding tokens == num decoding requests
@@ -1928,7 +1827,7 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
                                                         half,
                                                         half,
                                                         int32_t>(
-              static_cast<BatchDecodeHandler *>(handler),
+              handler,
               q_decode,
               /*q_offset=*/nullptr,
               paged_kv,
@@ -1940,12 +1839,116 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
               sm_scale,
               /*rope_scale=*/1.f,
               /*rope_theta=*/static_cast<float>(1e4),
-              stream);
+              main_stream);
       if (result != cudaSuccess) {
         fprintf(stderr, "Failed to run BatchDecodeWithPagedKVCacheWrapperDispatched: %s\n", cudaGetErrorString(result));
         assert(false);
       }
     });
+  }
+
+  // prefilling
+  if (batch_size_pref > 0) {
+    cudaStreamWaitEvent(m->handle.extra_stream1, prep_done, 0);
+    assert(m->handle.incr_attention_metadata->q_indptr_pref != nullptr &&
+         "q_indptr_pref is null!");
+    assert(m->handle.incr_attention_metadata->kv_indices_pref != nullptr &&
+          "kv_indices_pref is null!");
+    assert(m->handle.incr_attention_metadata->kv_indptr_pref != nullptr &&
+          "kv_indptr_pref is null!");
+    assert(m->handle.incr_attention_metadata->kv_last_page_len_pref != nullptr &&
+          "kv_last_page_len_pref is null!");
+    paged_kv_t<PageStorage::kIndices, half, int32_t> paged_kv(
+      num_kv_heads,
+      kPagesize,
+      head_dim,
+      batch_size_pref,
+      QKVLayout::kNHD,
+      kv,
+      m->handle.incr_attention_metadata->kv_indices_pref,
+      m->handle.incr_attention_metadata->kv_indptr_pref,
+      m->handle.incr_attention_metadata->kv_last_page_len_pref);
+
+    if (m->inference_debugging && false) {
+      bc->save_to_file(get_fwd_dbg_folder(m, shard_id) + ".batch_config");
+      std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".q_indptr_pref";
+      save_tensor(
+          static_cast<int32_t *>(m->handle.incr_attention_metadata->q_indptr_pref),
+          batch_size_pref + 1,
+          fpath.c_str());
+      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indptr_pref";
+      save_tensor(
+          static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indptr_pref),
+          batch_size_pref + 1,
+          fpath.c_str());
+      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_indices_pref";
+
+      int num_pages;
+      checkCUDA(
+          cudaMemcpy(&num_pages,
+                    m->handle.incr_attention_metadata->kv_indptr_pref + batch_size_pref,
+                    sizeof(int),
+                    cudaMemcpyDeviceToHost));
+      save_tensor(
+          static_cast<int32_t *>(m->handle.incr_attention_metadata->kv_indices_pref),
+          num_pages,
+          fpath.c_str());
+      fpath = get_fwd_dbg_folder(m, shard_id) + ".kv_last_page_len_pref";
+      save_tensor(static_cast<int32_t *>(
+                      m->handle.incr_attention_metadata->kv_last_page_len_pref),
+                  batch_size_pref,
+                  fpath.c_str());
+    }
+  
+    assert(m->handle.incr_attention_metadata->prompt_handler_collections.count(batch_size_pref) != 0 && "Handler is not initialized");
+    BatchPrefillHandler *handler = static_cast<BatchPrefillHandler *>(m->handle.incr_attention_metadata->prompt_handler_collections[batch_size_pref]);
+    handler->SetCUDAStream(m->handle.extra_stream1);
+    // printf("obtained handler\n");
+    assert(sizeof(DT) == 2 && "FlashInfer only supports half precision");
+    // Note that num decoding tokens == num decoding requests
+    half *q_prefill = q + head_dim * num_q_heads * batch_size_dec; 
+    half *o_prefill = o + head_dim * num_q_heads * batch_size_dec;
+    DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
+      // printf("Launching BatchPrefillWithPagedKVCacheWrapperDispatched\n");
+      cudaError_t result =
+          BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
+                                                        HEAD_DIM,
+                                                        LogitsPostHook::kNone,
+                                                        PosEncodingMode::kNone,
+                                                        false,
+                                                        MaskMode::kCausal,
+                                                        half,
+                                                        half,
+                                                        half,
+                                                        int32_t>(
+              handler,
+              q_prefill,
+              m->handle.incr_attention_metadata->q_indptr_pref,
+              /*q_offset=*/nullptr,
+              paged_kv,
+              /*custom_mask=*/nullptr,
+              /*qk_indptr=*/nullptr,
+              o_prefill,
+              /*lse=*/nullptr,
+              num_q_heads,
+              /*window_left=*/-1,
+              /*logits_soft_cap=*/0.f,
+              sm_scale,
+              /*rope_scale=*/1.f,
+              /*rope_theta=*/static_cast<float>(1e4),
+              m->handle.extra_stream1);
+      if (result != cudaSuccess) {
+        fprintf(stderr, "Failed to run BatchPrefillWithPagedKVCacheWrapperDispatched: %s\n", cudaGetErrorString(result));
+        assert(false);
+      }
+    });
+
+    // ensure the main stream waits until prefilling has finished
+    cudaEvent_t prefilling_done;
+    checkCUDA(cudaEventCreate(&prefilling_done));
+    checkCUDA(cudaEventRecord(prefilling_done, m->handle.extra_stream1));
+    checkCUDA(cudaStreamWaitEvent(main_stream, prefilling_done, 0));
+    checkCUDA(cudaEventDestroy(prefilling_done));
   }
 }
 
@@ -2023,19 +2026,18 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                           stream>>>(
       general_params, data_pointers, rope_params);
 
+  cudaEvent_t prep_done, finetuning_done;
+  checkCUDA(cudaEventCreate(&prep_done));
+  checkCUDA(cudaEventCreate(&finetuning_done));
+  checkCUDA(cudaEventRecord(prep_done, stream));
+  
   // Step 1: Run finetuning FWD on a separate stream
   // ==========================================================================
   if (bc->num_finetuning_fwd_tokens() > 0) {
-    cudaStream_t peft_stream;
-    checkCUDA(get_legion_stream(&peft_stream));
-    // wait until preparation has finished
-    cudaEvent_t prep_done;
-    cudaEventCreate(&prep_done);
-    cudaEventRecord(prep_done, stream);
-    cudaStreamWaitEvent(peft_stream, prep_done, 0);
+    cudaStreamWaitEvent(m->handle.extra_stream2, prep_done, 0);
 
     flash_compute_attention_kernel_peft<DT>(
-        m, bc, output_ptr, shard_id, peft_stream);
+        m, bc, output_ptr, shard_id, m->handle.extra_stream2);
 
     assert(m->peft_token_infos != nullptr);
     assert(m->peft_token_infos_size == sizeof(BatchConfig::PerTokenInfo) *
@@ -2049,6 +2051,7 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
       m->peft_token_infos[prev_steps_tokens + j] =
           bc->tokensInfo[tokens_previous_requests + j];
     }
+    checkCUDA(cudaEventRecord(finetuning_done, m->handle.extra_stream2));
   }
 
   // Step 2: Run inference
@@ -2056,8 +2059,14 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   assert(bc->num_finetuning_fwd_tokens() >= 0 &&
          bc->num_finetuning_bwd_tokens() >= 0);
   if (bc->num_inference_tokens() > 0) {
-    flashinfer_incr_attention<DT>(m, bc, shard_id, output_ptr, stream);
+    flashinfer_incr_attention<DT>(m, bc, shard_id, output_ptr, stream, prep_done);
   }
+
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    checkCUDA(cudaStreamWaitEvent(stream, finetuning_done, 0));
+  }
+  checkCUDA(cudaEventDestroy(prep_done));
+  checkCUDA(cudaEventDestroy(finetuning_done));
 }
 
 // todo(yingyi): replace with flash-attn
