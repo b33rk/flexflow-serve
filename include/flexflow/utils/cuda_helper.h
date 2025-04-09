@@ -194,7 +194,7 @@ struct cublasAlphaBetaType<half> {
 };
 template <>
 struct cublasAlphaBetaType<__nv_bfloat16> {
-  using type = float;
+  using type = __nv_bfloat16;
 };
 
 cudaDataType_t ff_to_cuda_datatype(DataType type);

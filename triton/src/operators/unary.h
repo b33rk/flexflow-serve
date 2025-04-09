@@ -39,6 +39,7 @@ struct UnaryArgs : public OperatorArgs {
   union {
     int8_t int8_value;
     __half half_value;
+    __ff_bfloat16 bfloat16_value;
     float float_value;
     double double_value;
   } scalar;
