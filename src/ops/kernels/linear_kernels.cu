@@ -228,15 +228,15 @@ void inference_kernel_wrapper(LinearMeta *m,
           m, bc, out_dim, static_cast<half *>(output_ptr), stream);
     }
   } else if (m->input_type[0] == DT_BFLOAT16) {
-    Internal::inference_kernel<__ff_bfloat16>(m,
-                                              input_ptr,
-                                              output_ptr,
-                                              weight_ptr,
-                                              bias_ptr,
-                                              in_dim,
-                                              out_dim,
-                                              batch_size,
-                                              stream);
+    Internal::inference_kernel<float>(m,
+                                      input_ptr,
+                                      output_ptr,
+                                      weight_ptr,
+                                      bias_ptr,
+                                      in_dim,
+                                      out_dim,
+                                      batch_size,
+                                      stream);
     if ((m->activation == AC_MODE_RELU || m->activation == AC_MODE_SIGMOID) &&
         bc->num_finetuning_fwd_requests() > 0) {
       Internal::store_peft_activations<__ff_bfloat16>(
@@ -393,6 +393,8 @@ void inference_kernel(LinearMeta const *m,
   }
   checkCUDA(cublasSetStream(m->handle.blas, stream));
   checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
+  // CUDA_R_32F for bf16:
+  // https://docs.nvidia.com/cuda/cublas/index.html?highlight=cublasGemmEx#cublasgemmex
   DT alpha = 1.0f, beta = 0.0f;
   cudaDataType_t input_type = ff_to_cuda_datatype(m->input_type[0]);
   cudaDataType_t weight_type = m->offload
@@ -400,7 +402,8 @@ void inference_kernel(LinearMeta const *m,
                                    : ff_to_cuda_datatype(m->weight_type[0]);
   cudaDataType_t output_type = ff_to_cuda_datatype(m->output_type[0]);
   assert(input_type == weight_type && weight_type == output_type);
-  cudaDataType_t compute_type = output_type;
+  cudaDataType_t compute_type =
+      output_type == CUDA_R_16BF ? CUDA_R_32F : output_type;
   checkCUDA(cublasGemmEx(m->handle.blas,
                          CUBLAS_OP_T,
                          CUBLAS_OP_N,

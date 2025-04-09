@@ -576,6 +576,8 @@ hipblasDatatype_t ff_to_cuda_datatype(DataType type) {
       return HIPBLAS_R_64F;
     case DT_INT32:
       return HIPBLAS_R_32I;
+    case DT_BFLOAT16:
+      return HIPBLAS_R_16BF;
     default:
       assert(false && "Unspoorted cuda data type");
   }
