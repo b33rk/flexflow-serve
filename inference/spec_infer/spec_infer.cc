@@ -106,7 +106,7 @@ void parse_input_args(char **argv,
       data_type = DT_FLOAT;
       continue;
     }
-    if (!strcmp(argv[i], "--use-bf16")) {
+    if (!strcmp(argv[i], "--use-bf16-precision")) {
       use_bf16_precision = true;
       data_type = DT_BFLOAT16;
       continue;
