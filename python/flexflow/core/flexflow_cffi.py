@@ -1759,7 +1759,7 @@ class FileDataLoader(object):
         hidden_dim,
         qkv_inner_dim,
         tensor_parallelism_degree,
-        use_full_precision,
+        use_full_precision, # todo(yingyi): change to data_type
     ):
         c_weight_file_path = get_c_name(weight_file_path)
         self.handle = ffc().flexflow_file_data_loader_create(

@@ -80,6 +80,16 @@ void inference_kernel_wrapper(LoraLinearMeta *m,
                                      in_dim,
                                      out_dim,
                                      stream);
+  } else if (m->input_type[0] == DT_BFLOAT16) {
+    Internal::inference_kernel<__ff_bfloat16>(m,
+                                     bc,
+                                     input.get_bfloat16_ptr(),
+                                     output.get_bfloat16_ptr(),
+                                     in_dim,
+                                     out_dim,
+                                     stream);
+  } else {
+    assert(false && "Unsupported data type");
   }
 
   if (m->profiling) {
@@ -138,6 +148,19 @@ void peft_bwd_kernel_wrapper(Context ctx,
                                     in_dim,
                                     out_dim,
                                     stream);
+  } else if (m->input_type[0] == DT_BFLOAT16) {
+    Internal::peft_bwd_kernel<__ff_bfloat16>(ctx,
+                                    runtime,
+                                    m,
+                                    bc,
+                                    shard_id,
+                                    input_grad.get_bfloat16_ptr(),
+                                    output_grad.get_bfloat16_ptr(),
+                                    in_dim,
+                                    out_dim,
+                                    stream);
+  } else {
+    assert(false && "Unsupported data type");
   }
 
   if (m->profiling) {

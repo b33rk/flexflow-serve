@@ -504,6 +504,13 @@ void LoraLinear::inference_task(Task const *task,
         at::Tensor tensor2 = createTorchTensorFromCuda<half>(
             weight.w0_ptr, {lora_config.rank, out_dim});
         torch::save(tensor2, filenameB.c_str());
+      } else if (m->input_type[0] == DT_BFLOAT16) {
+        at::Tensor tensor1 = createTorchTensorFromCuda<__ff_bfloat16>(
+            weight.w0_ptr, {lora_config.rank, in_dim});
+        torch::save(tensor1, filenameA.c_str());
+        at::Tensor tensor2 = createTorchTensorFromCuda<__ff_bfloat16>(
+            weight.w0_ptr, {lora_config.rank, out_dim});
+        torch::save(tensor2, filenameB.c_str());
       } else {
         assert(false && "Data type not supported");
       }
@@ -518,6 +525,10 @@ void LoraLinear::inference_task(Task const *task,
           torch::save(tensor, filename.c_str());
         } else if (output.data_type == DT_HALF) {
           at::Tensor tensor = createTorchTensorFromCuda<half>(
+              weight.low_rank_activation, {lora_config.rank, num_tokens});
+          torch::save(tensor, filename.c_str());
+        } else if (output.data_type == DT_BFLOAT16) {
+          at::Tensor tensor = createTorchTensorFromCuda<__ff_bfloat16>(
               weight.low_rank_activation, {lora_config.rank, num_tokens});
           torch::save(tensor, filename.c_str());
         } else {
@@ -676,6 +687,23 @@ void lora_inference_debugging(LoraLinearMeta *m,
     torch::save(tensorB, filename_weight_B.c_str());
     // weight grad B
     at::Tensor tensorGradB = createTorchTensorFromCuda<half>(
+        weight.w1_grad_ptr, {lora_config.rank, out_dim});
+    torch::save(tensorGradB, filename_grad_B.c_str());
+  } else if (m->input_type[0] == DT_BFLOAT16){
+    // weight A
+    at::Tensor tensorA = createTorchTensorFromCuda<__ff_bfloat16>(
+        weight.w0_ptr, {in_dim, lora_config.rank});
+    torch::save(tensorA, filename_weight_A.c_str());
+    // weight grad A
+    at::Tensor tensorGradA = createTorchTensorFromCuda<__ff_bfloat16>(
+        weight.w0_grad_ptr, {in_dim, lora_config.rank});
+    torch::save(tensorGradA, filename_grad_A.c_str());
+    // weight B
+    at::Tensor tensorB = createTorchTensorFromCuda<__ff_bfloat16>(
+        weight.w1_ptr, {lora_config.rank, out_dim});
+    torch::save(tensorB, filename_weight_B.c_str());
+    // weight grad B
+    at::Tensor tensorGradB = createTorchTensorFromCuda<__ff_bfloat16>(
         weight.w1_grad_ptr, {lora_config.rank, out_dim});
     torch::save(tensorGradB, filename_grad_B.c_str());
   } else {

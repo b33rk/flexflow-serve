@@ -83,6 +83,14 @@ LinearMeta::LinearMeta(FFHandler handler,
                           min(CUDA_NUM_THREADS, parallelism),
                           0,
                           stream>>>((half *)one_ptr, batch_size);
+    } else if (data_type == DT_BFLOAT16) {
+      Kernels::Linear::Internal::
+          build_one_ptr<<<GET_BLOCKS(parallelism),
+                          min(CUDA_NUM_THREADS, parallelism),
+                          0,
+                          stream>>>((__ff_bfloat16 *)one_ptr, batch_size);
+    } else {
+      assert(false && "Unsupported data type");
     }
   } else {
     one_ptr = nullptr;
@@ -219,6 +227,23 @@ void inference_kernel_wrapper(LinearMeta *m,
       Internal::store_peft_activations<half>(
           m, bc, out_dim, static_cast<half *>(output_ptr), stream);
     }
+  } else if (m->input_type[0] == DT_BFLOAT16) {
+    Internal::inference_kernel<__ff_bfloat16>(m,
+                                              input_ptr,
+                                              output_ptr,
+                                              weight_ptr,
+                                              bias_ptr,
+                                              in_dim,
+                                              out_dim,
+                                              batch_size,
+                                              stream);
+    if ((m->activation == AC_MODE_RELU || m->activation == AC_MODE_SIGMOID) &&
+        bc->num_finetuning_fwd_requests() > 0) {
+      Internal::store_peft_activations<__ff_bfloat16>(
+          m, bc, out_dim, static_cast<__ff_bfloat16 *>(output_ptr), stream);
+    }
+  } else {
+    assert(false && "Unsupported data type");
   }
 
   if (m->profiling) {
@@ -265,6 +290,17 @@ void peft_bwd_kernel_wrapper(LinearMeta const *m,
                                     in_dim,
                                     out_dim,
                                     stream);
+  } else if (m->input_type[0] == DT_BFLOAT16) {
+    Internal::peft_bwd_kernel<__ff_bfloat16>(m,
+                                             bc,
+                                             input_grad_ptr,
+                                             output_grad_ptr,
+                                             weight_ptr,
+                                             in_dim,
+                                             out_dim,
+                                             stream);
+  } else {
+    assert(false && "Unsupported data type");
   }
 
   if (m->profiling) {
@@ -347,7 +383,6 @@ void inference_kernel(LinearMeta const *m,
                          in_dim,
                          in_dim * out_dim);
       }
-
     } else {
       cudaMemcpyAsync(m->weight_ptr,
                       weight_ptr,

@@ -351,7 +351,6 @@ void inference_kernel(LinearMeta const *m,
                          in_dim,
                          in_dim * out_dim);
       }
-
     } else {
       checkCUDA(hipMemcpyAsync(m->weight_ptr,
                                weight_ptr,

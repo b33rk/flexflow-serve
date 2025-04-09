@@ -79,7 +79,6 @@ template <>
 struct VEC_K<half, 4> {
   using Type = half4;
 };
-
 template <>
 struct VEC_K<__nv_bfloat16, 1> {
   using Type = __nv_bfloat16;
@@ -91,28 +90,6 @@ struct VEC_K<__nv_bfloat16, 2> {
 template <>
 struct VEC_K<__nv_bfloat16, 4> {
   using Type = __nv_bfloat164;
-};
-
-template <>
-struct Vec_fp32_<__nv_bfloat16> {
-  using Type = float;
-};
-template <>
-struct Vec_fp32_<__nv_bfloat162> {
-  using Type = float2;
-};
-template <>
-struct Vec_fp32_<__nv_bfloat164> {
-  using Type = float4;
-};
-template <>
-struct Vec_fp32_<__nv_bfloat168> {
-  using Type = float8;
-};
-
-template <>
-struct VEC_V<__nv_bfloat16> {
-  using Type = __nv_bfloat168;
 };
 
 // data type for QK production
@@ -147,6 +124,22 @@ template <>
 struct Vec_fp32_<half8> {
   using Type = float8;
 };
+template <>
+struct Vec_fp32_<__nv_bfloat16> {
+  using Type = float;
+};
+template <>
+struct Vec_fp32_<__nv_bfloat162> {
+  using Type = float2;
+};
+template <>
+struct Vec_fp32_<__nv_bfloat164> {
+  using Type = float4;
+};
+template <>
+struct Vec_fp32_<__nv_bfloat168> {
+  using Type = float8;
+};
 
 template <typename DT>
 struct VEC_V {};
@@ -157,6 +150,11 @@ struct VEC_V<float> {
 template <>
 struct VEC_V<half> {
   using Type = half8;
+};
+
+template <>
+struct VEC_V<__nv_bfloat16> {
+  using Type = __nv_bfloat168;
 };
 
 ////////////////data structures half///////////////
