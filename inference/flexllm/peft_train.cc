@@ -53,7 +53,10 @@ void parse_input_args(char **argv,
                       int &max_tokens_per_batch,
                       int &max_sequence_length,
                       int &num_kv_cache_slots,
+                      int &max_finetuning_samples,
                       int &max_training_epochs,
+                      int &gradient_accumulation_steps,
+                      int &num_logging_steps,
                       int &num_layers_per_finetuning_step,
                       bool &run_warmup) {
   for (int i = 1; i < argc; i++) {
@@ -143,8 +146,20 @@ void parse_input_args(char **argv,
       num_kv_cache_slots = std::stoi(argv[++i]);
       continue;
     }
-    if (!strcmp(argv[i], "--max-training-steps")) {
+    if (!strcmp(argv[i], "--max-finetuning-samples")) {
+      max_finetuning_samples = std::stoi(argv[++i]);
+      continue;
+    }
+    if (!strcmp(argv[i], "--max-training-epochs")) {
       max_training_epochs = std::stoi(argv[++i]);
+      continue;
+    }
+    if (!strcmp(argv[i], "--gradient-accumulation-steps")) {
+      gradient_accumulation_steps = std::stoi(argv[++i]);
+      continue;
+    }
+    if (!strcmp(argv[i], "--num-logging-steps")) {
+      num_logging_steps = std::stoi(argv[++i]);
       continue;
     }
     if (!strcmp(argv[i], "--num-layers-per-finetuning-step")) {
@@ -283,7 +298,10 @@ void FlexFlow::top_level_task(Task const *task,
   int max_requests_per_batch = 1;
   int max_tokens_per_batch = 128;
   int max_sequence_length = 256;
-  int max_training_epochs = 2;
+  int max_finetuning_samples = -1; // -1: no limit
+  int max_training_epochs = 1;
+  int gradient_accumulation_steps = 8;
+  int num_logging_steps = 10;
   bool enable_peft_finetuning = true;
   int num_layers_per_finetuning_step = -1;
   bool run_warmup = false;
@@ -307,7 +325,10 @@ void FlexFlow::top_level_task(Task const *task,
                    max_tokens_per_batch,
                    max_sequence_length,
                    num_kv_cache_slots,
+                    max_finetuning_samples,
                    max_training_epochs,
+                   gradient_accumulation_steps,
+                    num_logging_steps,
                    num_layers_per_finetuning_step,
                    run_warmup);
   enable_peft_finetuning = file_paths.dataset_file_path.empty() ? false : true;
@@ -482,9 +503,10 @@ void FlexFlow::top_level_task(Task const *task,
 
   // Run workload
   {
-    std::vector<Request> requests =
-        load_requests(file_paths.prompt_file_path, 128);
-
+    std::vector<Request> requests;
+    if (!file_paths.prompt_file_path.empty()) {
+      requests = load_requests(file_paths.prompt_file_path, 128);
+    }
     // Add fine-tuning request
     assert(!file_paths.dataset_file_path.empty() &&
            "Dataset file path is required for fine-tuning.");
@@ -495,8 +517,12 @@ void FlexFlow::top_level_task(Task const *task,
     fine_tuning_req.peft_model_id = *peft_model_id_finetuning;
     fine_tuning_req.peft_finetuning_info.dataset_filepath =
         file_paths.dataset_file_path;
+    fine_tuning_req.peft_finetuning_info.max_samples = max_finetuning_samples;
     fine_tuning_req.peft_finetuning_info.max_training_epochs =
         max_training_epochs;
+    fine_tuning_req.peft_finetuning_info.gradient_accumulation_steps =
+        gradient_accumulation_steps;
+    fine_tuning_req.peft_finetuning_info.num_logging_steps = num_logging_steps;
     requests.push_back(fine_tuning_req);
 
     std::cout << "----------inference started--------------" << std::endl;

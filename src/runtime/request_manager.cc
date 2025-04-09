@@ -182,6 +182,10 @@ bool RequestManager::load_request_token_ids(Request &request) {
                                         /*ignore_comments */ true);
 
       for (auto &prompt : dataset_json) {
+        if (request.peft_finetuning_info.max_samples > 0 &&
+            request.dataset.size() >= request.peft_finetuning_info.max_samples) {
+          break;
+        }
         std::string text = prompt.get<std::string>();
         std::vector<int32_t> input_tokens;
         input_tokens = this->tokenizer_->Encode(text);
@@ -202,7 +206,9 @@ bool RequestManager::load_request_token_ids(Request &request) {
       }
       std::cout << "Creating dataset from json file: "
                 << request.peft_finetuning_info.dataset_filepath
-                << ". Size of dataset: " << request.dataset.size() << std::endl;
+                << ". Size of dataset: " << request.dataset.size()
+                << ". Max samples: " << request.peft_finetuning_info.max_samples
+                << std::endl;
     }
     if (request.peft_finetuning_info.gradient_accumulation_steps == -1) {
       request.peft_finetuning_info.gradient_accumulation_steps =
@@ -250,10 +256,13 @@ std::ostream &operator<<(std::ostream &os, Request const &req) {
     os << "    status: " << req.peft_finetuning_info.status << "\n";
     os << "    dataset_filepath: " << req.peft_finetuning_info.dataset_filepath
        << "\n";
+    os << "    max_samples: " << req.peft_finetuning_info.max_samples << "\n";
     os << "    max_training_epochs: "
        << req.peft_finetuning_info.max_training_epochs << "\n";
     os << "    completed_training_steps: "
        << req.peft_finetuning_info.completed_training_steps << "\n";
+    os << "    num_logging_steps: "
+       << req.peft_finetuning_info.num_logging_steps << "\n";
     os << "    dataset_entry_processed_tokens: "
        << req.peft_finetuning_info.dataset_entry_processed_tokens << "\n";
     os << "    finetuning_losses: "
@@ -1599,6 +1608,11 @@ void RequestManager::process_finetuning_req_bwd_progress(
                       request.peft_finetuning_info.completed_training_steps /
                           ((int)request.dataset.size()),
                       request.peft_finetuning_info.max_training_epochs);
+  }
+  else if (request.peft_finetuning_info.completed_training_steps % request.peft_finetuning_info.num_logging_steps == 0) {
+    log_req_mgr.print("Completed finetuning step %i/%i",
+                      request.peft_finetuning_info.completed_training_steps,
+                      tot_steps);
   }
   if (request.peft_finetuning_info.completed_training_steps == tot_steps ||
       inference_finished) {
