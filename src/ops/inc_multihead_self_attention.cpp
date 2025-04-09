@@ -1398,7 +1398,7 @@ void transposeAdd<__ff_bfloat16>(__ff_bfloat16 *out,
                                 float beta,
                                 hipStream_t stream) {
   transposeAdd_float_kernel<<<4, 1024, 0, stream>>>(
-      out, in, width, height, alpha, beta);
+      out, in, width, height, __float2bfloat16(alpha), __float2bfloat16(beta));
 }
 
 template <>
