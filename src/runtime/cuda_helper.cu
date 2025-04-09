@@ -13,10 +13,10 @@ using Legion::Domain;
 using Legion::Rect;
 
 #ifdef FF_USE_CUDA
-#include <cuda_bf16.h>  // for __nv_bfloat16
+#include <cuda_bf16.h> // for __nv_bfloat16
 typedef __nv_bfloat16 __ff_bfloat16;
 #elif FF_USE_HIP_CUDA
-#include <hip/hip_bfloat16.h>  // for hip_bfloat16
+#include <cuda_bf16.h>
 typedef hip_bfloat16 __ff_bfloat16;
 #else
 #error "Unknown device, please make sure if CUDA is enabled"
@@ -759,8 +759,9 @@ template __global__ void
     assign_kernel<half>(half *ptr, coord_t size, half value);
 template __global__ void
     assign_kernel<float>(float *ptr, coord_t size, float value);
-template __global__ void
-    assign_kernel<__ff_bfloat16>(__ff_bfloat16 *ptr, coord_t size, __ff_bfloat16 value);
+template __global__ void assign_kernel<__ff_bfloat16>(__ff_bfloat16 *ptr,
+                                                      coord_t size,
+                                                      __ff_bfloat16 value);
 template __global__ void
     assign_kernel<double>(double *ptr, coord_t size, double value);
 template __global__ void
@@ -772,8 +773,10 @@ template __global__ void
     scale_kernel<half>(half *ptr, coord_t size, half a, half b);
 template __global__ void
     scale_kernel<float>(float *ptr, coord_t size, float a, float b);
-template __global__ void
-    scale_kernel<__ff_bfloat16>(__ff_bfloat16 *ptr, coord_t size, __ff_bfloat16 a, __ff_bfloat16 b);
+template __global__ void scale_kernel<__ff_bfloat16>(__ff_bfloat16 *ptr,
+                                                     coord_t size,
+                                                     __ff_bfloat16 a,
+                                                     __ff_bfloat16 b);
 template __global__ void
     scale_kernel<double>(double *ptr, coord_t size, double a, double b);
 
@@ -781,8 +784,9 @@ template __global__ void
     add_kernel<half>(half *dst, half const *src, size_t size);
 template __global__ void
     add_kernel<float>(float *dst, float const *src, size_t size);
-template __global__ void
-    add_kernel<__ff_bfloat16>(__ff_bfloat16 *dst, __ff_bfloat16 const *src, size_t size);
+template __global__ void add_kernel<__ff_bfloat16>(__ff_bfloat16 *dst,
+                                                   __ff_bfloat16 const *src,
+                                                   size_t size);
 template __global__ void
     add_kernel<double>(double *dst, double const *src, size_t size);
 template __global__ void
@@ -794,8 +798,9 @@ template __global__ void
     copy_kernel<half>(half *dst, half const *src, coord_t size);
 template __global__ void
     copy_kernel<float>(float *dst, float const *src, coord_t size);
-template __global__ void
-    copy_kernel<__ff_bfloat16>(__ff_bfloat16 *dst, __ff_bfloat16 const *src, coord_t size);
+template __global__ void copy_kernel<__ff_bfloat16>(__ff_bfloat16 *dst,
+                                                    __ff_bfloat16 const *src,
+                                                    coord_t size);
 template __global__ void
     copy_kernel<double>(double *dst, double const *src, coord_t size);
 template __global__ void
