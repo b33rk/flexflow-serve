@@ -82,15 +82,15 @@ bool use_activation(ActiMode mode);
 
 namespace Internal {
 template <typename DT>
-void forward_kernel(LinearMeta const *m,
-                    void const *input_ptr,
-                    void *output_ptr,
-                    void const *filter_ptr,
-                    void const *bias_ptr,
-                    int in_dim,
-                    int out_dim,
-                    int batch_size,
-                    ffStream_t stream);
+void inference_kernel(LinearMeta const *m,
+                      void const *input_ptr,
+                      void *output_ptr,
+                      void const *filter_ptr,
+                      void const *bias_ptr,
+                      int in_dim,
+                      int out_dim,
+                      int batch_size,
+                      ffStream_t stream);
 template <typename DT>
 void store_peft_activations(LinearMeta const *m,
                             BatchConfig const *bc,
@@ -105,19 +105,6 @@ void peft_bwd_kernel(LinearMeta const *m,
                      void const *kernel_ptr,
                      int in_dim,
                      int out_dim,
-                     ffStream_t stream);
-template <typename DT>
-void backward_kernel(LinearMeta const *m,
-                     void const *input_ptr,
-                     void *input_grad_ptr,
-                     void const *output_ptr,
-                     void *output_grad_ptr,
-                     void const *kernel_ptr,
-                     void *kernel_grad_ptr,
-                     void *bias_ptr,
-                     int in_dim,
-                     int out_dim,
-                     int batch_size,
                      ffStream_t stream);
 
 template <typename DT>

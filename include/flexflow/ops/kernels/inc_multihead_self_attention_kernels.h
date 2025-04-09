@@ -70,11 +70,6 @@ void update_qkv_in_batch(IncMultiHeadSelfAttentionMeta const *m,
                          BatchConfig const *bc,
                          ffStream_t stream);
 template <typename DT>
-void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
-                                       BatchConfig const *bc,
-                                       ffStream_t stream);
-
-template <typename DT>
 void compute_attention_kernel_prompt(IncMultiHeadSelfAttentionMeta *m,
                                      BatchConfig const *bc,
                                      int shard_id,

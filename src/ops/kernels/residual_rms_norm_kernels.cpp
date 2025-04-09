@@ -32,30 +32,25 @@ ResidualRMSNormMeta::ResidualRMSNormMeta(FFHandler handler,
   eps = rms->eps;
 
   inplace_residual = rms->inplace_residual;
-  in_dim = rms->data_dim;
-  batch_size = rms->effective_batch_size;
-  num_elements = in_dim * batch_size;
+  in_dim = rms->inputs[0]->dims[0].size / rms->inputs[0]->dims[0].degree;
+  size_t data_size = data_type_size(rms->weights[0]->data_type);
 
-  DataType data_type = rms->weights[0]->data_type;
-  size_t rms_ptr_size = batch_size;
-  size_t norm_ptr_size = num_elements;
-  size_t in_dim = rms->inputs[0]->dims[0].size / rms->inputs[0]->dims[0].degree;
-  allocated_peft_buffer_size =
-      enable_peft_finetuning ? (data_type_size(data_type) *
-                                BatchConfig::max_sequence_length() * in_dim)
-                             : 0;
-  size_t totalSize =
-      (rms_ptr_size + norm_ptr_size) * data_type_size(data_type) +
-      allocated_peft_buffer_size;
+  size_t rms_ptr_size = 0;
+  allocated_peft_buffer_size = 0;
+  if (enable_peft_finetuning) {
+    rms_ptr_size = rms->effective_batch_size * sizeof(float);
+    allocated_peft_buffer_size =
+        BatchConfig::max_sequence_length() * in_dim * data_size;
+  }
+  size_t totalSize = rms_ptr_size + allocated_peft_buffer_size;
   gpu_mem_allocator.create_legion_instance(
       reserveInst, totalSize, "ResidualRMSNormMeta");
-  rms_ptr = gpu_mem_allocator.allocate_instance_untyped(
-      rms_ptr_size * data_type_size(data_type));
-  norm_ptr = gpu_mem_allocator.allocate_instance_untyped(
-      norm_ptr_size * data_type_size(data_type));
   if (enable_peft_finetuning) {
+    rms_ptr = gpu_mem_allocator.allocate_instance_untyped(rms_ptr_size);
     input_activation =
         gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
+  } else {
+    rms_ptr = input_activation = nullptr;
   }
 }
 ResidualRMSNormMeta::~ResidualRMSNormMeta(void) {
@@ -106,62 +101,90 @@ __inline__ __device__ T BlockReduceSum(T val, T *shared) {
 }
 
 template <typename T>
-__global__ void ResidualRMSNormFusedForwardKernel(int64_t N,
+__global__ void ResidualRMSNormFusedForwardKernel(int64_t data_dim,
                                                   float eps,
                                                   T const *X1,
                                                   T const *X2,
                                                   T *X_out,
-                                                  T *rms,
-                                                  T *Y,
+                                                  float *rms,
+                                                  int first_ft_token_idx,
                                                   T const *weights,
                                                   T *output) {
   __shared__ float v_shared[C10_WARP_SIZE];
-  int64_t const i = blockIdx.x;
+  const int64_t i = blockIdx.x; // token idx
+  const int64_t base_idx = i * data_dim;
+
   float sum = 0.0f;
-  for (int64_t j = threadIdx.x; j < N; j += blockDim.x) {
-    int64_t const index = i * N + j;
-    X_out[index] = X1[index] + X2[index];
-    sum +=
-        (static_cast<float>(X_out[index]) * static_cast<float>(X_out[index]));
+  for (int64_t j = threadIdx.x; j < data_dim; j += blockDim.x) {
+    int64_t const index = base_idx + j;
+    float x1 = static_cast<float>(X1[index]);
+    float x2 = static_cast<float>(X2[index]);
+    float x_out = x1 + x2;
+    X_out[index] = static_cast<T>(x_out);
+    sum += x_out * x_out;
   }
   sum = BlockReduceSum<float>(sum, v_shared);
 
+  float rms_val = 0.0f;
   if (threadIdx.x == 0) {
-    rms[i] = static_cast<T>(rsqrt((sum / static_cast<float>(N)) + eps));
+    rms_val = rsqrt((sum / static_cast<float>(data_dim)) + eps);
+    v_shared[0] = rms_val;
+  }
+  __syncthreads();
+  rms_val = v_shared[0];
+
+  // store rms value for peft finetuning tokens. These tokens are assumed to be
+  // contiguous and at the end of the batch rms already points to the first
+  // available slot (excluding the rms already computed in previous partial fwd
+  // passes)
+  if (i >= first_ft_token_idx) {
+    rms[i] = rms_val; // Store the RMS value for this token
   }
 
-  __syncthreads();
-
-  for (int64_t j = threadIdx.x; j < N; j += blockDim.x) {
-    const int64_t index = i * N + j;
-    Y[index] = static_cast<T>(static_cast<float>(X_out[index]) *
-                              static_cast<float>(rms[i]));
-    output[index] = static_cast<T>(static_cast<float>(Y[index]) *
-                                   static_cast<float>(weights[index % N]));
+  for (int64_t j = threadIdx.x; j < data_dim; j += blockDim.x) {
+    const int64_t index = base_idx + j;
+    float const input_val = static_cast<float>(X_out[index]);
+    float const weight_val = static_cast<float>(weights[j]);
+    output[index] = static_cast<T>(input_val * rms_val * weight_val);
   }
 }
 
 template <typename T>
-void forward_kernel(ResidualRMSNormMeta const *m,
-                    T const *input1_ptr,
-                    T const *input2_ptr,
-                    T const *weight_ptr,
-                    T *residual_output_ptr,
-                    T *output_ptr,
-                    hipStream_t stream) {
-
+void inference_kernel(ResidualRMSNormMeta const *m,
+                      BatchConfig const *bc,
+                      T const *input1_ptr,
+                      T const *input2_ptr,
+                      T const *weight_ptr,
+                      T *residual_output_ptr,
+                      T *output_ptr,
+                      hipStream_t stream) {
+  int num_tokens = bc->num_active_tokens();
+  int data_dim = m->in_dim;
+  if (num_tokens <= 0) {
+    // No tokens to process
+    return;
+  }
+  int first_ft_token_idx =
+      bc->num_active_tokens() - bc->num_finetuning_fwd_tokens();
+  float *rms_ptr = nullptr;
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    int i = bc->finetuning_request_index();
+    int tokens_previous_steps =
+        bc->requestsInfo[i].first_token_depth_in_request;
+    rms_ptr = static_cast<float *>(m->rms_ptr) + tokens_previous_steps;
+  }
   hipLaunchKernelGGL(HIP_KERNEL_NAME(ResidualRMSNormFusedForwardKernel<T>),
-                     m->batch_size,
-                     std::min(CUDA_NUM_THREADS, m->in_dim),
+                     num_tokens,
+                     std::min(CUDA_NUM_THREADS, data_dim),
                      0,
                      stream,
-                     m->in_dim,
+                     data_dim,
                      m->eps,
                      input1_ptr,
                      input2_ptr,
                      residual_output_ptr,
-                     static_cast<T *>(m->rms_ptr),
-                     static_cast<T *>(m->norm_ptr),
+                     rms_ptr,
+                     first_ft_token_idx,
                      weight_ptr,
                      output_ptr);
 }
@@ -172,55 +195,14 @@ void forward_kernel_wrapper(ResidualRMSNormMeta const *m,
                             GenericTensorAccessorR const &weight,
                             GenericTensorAccessorW const &residual_output,
                             GenericTensorAccessorW const &output) {
-  hipStream_t stream;
-  checkCUDA(get_legion_stream(&stream));
-  hipEvent_t t_start, t_end;
-  if (m->profiling) {
-    checkCUDA(hipEventCreate(&t_start));
-    checkCUDA(hipEventCreate(&t_end));
-    checkCUDA(hipEventRecord(t_start, stream));
-  }
-
-  assert(input1.data_type == input2.data_type);
-  assert(output.data_type == input1.data_type);
-  assert(weight.data_type == output.data_type);
-  assert(residual_output.data_type == output.data_type);
-  if (output.data_type == DT_HALF) {
-    forward_kernel(m,
-                   input1.get_half_ptr(),
-                   input2.get_half_ptr(),
-                   weight.get_half_ptr(),
-                   residual_output.get_half_ptr(),
-                   output.get_half_ptr(),
-                   stream);
-  } else if (output.data_type == DT_FLOAT) {
-    forward_kernel(m,
-                   input1.get_float_ptr(),
-                   input2.get_float_ptr(),
-                   weight.get_float_ptr(),
-                   residual_output.get_float_ptr(),
-                   output.get_float_ptr(),
-                   stream);
-  } else {
-    assert(false && "Unsupported data type");
-  }
-
-  if (m->profiling) {
-    checkCUDA(hipEventRecord(t_end, stream));
-    checkCUDA(hipEventSynchronize(t_end));
-    float elapsed = 0;
-    checkCUDA(hipEventElapsedTime(&elapsed, t_start, t_end));
-    checkCUDA(hipEventDestroy(t_start));
-    checkCUDA(hipEventDestroy(t_end));
-    printf("[ResidualRMSNorm] forward time (CF) = %.2fms\n", elapsed);
-  }
+  assert(false && "Not implemented yet");
 }
 
 template <typename DT>
 void store_peft_activations(ResidualRMSNormMeta const *m,
                             BatchConfig const *bc,
                             size_t in_dim,
-                            DT *residual_output_ptr,
+                            DT const *residual_output_ptr,
                             hipStream_t stream) {
   assert(m->enable_peft_finetuning);
   assert(bc->num_finetuning_fwd_tokens() >= 1);
@@ -229,13 +211,14 @@ void store_peft_activations(ResidualRMSNormMeta const *m,
   int i = bc->finetuning_request_index();
   int tokens_previous_requests =
       bc->requestsInfo[i].first_token_offset_in_batch;
-  int tokens_previous_steps = bc->requestsInfo[i].first_token_offset_in_batch;
+  int tokens_previous_steps = bc->requestsInfo[i].first_token_depth_in_request;
   assert(bc->requestsInfo[i].num_tokens_in_batch == num_ft_tokens);
 
   size_t batch_offset = in_dim * tokens_previous_requests;
   size_t request_offset = in_dim * tokens_previous_steps;
   size_t data_size = in_dim * num_ft_tokens * sizeof(DT);
-  assert(m->allocated_peft_buffer_size >= data_size);
+  assert(m->allocated_peft_buffer_size >=
+         BatchConfig::max_sequence_length() * in_dim * sizeof(DT));
 
   checkCUDA(
       hipMemcpyAsync(static_cast<DT *>(m->input_activation) + request_offset,
@@ -268,25 +251,27 @@ void inference_kernel_wrapper(ResidualRMSNormMeta *m,
   int in_dim = input1.domain.hi()[0] - input1.domain.lo()[0] + 1;
 
   if (output.data_type == DT_HALF) {
-    forward_kernel(m,
-                   input1.get_half_ptr(),
-                   input2.get_half_ptr(),
-                   weight.get_half_ptr(),
-                   residual_output.get_half_ptr(),
-                   output.get_half_ptr(),
-                   stream);
+    inference_kernel(m,
+                     bc,
+                     input1.get_half_ptr(),
+                     input2.get_half_ptr(),
+                     weight.get_half_ptr(),
+                     residual_output.get_half_ptr(),
+                     output.get_half_ptr(),
+                     stream);
     if (bc->num_finetuning_fwd_requests() > 0) {
       store_peft_activations(
           m, bc, in_dim, residual_output.get_half_ptr(), stream);
     }
   } else if (output.data_type == DT_FLOAT) {
-    forward_kernel(m,
-                   input1.get_float_ptr(),
-                   input2.get_float_ptr(),
-                   weight.get_float_ptr(),
-                   residual_output.get_float_ptr(),
-                   output.get_float_ptr(),
-                   stream);
+    inference_kernel(m,
+                     bc,
+                     input1.get_float_ptr(),
+                     input2.get_float_ptr(),
+                     weight.get_float_ptr(),
+                     residual_output.get_float_ptr(),
+                     output.get_float_ptr(),
+                     stream);
     if (bc->num_finetuning_fwd_requests() > 0) {
       store_peft_activations(
           m, bc, in_dim, residual_output.get_float_ptr(), stream);
@@ -307,115 +292,64 @@ void inference_kernel_wrapper(ResidualRMSNormMeta *m,
 }
 
 template <typename T>
-__global__ void ComputeInternalGradientsCUDAKernel(
-    int64_t N, T const *dY, T const *X, T const *gamma, T const *rrms, T *c2) {
+__global__ void
+    ResidualRMSNormFusedBackwardKernel(int64_t data_dim,
+                                       T const *output_grad_0_ptr,
+                                       T const *output_grad_1_ptr,
+                                       T const *residual_output_rms_input_ptr,
+                                       T const *weight_ptr,
+                                       float const *rms_ptr,
+                                       T *input_grad_0_ptr,
+                                       T *input_grad_1_ptr,
+                                       bool reset_input_grad1,
+                                       bool reset_input_grad2) {
   __shared__ float ds_storage[C10_WARP_SIZE];
-  const int64_t i = blockIdx.x;
-  float ds = 0;
-  for (int64_t j = threadIdx.x; j < N; j += blockDim.x) {
-    int const index = i * N + j;
-    ds += static_cast<float>(dY[index]) * static_cast<float>(X[index]) *
-          static_cast<float>(gamma[j]);
+  __shared__ float norm_val_shared;
+
+  const int64_t i = blockIdx.x; // token idx
+
+  float const rms_val = rms_ptr[i];
+  float const rms_cubed = rms_val * rms_val * rms_val;
+  float const inv_dim = 1.0f / static_cast<float>((int)data_dim);
+
+  float ds = 0.0f;
+  for (int64_t j = threadIdx.x; j < data_dim; j += blockDim.x) {
+    const int64_t index = i * data_dim + j;
+    float const out_grad = static_cast<float>(output_grad_1_ptr[index]);
+    float const in_val =
+        static_cast<float>(residual_output_rms_input_ptr[index]);
+    float const w_val = static_cast<float>(weight_ptr[j]);
+    ds += out_grad * in_val * w_val;
   }
   ds = BlockReduceSum<float>(ds, ds_storage);
   if (threadIdx.x == 0) {
-    float const c2_val =
-        -ds *
-        (static_cast<float>(rrms[i]) * static_cast<float>(rrms[i]) *
-         static_cast<float>(rrms[i])) /
-        static_cast<float>((int)N);
-    c2[i] = static_cast<T>(c2_val);
+    norm_val_shared = -ds * rms_cubed * inv_dim;
   }
-}
 
-template <typename T>
-__global__ void RMSNormBackwardCUDAKernel(int64_t N,
-                                          T const *dX1_residual,
-                                          T const *dY,
-                                          T const *X,
-                                          T const *gamma,
-                                          T const *c1,
-                                          T const *c2,
-                                          T *dX1,
-                                          T *dX2,
-                                          bool reset_input_grad1,
-                                          bool reset_input_grad2) {
-  const int64_t i = blockIdx.x;
-  for (int64_t j = threadIdx.x; j < N; j += blockDim.x) {
-    const int64_t index = i * N + j;
-    float const dX_val =
-        static_cast<float>(c1[i]) * static_cast<float>(dY[index]) *
-            static_cast<float>(gamma[j]) +
-        static_cast<float>(c2[i]) * static_cast<float>(X[index]);
+  __syncthreads();
+
+  for (int64_t j = threadIdx.x; j < data_dim; j += blockDim.x) {
+    const int64_t index = i * data_dim + j;
+    float const out_grad = static_cast<float>(output_grad_1_ptr[index]);
+    float const in_val =
+        static_cast<float>(residual_output_rms_input_ptr[index]);
+    float const w_val = static_cast<float>(weight_ptr[j]);
+    float const dX_val = rms_val * out_grad * w_val + norm_val_shared * in_val;
+
+    T in_grad_0_val =
+        static_cast<T>(dX_val); // This is the gradient for input 0
     if (reset_input_grad1) {
-      dX1[index] = static_cast<T>(dX_val);
+      input_grad_0_ptr[index] = in_grad_0_val;
     } else {
-      dX1[index] = dX1_residual[index] + static_cast<T>(dX_val);
+      in_grad_0_val += output_grad_0_ptr[index];
+      input_grad_0_ptr[index] = in_grad_0_val;
     }
     if (reset_input_grad2) {
-      dX2[index] = static_cast<T>(dX1[index]);
+      input_grad_1_ptr[index] = in_grad_0_val;
     } else {
-      dX2[index] += static_cast<T>(dX1[index]);
+      input_grad_1_ptr[index] += in_grad_0_val;
     }
   }
-}
-
-// Assume the batch size will not be very large, direct implementation is the
-// most efficient one.
-template <typename T>
-__global__ void GammaBackwardCUDAKernel(
-    int64_t M, int64_t N, T const *dY, T const *X, T const *rrms, T *dg) {
-  const int64_t j = blockIdx.x * blockDim.x + threadIdx.x;
-  if (j < N) {
-    T sum1 = 0;
-    for (int64_t i = 0; i < M; ++i) {
-      const int64_t index = i * N + j;
-      sum1 += dY[index] * X[index] * rrms[i];
-    }
-    dg[j] = sum1;
-  }
-}
-
-template <typename T>
-void backward_kernel(ResidualRMSNormMeta const *m,
-                     T const *output_grad_ptr,
-                     T const *residual_output_rms_input_ptr,
-                     T *residual_input0_grad_ptr,
-                     T *residual_input1_grad_ptr,
-                     T const *weight_ptr,
-                     T *weight_grad_ptr,
-                     hipStream_t stream) {
-  int M = m->batch_size;
-  int N = m->in_dim;
-  ComputeInternalGradientsCUDAKernel<T>
-      <<<M, std::min(N, CUDA_NUM_THREADS), 0, stream>>>(
-          N,
-          output_grad_ptr,
-          residual_output_rms_input_ptr,
-          weight_ptr,
-          static_cast<T *>(m->rms_ptr),
-          static_cast<T *>(m->norm_ptr));
-
-  RMSNormBackwardCUDAKernel<T><<<M, std::min(N, CUDA_NUM_THREADS), 0, stream>>>(
-      N,
-      nullptr,
-      output_grad_ptr,
-      residual_output_rms_input_ptr,
-      weight_ptr,
-      static_cast<T *>(m->rms_ptr),
-      static_cast<T *>(m->norm_ptr),
-      residual_input0_grad_ptr,
-      residual_input1_grad_ptr,
-      m->reset_input_grads[0],
-      m->reset_input_grads[1]);
-
-  GammaBackwardCUDAKernel<T><<<M, std::min(N, CUDA_NUM_THREADS), 0, stream>>>(
-      M,
-      N,
-      output_grad_ptr,
-      residual_output_rms_input_ptr,
-      static_cast<T *>(m->rms_ptr),
-      weight_grad_ptr);
 }
 
 template <typename T>
@@ -432,43 +366,25 @@ void peft_bwd_kernel(ResidualRMSNormMeta const *m,
       bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id));
   int i = bc->finetuning_request_index();
 
-  int M = bc->requestsInfo[i].num_tokens_in_batch;
-  int N = m->in_dim;
-
-  T const *residual_output_rms_input_ptr =
-      static_cast<T *>(m->input_activation);
-
-  ComputeInternalGradientsCUDAKernel<T>
-      <<<M, std::min(N, CUDA_NUM_THREADS), 0, stream>>>(
-          N,
+  int num_tokens = bc->num_finetuning_bwd_tokens();
+  if (num_tokens <= 0) {
+    return;
+  }
+  int data_dim = m->in_dim;
+  ResidualRMSNormFusedBackwardKernel<T>
+      <<<num_tokens, std::min(data_dim, CUDA_NUM_THREADS), 0, stream>>>(
+          data_dim,
+          output_grad_0_ptr,
           output_grad_1_ptr,
-          residual_output_rms_input_ptr,
+          static_cast<T *>(m->input_activation),
           weight_ptr,
-          static_cast<T *>(m->rms_ptr),
-          static_cast<T *>(m->norm_ptr));
-
-  RMSNormBackwardCUDAKernel<T><<<M, std::min(N, CUDA_NUM_THREADS), 0, stream>>>(
-      N,
-      output_grad_0_ptr,
-      output_grad_1_ptr,
-      residual_output_rms_input_ptr,
-      weight_ptr,
-      static_cast<T *>(m->rms_ptr),
-      static_cast<T *>(m->norm_ptr),
-      input_grad_0_ptr,
-      input_grad_1_ptr,
-      m->reset_input_grads[0],
-      m->reset_input_grads[1]);
+          static_cast<float *>(m->rms_ptr),
+          input_grad_0_ptr,
+          input_grad_1_ptr,
+          m->reset_input_grads[0],
+          m->reset_input_grads[1]);
 }
 
-/*
-  regions[0](I): RMS output_grad
-  regions[1](I): Residual output / RMS input
-  regions[2](I/O): Residual input 0 grad
-  regions[3](I/O): Residual input 1 grad
-  regions[4](I): weight
-  regions[5](I/O): weight_grad
-*/
 void backward_kernel_wrapper(
     ResidualRMSNormMeta const *m,
     GenericTensorAccessorR const &output_grad,
@@ -477,51 +393,7 @@ void backward_kernel_wrapper(
     GenericTensorAccessorW const &residual_input1_grad,
     GenericTensorAccessorR const &weight,
     GenericTensorAccessorW const &weight_grad) {
-  hipStream_t stream;
-  checkCUDA(get_legion_stream(&stream));
-  hipEvent_t t_start, t_end;
-  if (m->profiling) {
-    checkCUDA(hipEventCreate(&t_start));
-    checkCUDA(hipEventCreate(&t_end));
-    checkCUDA(hipEventRecord(t_start, stream));
-  }
-  assert(output_grad.data_type == residual_output_rms_input.data_type);
-  assert(residual_output_rms_input.data_type == residual_input0_grad.data_type);
-  assert(residual_input0_grad.data_type == residual_input1_grad.data_type);
-  assert(residual_input1_grad.data_type == weight.data_type);
-  assert(weight.data_type == weight_grad.data_type);
-
-  if (output_grad.data_type == DT_HALF) {
-    backward_kernel(m,
-                    output_grad.get_half_ptr(),
-                    residual_output_rms_input.get_half_ptr(),
-                    residual_input0_grad.get_half_ptr(),
-                    residual_input1_grad.get_half_ptr(),
-                    weight.get_half_ptr(),
-                    weight_grad.get_half_ptr(),
-                    stream);
-  } else if (output_grad.data_type == DT_FLOAT) {
-    backward_kernel(m,
-                    output_grad.get_float_ptr(),
-                    residual_output_rms_input.get_float_ptr(),
-                    residual_input0_grad.get_float_ptr(),
-                    residual_input1_grad.get_float_ptr(),
-                    weight.get_float_ptr(),
-                    weight_grad.get_float_ptr(),
-                    stream);
-  } else {
-    assert(false && "Unsupported data type");
-  }
-
-  if (m->profiling) {
-    checkCUDA(hipEventRecord(t_end, stream));
-    checkCUDA(hipEventSynchronize(t_end));
-    float elapsed = 0;
-    checkCUDA(hipEventElapsedTime(&elapsed, t_start, t_end));
-    checkCUDA(hipEventDestroy(t_start));
-    checkCUDA(hipEventDestroy(t_end));
-    printf("[ResidualRMSNorm] backward time (CF) = %.2fms\n", elapsed);
-  }
+  assert(false && "Not implemented yet");
 }
 
 void peft_bwd_kernel_wrapper(ResidualRMSNormMeta const *m,

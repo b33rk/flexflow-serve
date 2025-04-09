@@ -1501,7 +1501,8 @@ bool Op::get_weight_parameter(TNParameter tnp,
 OpMeta::OpMeta(FFHandler _handle, Op const *op)
     : handle(_handle), profiling(op->profiling),
       inference_debugging(op->inference_debugging),
-      enable_peft_finetuning(op->enable_peft_finetuning) {
+      enable_peft_finetuning(op->enable_peft_finetuning),
+      layer_guid(op->layer_guid) {
   for (int i = 0; i < op->numInputs; i++) {
     trainable_inputs[i] = op->trainable_inputs[i];
     reset_input_grads[i] = op->reset_input_grads[i];
@@ -1517,6 +1518,7 @@ OpMeta::OpMeta(FFHandler _handle, Op const *op)
   }
   decoding_step = 0;
   bwd_step = 0;
+  std::strcpy(this->op_name, op->name);
 }
 
 FFRuntime::FFRuntime(FFConfig &config) {

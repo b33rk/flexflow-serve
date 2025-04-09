@@ -510,11 +510,14 @@ void set_wrapper_mha_bwd_1_params_peft(IncMultiHeadSelfAttentionMeta const *m,
                  tokens_previous_requests * m->num_q_heads * m->vProjSize;
 
   int num_tokens = bc->requestsInfo[req_idx].num_tokens_in_batch;
-  auto dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+  assert(m->handle.workSpaceSize >= m->qProjSize *
+                                        (m->num_q_heads + 2 * m->num_kv_heads) *
+                                        num_tokens * sizeof(DT));
+  auto dv_ptr = static_cast<DT *>(m->handle.workSpace) +
                 num_tokens * m->qProjSize * (m->num_q_heads + m->num_kv_heads);
-  auto dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+  auto dk_ptr = static_cast<DT *>(m->handle.workSpace) +
                 num_tokens * (m->qProjSize * m->num_q_heads);
-  auto dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
+  auto dq_ptr = static_cast<DT *>(m->handle.workSpace);
 
   // re-organize q, k, v tensor to match the layout of flash-attn
   // q size: (batch_size, seqlen_q, num_heads, head_size)
@@ -1173,22 +1176,7 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     std::cout << "sizeof(DT)" << sizeof(DT) << std::endl;
   }
   assert(activation_size_needed == m->allocated_peft_buffer_size1);
-  int parallelism = m->qProjSize * m->num_q_heads * num_new_tokens;
-  int tokens_previous_steps = total_tokens - num_new_tokens;
-  int tokens_previous_requests =
-      bc->requestsInfo[req_idx].first_token_offset_in_batch;
-  store_query_cache<<<GET_BLOCKS(parallelism),
-                      min(CUDA_NUM_THREADS, parallelism),
-                      0,
-                      peft_stream>>>(
-      static_cast<DT *>(m->devQKVProjArray),
-      static_cast<DT *>(m->query_activation_buffer),
-      num_new_tokens,
-      tokens_previous_requests,
-      tokens_previous_steps,
-      m->qProjSize,
-      m->num_q_heads,
-      m->num_kv_heads);
+
   // end Step 0
   // ========================================================================
 
@@ -1488,7 +1476,7 @@ void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
   int num_tokens = bc->num_active_tokens();
   int parallelism = m->kProjSize * num_tokens * m->num_q_heads;
 
-  if (m->scaling_query) {
+  if (*(m->scaling_query)) {
     scaling_query_kernel<<<GET_BLOCKS(parallelism),
                            min(CUDA_NUM_THREADS, parallelism),
                            0,
@@ -1527,145 +1515,193 @@ void apply_scaling_and_rotary(IncMultiHeadSelfAttentionMeta const *m,
   }
 }
 
+struct RopeParams {
+  bool apply_rotary_embedding;
+  float rope_theta;
+  bool llama3_rope;
+  float factor;
+  float low_freq_factor;
+  float high_freq_factor;
+  int original_max_position_embeddings;
+  cuFloatComplex *complex_input;
+  bool scaling_query;
+  float scaling_factor;
+};
+
 template <typename DT>
-__global__ void update_kv_cache_kernel_flashinfer_kernel(
-    DT *qkv_proj_array,
-    half *qTmp_ptr,
-    half *kvCache_ptr,
-    int32_t *kv_indptr,
-    int32_t *kv_page_indices,
-    bool const *request_completed,
-    int peft_req_idx,
-    BatchConfig::PerTokenInfo const *tokenInfos,
-    int num_q_heads,
-    int num_kv_heads,
-    int head_dim,
-    int num_new_tokens) {
-  int tot_num_heads = num_q_heads + 2 * num_kv_heads;
-  // iterate over the whole qkv_proj_array
-  CUDA_KERNEL_LOOP(i, num_new_tokens * (tot_num_heads * head_dim)) {
-    // qkv_proj_array: [head_dim, tot_num_heads, num_new_tokens]
-    // qTmp_ptr: [head_dim, num_q_heads, num_new_tokens]
-    // kvCache_ptr: [head_dim, num_kv_heads, page_size, 2, max_num_pages]
-    int proj_offset = i % head_dim;
-    int head_idx = (i / head_dim) % tot_num_heads;
-    int token_idx = i / (tot_num_heads * head_dim);
-    assert(proj_offset < head_dim && "Invalid proj_offset");
-    assert(head_idx < tot_num_heads && "Invalid head_idx");
-    assert(token_idx < num_new_tokens && "Invalid token_idx");
+struct DataPointers {
+  DT const *qkv_ptr;
+  // inference query buffer and unified kv cache
+  half *qTmp_ptr;
+  half *kvCache_ptr;
+  // finetuning query buffer and kv cache
+  DT *query_activation_buffer;
+  DT *keyCachePeft;
+  DT *valueCachePeft;
+};
 
-    int token_abs_idx = tokenInfos[token_idx].abs_depth_in_request;
-    int const req_idx = tokenInfos[token_idx].request_index;
+struct AttnGeneralParams {
+  int num_q_heads;
+  int num_kv_heads;
+  int head_dim;
+  int num_tokens;
+  int peft_req_idx;
+  BatchConfig::PerTokenInfo const *tokenInfos;
+  int32_t *kv_indptr;
+  int32_t *kv_page_indices;
+  bool const *request_completed;
+};
 
-    assert(req_idx != peft_req_idx &&
-           "Attempting to use inference KV cache for PEFT tokens");
+template <typename DT>
+__global__ void attention_prep_kernel(AttnGeneralParams general_params,
+                                      DataPointers<DT> data_pointers,
+                                      RopeParams rope_params) {
+  int half_proj = general_params.head_dim / 2;
+  int tot_num_heads =
+      general_params.num_q_heads + 2 * general_params.num_kv_heads;
+  int numel = half_proj * general_params.num_tokens * tot_num_heads;
+  CUDA_KERNEL_LOOP(i, numel) {
+    // Iterate over qkv_ptr: [head_dim, tot_num_heads, num_tokens]
+    // Read data (in pairs wrt head_dim) and populate indices
+    // ================================================================
+    int pair_idx = i % half_proj;
+    int global_head_idx = (i / half_proj) % tot_num_heads;
+    int token_idx = i / (half_proj * tot_num_heads);
+    bool is_q = global_head_idx < general_params.num_q_heads;
+    bool is_k = global_head_idx >= general_params.num_q_heads &&
+                global_head_idx <
+                    general_params.num_q_heads + general_params.num_kv_heads;
+    bool is_v = global_head_idx >=
+                general_params.num_q_heads + general_params.num_kv_heads;
+    // one and only one of is_q, is_k, is_v is true
+    assert((is_q && !is_k && !is_v) || (!is_q && is_k && !is_v) ||
+           (!is_q && !is_k && is_v));
+    int head_idx = is_q ? global_head_idx
+                        : (is_k ? global_head_idx - general_params.num_q_heads
+                                : global_head_idx - general_params.num_q_heads -
+                                      general_params.num_kv_heads);
+    bool is_peft_token = general_params.tokenInfos[token_idx].request_index ==
+                         general_params.peft_req_idx;
+    int token_abs_idx =
+        general_params.tokenInfos[token_idx].abs_depth_in_request;
 
-    int req_idx_compact = 0;
-    for (int j = 0; j < req_idx; j++) {
-      if (!request_completed[j]) {
-        req_idx_compact++;
-      }
+    int src_a_offset = (token_idx * general_params.head_dim * tot_num_heads) +
+                       (global_head_idx * general_params.head_dim) + pair_idx;
+    int src_b_offset = src_a_offset + half_proj;
+    DT a = data_pointers.qkv_ptr[src_a_offset];
+    DT b = data_pointers.qkv_ptr[src_b_offset];
+
+    // Apply transformations to the data
+    // ================================================================
+    // query scaling
+    if (rope_params.scaling_query && is_q) {
+      a *= rope_params.scaling_factor;
+      b *= rope_params.scaling_factor;
     }
-    assert(req_idx_compact >= 0 && req_idx_compact <= req_idx &&
-           "Invalid request index");
+    // rope embedding
+    if (rope_params.apply_rotary_embedding && (is_q || is_k)) {
+      float inv_freq =
+          1.0 / pow(rope_params.rope_theta,
+                    (float)2.0 * pair_idx / general_params.head_dim);
+      if (rope_params.llama3_rope) {
+        float pi = CUDART_PI_F;
+        float wavelen = 2 * pi / inv_freq;
+        float low_freq_wavelen = rope_params.original_max_position_embeddings /
+                                 rope_params.low_freq_factor;
+        float high_freq_wavelen = rope_params.original_max_position_embeddings /
+                                  rope_params.high_freq_factor;
+        if (wavelen > low_freq_wavelen) {
+          inv_freq = inv_freq / rope_params.factor;
+        }
+        float smooth_factor =
+            (rope_params.original_max_position_embeddings / wavelen -
+             rope_params.low_freq_factor) /
+            (rope_params.high_freq_factor - rope_params.low_freq_factor);
+        if (!(wavelen < high_freq_wavelen) && !(wavelen > low_freq_wavelen)) {
+          inv_freq = ((1 - smooth_factor) * inv_freq / rope_params.factor +
+                      smooth_factor * inv_freq);
+        }
+      }
+      inv_freq = inv_freq * token_abs_idx;
+      cuFloatComplex complex_pos = {cos(inv_freq), sin(inv_freq)};
+      cuFloatComplex complex_input = {static_cast<float>(a),
+                                      static_cast<float>(b)};
+      complex_input = cuCmulf(complex_input, complex_pos);
+      a = static_cast<DT>(complex_input.x);
+      b = static_cast<DT>(complex_input.y);
+    }
 
-    if (head_idx < num_q_heads) {
-      // copy value into qTmp_ptr
-      int offset = head_idx * head_dim + proj_offset;
-      assert(offset >= 0 && offset < num_q_heads * head_dim &&
-             "Q-tmp offset out of bounds");
-      qTmp_ptr[token_idx * head_dim * num_q_heads + offset] = qkv_proj_array[i];
-    } else {
-      int logical_page_idx = token_abs_idx / kPagesize;
-      int page_idx =
-          kv_page_indices[kv_indptr[req_idx_compact] + logical_page_idx];
-      int to_k_idx = get_k_entry_offset_verify(
-          token_abs_idx, page_idx, num_kv_heads, head_dim);
-      int to_v_idx = get_v_entry_offset_verify(
-          token_abs_idx, page_idx, num_kv_heads, head_dim);
-      if (head_idx - num_q_heads < num_kv_heads) {
-        // key
-        int offset = (head_idx - num_q_heads) * head_dim + proj_offset;
-        assert(offset >= 0 && offset < num_kv_heads * head_dim &&
-               "K-cache offset out of bounds");
-        kvCache_ptr[to_k_idx + offset] = qkv_proj_array[i];
+    // Store the data to the appropriate buffer
+    // ================================================================
+    if (!is_peft_token) {
+      if (is_q) {
+        // store to qTmp_ptr: [head_dim, num_q_heads, num_new_tokens]
+        int dst_a_offset =
+            (token_idx * general_params.head_dim * general_params.num_q_heads) +
+            (head_idx * general_params.head_dim) + pair_idx;
+        int dst_b_offset = dst_a_offset + half_proj;
+        data_pointers.qTmp_ptr[dst_a_offset] = static_cast<half>(a);
+        data_pointers.qTmp_ptr[dst_b_offset] = static_cast<half>(b);
       } else {
-        // value
-        int offset =
-            (head_idx - num_q_heads - num_kv_heads) * head_dim + proj_offset;
-        assert(offset >= 0 && offset < num_kv_heads * head_dim &&
-               "V-cache offset out of bounds");
-        kvCache_ptr[to_v_idx + offset] = qkv_proj_array[i];
+        // store to kvCache_ptr: [head_dim, num_kv_heads, page_size, 2,
+        // max_num_pages]
+        int const req_idx = general_params.tokenInfos[token_idx].request_index;
+        assert(req_idx != general_params.peft_req_idx &&
+               "Attempting to use inference KV cache for PEFT tokens");
+        int req_idx_compact = 0;
+        for (int j = 0; j < req_idx; j++) {
+          if (!general_params.request_completed[j]) {
+            req_idx_compact++;
+          }
+        }
+        assert(req_idx_compact >= 0 && req_idx_compact <= req_idx &&
+               "Invalid request index");
+        int logical_page_idx = token_abs_idx / kPagesize;
+        int page_idx =
+            general_params
+                .kv_page_indices[general_params.kv_indptr[req_idx_compact] +
+                                 logical_page_idx];
+        int to_k_idx = get_k_entry_offset_verify(token_abs_idx,
+                                                 page_idx,
+                                                 general_params.num_kv_heads,
+                                                 general_params.head_dim);
+        int to_v_idx = get_v_entry_offset_verify(token_abs_idx,
+                                                 page_idx,
+                                                 general_params.num_kv_heads,
+                                                 general_params.head_dim);
+        int dst_a_offset = is_k ? to_k_idx : to_v_idx;
+        dst_a_offset += (head_idx * general_params.head_dim) + pair_idx;
+        int dst_b_offset = dst_a_offset + half_proj;
+        data_pointers.kvCache_ptr[dst_a_offset] = static_cast<half>(a);
+        data_pointers.kvCache_ptr[dst_b_offset] = static_cast<half>(b);
+      }
+    } else {
+      if (is_q) {
+        // store to query_activation_buffer: [qProjSize, num_q_heads,
+        // max_seq_len]
+        int dst_a_offset = (token_abs_idx * general_params.head_dim *
+                            general_params.num_q_heads) +
+                           (head_idx * general_params.head_dim) + pair_idx;
+        int dst_b_offset = dst_a_offset + half_proj;
+        data_pointers.query_activation_buffer[dst_a_offset] = a;
+        data_pointers.query_activation_buffer[dst_b_offset] = b;
+      } else {
+        // store to keyCachePeft/valueCachePeft: [head_dim, num_kv_heads,
+        // max_seq_len]
+        int dst_a_offset = (token_abs_idx * general_params.head_dim *
+                            general_params.num_kv_heads) +
+                           (head_idx * general_params.head_dim) + pair_idx;
+        int dst_b_offset = dst_a_offset + half_proj;
+        if (is_k) {
+          data_pointers.keyCachePeft[dst_a_offset] = a;
+          data_pointers.keyCachePeft[dst_b_offset] = b;
+        } else {
+          data_pointers.valueCachePeft[dst_a_offset] = a;
+          data_pointers.valueCachePeft[dst_b_offset] = b;
+        }
       }
     }
   }
-}
-
-template <typename DT>
-void update_kv_cache_kernel_flashinfer(IncMultiHeadSelfAttentionMeta const *m,
-                                       BatchConfig const *bc,
-                                       cudaStream_t stream) {
-  // printf("entered update_qkv_in_batch_verify\n");
-  int num_new_tokens = bc->num_inference_tokens();
-  if (num_new_tokens == 0) {
-    return;
-  }
-  int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
-  int parallelism = m->qProjSize * tot_num_heads * num_new_tokens;
-  int peft_req_idx = (bc->num_finetuning_fwd_tokens() > 0)
-                         ? bc->finetuning_request_index()
-                         : -1;
-  int32_t *kv_indptr = m->handle.incr_attention_metadata->kv_indptr;
-  int32_t *kv_indices = m->handle.incr_attention_metadata->kv_indices;
-  update_kv_cache_kernel_flashinfer_kernel<<<GET_BLOCKS(parallelism),
-                                             min(CUDA_NUM_THREADS, parallelism),
-                                             0,
-                                             stream>>>(
-      static_cast<DT *>(m->devQKVProjArray),
-      static_cast<half *>(m->queryTmp),
-      static_cast<half *>(m->kvCache),
-      kv_indptr,
-      kv_indices,
-      m->request_completed,
-      peft_req_idx,
-      m->token_infos,
-      m->num_q_heads,
-      m->num_kv_heads,
-      m->qProjSize,
-      num_new_tokens);
-}
-
-template <typename DT>
-void update_kv_cache_kernel_peft(IncMultiHeadSelfAttentionMeta const *m,
-                                 BatchConfig const *bc,
-                                 cudaStream_t stream) {
-  int num_tokens = bc->num_finetuning_fwd_tokens();
-  if (num_tokens <= 0) {
-    return;
-  }
-
-  int tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
-  int head_dim = m->qProjSize;
-  int i = bc->finetuning_request_index();
-  int tokens_previous_requests =
-      bc->requestsInfo[i].first_token_offset_in_batch;
-  DT *qkv_ptr = static_cast<DT *>(m->devQKVProjArray) +
-                m->qProjSize * tot_num_heads * tokens_previous_requests;
-
-  int parallelism = head_dim * tot_num_heads * num_tokens;
-  // devQKVProj has shape [qProjSize, tot_num_heads, num_new_tokens]
-  store_kv_cache<<<GET_BLOCKS(parallelism),
-                   min(CUDA_NUM_THREADS, parallelism),
-                   0,
-                   stream>>>(qkv_ptr,
-                             static_cast<DT *>(m->keyCachePeft),
-                             static_cast<DT *>(m->valueCachePeft),
-                             m->token_infos,
-                             num_tokens,
-                             BatchConfig::max_sequence_length(),
-                             head_dim,
-                             m->num_q_heads,
-                             m->num_kv_heads);
 }
 
 template <typename DT>
@@ -1701,6 +1737,20 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
          "kv_indptr is null!");
   assert(m->handle.incr_attention_metadata->kv_last_page_len != nullptr &&
          "kv_last_page_len is null!");
+
+  if (m->inference_debugging) {
+    // qTmp: [qProjSize, num_q_heads, num_new_tokens]
+    std::string fpath_q = get_fwd_dbg_folder(m, shard_id) + ".queryTmp.pt";
+    at::Tensor tensor_q = createTorchTensorFromCuda<DT>(
+        m->queryTmp, {m->qProjSize, (int)num_q_heads, bc->num_active_tokens()});
+    torch::save(tensor_q, fpath_q.c_str());
+    // kvcache: [head_dim, num_kv_heads, page_size, 2, max_num_pages]
+    std::string fpath_kv = get_fwd_dbg_folder(m, shard_id) + ".kvCache.pt";
+    at::Tensor tensor_kv = createTorchTensorFromCuda<DT>(
+        m->kvCache,
+        {m->qProjSize, (int)num_kv_heads, kPagesize, 2, m->num_kv_cache_pages});
+    torch::save(tensor_kv, fpath_kv.c_str());
+  }
 
   paged_kv_t<PageStorage::kIndices, half, int32_t> paged_kv(
       num_kv_heads,
@@ -1788,9 +1838,6 @@ void flashinfer_incr_attention(IncMultiHeadSelfAttentionMeta *m,
   });
 }
 
-// TODO(yingyi): replace with flash-attn
-// qkv_ptr: Q, K, V
-// output_ptr: O
 template <typename DT>
 void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                       BatchConfig const *bc,
@@ -1800,57 +1847,65 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                       cudaStream_t inf_stream,
                       cudaStream_t peft_stream) {
 
-  // phase 0: copy calculated qkv into devQKVProjArray
-  // [qProjSize, tot_num_heads, num_new_tokens]
+  // qkv_ptr: [qProjSize, tot_num_heads, num_new_tokens]
   assert(m->qProjSize == m->kProjSize && m->qProjSize == m->vProjSize);
   size_t tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
-  size_t qkv_proj_size = m->qProjSize * tot_num_heads * bc->num_active_tokens();
-
-  cudaMemcpyAsync(m->devQKVProjArray,
-                  qkv_ptr,
-                  qkv_proj_size * sizeof(DT),
-                  cudaMemcpyDeviceToDevice,
-                  inf_stream);
 
   if (m->inference_debugging) {
     std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".devQKVProjArray.pt";
     at::Tensor tensor = createTorchTensorFromCuda<DT>(
-        m->devQKVProjArray,
-        {m->qProjSize, (int)tot_num_heads, bc->num_active_tokens()});
+        qkv_ptr, {m->qProjSize, (int)tot_num_heads, bc->num_active_tokens()});
     torch::save(tensor, fpath.c_str());
   }
 
-  // TODO(yingyi): take care of the shape?
-  // phase 1: Implement kernel to apply rotary embedding and scaling
-  apply_scaling_and_rotary(
-      m, bc, shard_id, static_cast<DT *>(m->devQKVProjArray), inf_stream);
-
-  if (m->inference_debugging) {
-    std::string fpath = get_fwd_dbg_folder(m, shard_id) + ".post_rope.pt";
-    at::Tensor tensor = createTorchTensorFromCuda<DT>(
-        m->devQKVProjArray,
-        {m->qProjSize, (int)tot_num_heads, bc->num_active_tokens()});
-    torch::save(tensor, fpath.c_str());
+  int peft_req_idx = -1;
+  if (bc->num_finetuning_fwd_requests() > 0) {
+    peft_req_idx = bc->finetuning_request_index();
   }
+  AttnGeneralParams general_params = {
+      .num_q_heads = m->num_q_heads,
+      .num_kv_heads = m->num_kv_heads,
+      .head_dim = m->qProjSize,
+      .num_tokens = bc->num_active_tokens(),
+      .peft_req_idx = peft_req_idx,
+      .tokenInfos = m->token_infos,
+      .kv_indptr = m->handle.incr_attention_metadata->kv_indptr,
+      .kv_page_indices = m->handle.incr_attention_metadata->kv_indices,
+      .request_completed = m->request_completed};
+  RopeParams rope_params = {
+      .apply_rotary_embedding =
+          m->rotary_embedding_meta->apply_rotary_embedding,
+      .rope_theta = m->rotary_embedding_meta->rope_theta,
+      .llama3_rope = m->rotary_embedding_meta->rope_type == "llama3",
+      .factor = m->rotary_embedding_meta->factor,
+      .low_freq_factor = m->rotary_embedding_meta->low_freq_factor,
+      .high_freq_factor = m->rotary_embedding_meta->high_freq_factor,
+      .original_max_position_embeddings =
+          m->rotary_embedding_meta->original_max_position_embeddings,
+      .complex_input = m->complex_input,
+      .scaling_query = *(m->scaling_query),
+      .scaling_factor = m->scaling_factor};
+  DataPointers<DT> data_pointers = {
+      .qkv_ptr = qkv_ptr,
+      .qTmp_ptr = static_cast<half *>(m->queryTmp),
+      .kvCache_ptr = static_cast<half *>(m->kvCache),
+      .query_activation_buffer = static_cast<DT *>(m->query_activation_buffer),
+      .keyCachePeft = static_cast<DT *>(m->keyCachePeft),
+      .valueCachePeft = static_cast<DT *>(m->valueCachePeft)};
+  int parallelism = m->qProjSize * tot_num_heads * bc->num_active_tokens() / 2;
+  attention_prep_kernel<<<GET_BLOCKS(parallelism),
+                          min(CUDA_NUM_THREADS, parallelism),
+                          0,
+                          inf_stream>>>(
+      general_params, data_pointers, rope_params);
 
-  // TODO(yingyi): replace with flash-attn
-  // The rotary-embedding is handled by the flash-attn library
-  // So, we should skip this for peft
-  // peft stream can only start after
   if (bc->num_finetuning_fwd_tokens() > 0) {
-    // wait until copy to devQKVProjArray and application of scaling & rotary
-    // have finished
+    // wait until preparation has finished
     cudaEvent_t prep_done;
     cudaEventCreate(&prep_done);
     cudaEventRecord(prep_done, inf_stream);
     cudaStreamWaitEvent(peft_stream, prep_done, 0);
 
-    // TODO(yingyi): replace with flash-attn
-    // TODO(yingyi): how should we handle kv cache for peft?
-    // flash-attn requires keeping (q,k,v,o,lse,scaling factor) to re-compute
-    // all intermediate results (S,P) in bwd should we put the q,k,v in kv
-    // cache?
-    update_kv_cache_kernel_peft<DT>(m, bc, peft_stream);
     flash_compute_attention_kernel_peft<DT>(
         m, bc, output_ptr, shard_id, peft_stream);
 
@@ -1872,7 +1927,6 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   assert(bc->num_finetuning_fwd_tokens() >= 0 &&
          bc->num_finetuning_bwd_tokens() >= 0);
   if (bc->num_inference_tokens() > 0) {
-    update_kv_cache_kernel_flashinfer<DT>(m, bc, inf_stream);
     flashinfer_incr_attention<DT>(m, bc, shard_id, output_ptr, inf_stream);
   }
 }
@@ -1907,14 +1961,6 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
   assert(m->qProjSize == m->kProjSize && m->kProjSize == m->vProjSize);
   // assert(bc->requestsInfo[i].first_token_offset_in_batch == 0);
 
-  // if (m->inference_debugging) {
-  //   // save result to file for checking
-  //   std::string out_grad_filename =
-  //       get_peft_dbg_folder(m, shard_id) + ".o_proj.input_gradient_0";
-  //   save_tensor(output_grad_ptr,
-  //               m->vProjSize * m->num_q_heads * num_tokens,
-  //               out_grad_filename.c_str());
-  // }
   // end step 0
   // ================================================================
 
@@ -1998,12 +2044,6 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
     int i = bc->finetuning_request_index();
     int num_tokens = bc->requestsInfo[i].num_tokens_in_batch;
     // save dv
-    // DT *C = static_cast<DT *>(m->devQKVProjArrayBWD) +
-    //         2 * num_tokens * (m->qProjSize * m->num_q_heads);
-    // std::string dv_raw_fpath =
-    //     get_peft_dbg_folder(m, shard_id) + ".v_proj.input_gradient_0";
-    // save_tensor(
-    //     C, m->vProjSize * m->num_q_heads * num_tokens, dv_raw_fpath.c_str());
 
     std::string dq_fpath = get_peft_dbg_folder(m, shard_id) + ".dq.pt";
     std::string dk_fpath = get_peft_dbg_folder(m, shard_id) + ".dk.pt";
@@ -2014,17 +2054,17 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
         dv.clone().detach(),
         dv_fpath); // shape: batch_size x seqlen_k x num_heads_k x head_size
 
-    std::cout << "the address of devQKVProjArrayBWD: " << m->devQKVProjArrayBWD
+    std::cout << "the address of workSpace: " << m->handle.workSpace
               << std::endl;
     std::cout << "the address of dq data: " << dq.data_ptr() << std::endl;
     std::cout << "the address of dk data: " << dk.data_ptr() << std::endl;
     std::cout << "the address of dv data: " << dv.data_ptr() << std::endl;
 
-    auto dv_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+    auto dv_ptr = static_cast<DT *>(m->handle.workSpace) +
                   2 * num_tokens * (m->qProjSize * m->num_q_heads);
-    auto dk_ptr = static_cast<DT *>(m->devQKVProjArrayBWD) +
+    auto dk_ptr = static_cast<DT *>(m->handle.workSpace) +
                   num_tokens * (m->qProjSize * m->num_q_heads);
-    auto dq_ptr = static_cast<DT *>(m->devQKVProjArrayBWD);
+    auto dq_ptr = static_cast<DT *>(m->handle.workSpace);
     std::cout << "the address of dq_ptr should be: " << dq_ptr << std::endl;
     std::cout << "the address of dk_ptr should be: " << dk_ptr << std::endl;
     std::cout << "the address of dv_ptr should be: " << dv_ptr << std::endl;
@@ -2276,9 +2316,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   num_q_heads = _num_q_heads;
   num_kv_heads = _num_kv_heads;
 
-  // rotary_embedding_meta =
-  //     (RotaryEmbeddingMeta *)calloc(1, sizeof(RotaryEmbeddingMeta));
-  // *rotary_embedding_meta = _rotary_embedding_meta;
   rotary_embedding_meta = new RotaryEmbeddingMeta(_rotary_embedding_meta);
   scaling_query = (bool *)calloc(1, sizeof(bool));
   *scaling_query = _scaling_query;
@@ -2341,12 +2378,8 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                    : BatchConfig::max_tokens_per_batch();
     // devQKVProjArray
     qkv_max_proj_size = qProjSize * tot_num_heads * max_tokens_per_batch;
-    inf_instance_size += qkv_max_proj_size * size_of_dt;
-    if (enable_peft_finetuning) {
-      qkv_max_proj_size_bwd =
-          qProjSize * tot_num_heads * BatchConfig::max_sequence_length();
-
-      peft_instance_size += qkv_max_proj_size_bwd * size_of_dt;
+    if (infer_mode == BEAM_SEARCH_MODE || infer_mode == TREE_VERIFY_MODE) {
+      inf_instance_size += qkv_max_proj_size * size_of_dt;
     }
     // queryTmp and outputTmp: only for paged attention
     if (infer_mode == INC_DECODING_MODE) {
@@ -2461,12 +2494,11 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     // intermediate buffers
     // devQKVProjArray: used to store QKV proj so that we can modify them (apply
     // rope, etc)
-    devQKVProjArray = inf_mem_allocator.allocate_instance_untyped(
-        qkv_max_proj_size * size_of_dt);
-    // devQKVProjArrayBWD
-    if (enable_peft_finetuning) {
-      devQKVProjArrayBWD = peft_mem_allocator.allocate_instance_untyped(
-          qkv_max_proj_size_bwd * size_of_dt);
+    if (infer_mode == BEAM_SEARCH_MODE || infer_mode == TREE_VERIFY_MODE) {
+      devQKVProjArray = inf_mem_allocator.allocate_instance_untyped(
+          qkv_max_proj_size * size_of_dt);
+    } else {
+      devQKVProjArray = nullptr;
     }
     // queryTmp and outputTmp: only for paged attention
     if (infer_mode == INC_DECODING_MODE) {
@@ -2605,18 +2637,6 @@ template void Kernels::IncMultiHeadAttention::apply_scaling_and_rotary<half>(
     int shard_id,
     half *output_ptr,
     cudaStream_t inf_stream);
-
-template void
-    Kernels::IncMultiHeadAttention::update_kv_cache_kernel_flashinfer<float>(
-        IncMultiHeadSelfAttentionMeta const *m,
-        BatchConfig const *bc,
-        cudaStream_t stream);
-
-template void
-    Kernels::IncMultiHeadAttention::update_kv_cache_kernel_flashinfer<half>(
-        IncMultiHeadSelfAttentionMeta const *m,
-        BatchConfig const *bc,
-        cudaStream_t stream);
 
 template __global__ void
     Kernels::IncMultiHeadAttention::apply_position_bias_qkprd<float>(
