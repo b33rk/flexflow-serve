@@ -437,6 +437,8 @@ void Combine::inference_task(Task const *task,
     forward_task_with_type<half>(task, regions, ctx, runtime);
   } else if (data_type == DT_FLOAT) {
     forward_task_with_type<float>(task, regions, ctx, runtime);
+  } else if (data_type == DT_BFLOAT16) {
+    forward_task_with_type<__ff_bfloat16>(task, regions, ctx, runtime);
   } else if (data_type == DT_DOUBLE) {
     forward_task_with_type<double>(task, regions, ctx, runtime);
   } else if (data_type == DT_INT32) {
@@ -461,6 +463,8 @@ void Combine::forward_task(Task const *task,
     forward_task_with_type<half>(task, regions, ctx, runtime);
   } else if (data_type == DT_FLOAT) {
     forward_task_with_type<float>(task, regions, ctx, runtime);
+  } else if (data_type == DT_BFLOAT16) {
+    forward_task_with_type<__ff_bfloat16>(task, regions, ctx, runtime);
   } else if (data_type == DT_DOUBLE) {
     forward_task_with_type<double>(task, regions, ctx, runtime);
   } else if (data_type == DT_INT32) {

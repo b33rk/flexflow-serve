@@ -55,14 +55,14 @@ void inference_kernel(LoraLinearMeta *m,
                       int in_dim,
                       int out_dim,
                       ffStream_t stream);
-template <typename DT>
+template <typename SCALE_DT, typename DATA_DT>
 void peft_bwd_kernel(Context ctx,
                      Runtime *runtime,
                      LoraLinearMeta *m,
                      BatchConfig const *bc,
                      int shard_id,
-                     DT *input_grad_ptr,
-                     DT const *output_grad_ptr,
+                     DATA_DT *input_grad_ptr,
+                     DATA_DT const *output_grad_ptr,
                      int in_dim,
                      int out_dim,
                      ffStream_t stream);

@@ -923,6 +923,8 @@ template __host__ float *copy_tensor_dev_to_host<float>(float const *ptr,
                                                         size_t num_elements);
 template __host__ half *copy_tensor_dev_to_host<half>(half const *ptr,
                                                       size_t num_elements);
+template __host__ __ff_bfloat16 *copy_tensor_dev_to_host<__ff_bfloat16>(__ff_bfloat16 const *ptr,
+                                                      size_t num_elements);
 template __host__ double *copy_tensor_dev_to_host<double>(double const *ptr,
                                                           size_t num_elements);
 template __host__ int32_t *
@@ -935,6 +937,9 @@ template __host__ void copy_tensor_dev_to_host<float>(float const *ptr,
 template __host__ void copy_tensor_dev_to_host<half>(half const *ptr,
                                                      half *dst,
                                                      size_t num_elements);
+template __host__ void copy_tensor_dev_to_host<__ff_bfloat16>(__ff_bfloat16 const *ptr,
+                                                               __ff_bfloat16 *dst,
+                                                               size_t num_elements);
 template __host__ void copy_tensor_dev_to_host<double>(double const *ptr,
                                                        double *dst,
                                                        size_t num_elements);

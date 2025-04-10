@@ -274,6 +274,15 @@ void peft_bwd_kernel_wrapper(LinearMeta const *m,
                                     in_dim,
                                     out_dim,
                                     stream);
+  } else if (m->input_type[0] == DT_BFLOAT16) {
+    Internal::peft_bwd_kernel<float>(m,
+                                    bc,
+                                    input_grad_ptr,
+                                    output_grad_ptr,
+                                    weight_ptr,
+                                    in_dim,
+                                    out_dim,
+                                    stream);
   }
 
   if (m->profiling) {

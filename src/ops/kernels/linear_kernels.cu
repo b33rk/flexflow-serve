@@ -291,7 +291,8 @@ void peft_bwd_kernel_wrapper(LinearMeta const *m,
                                     out_dim,
                                     stream);
   } else if (m->input_type[0] == DT_BFLOAT16) {
-    Internal::peft_bwd_kernel<__ff_bfloat16>(m,
+    // cublas scale type: https://docs.nvidia.com/cuda/cublas/index.html?highlight=cublasGemmEx#cublasgemmex
+    Internal::peft_bwd_kernel<float>(m,
                                              bc,
                                              input_grad_ptr,
                                              output_grad_ptr,
@@ -530,7 +531,7 @@ void peft_bwd_kernel(LinearMeta const *m,
 
   input_grad_ptr = static_cast<DT *>(input_grad_ptr);
   output_grad_ptr = static_cast<DT *>(output_grad_ptr);
-  cudaDataType_t compute_type = output_type;
+  cudaDataType_t compute_type = output_type == CUDA_R_16BF ? CUDA_R_32F : output_type;
   int output_size = out_dim * num_peft_tokens;
   if (m->activation == AC_MODE_RELU) {
     relu_backward_kernel(m->output_type[0],

@@ -689,7 +689,7 @@ void lora_inference_debugging(LoraLinearMeta *m,
     at::Tensor tensorGradB = createTorchTensorFromCuda<half>(
         weight.w1_grad_ptr, {lora_config.rank, out_dim});
     torch::save(tensorGradB, filename_grad_B.c_str());
-  } else if (m->input_type[0] == DT_BFLOAT16){
+  } else if (m->input_type[0] == DT_BFLOAT16) {
     // weight A
     at::Tensor tensorA = createTorchTensorFromCuda<__ff_bfloat16>(
         weight.w0_ptr, {in_dim, lora_config.rank});
@@ -816,6 +816,13 @@ void Kernels::LoraLinear::save_peft_weights_if_needed(LoraLinearMeta *m,
       save_peft_to_file((half *)weight.w0_ptr, w0_num_elements, w0_filepath);
       if (shard_id == 0) {
         save_peft_to_file((half *)weight.w1_ptr, w1_num_elements, w1_filepath);
+      }
+    } else if (m->input_type[0] == DT_BFLOAT16) {
+      save_peft_to_file(
+          (__ff_bfloat16 *)weight.w0_ptr, w0_num_elements, w0_filepath);
+      if (shard_id == 0) {
+        save_peft_to_file(
+            (__ff_bfloat16 *)weight.w1_ptr, w1_num_elements, w1_filepath);
       }
     } else {
       assert(false && "Data type not supported");
