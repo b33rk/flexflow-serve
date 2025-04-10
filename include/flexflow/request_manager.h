@@ -120,6 +120,7 @@ struct Request {
   int benchmarking_tokens = -1;
   bool add_special_tokens = true;
   bool warmup = false;
+  bool ignore_eos = false;
 
   Status status = PENDING;
   long long arrival_time_us = 0;

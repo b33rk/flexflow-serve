@@ -800,7 +800,7 @@ bool RequestManager::inf_req_completed(BatchConfig const &old_bc, int i) {
   // printf("model_type = %d\n", this->model_type);
   if (request.tokens.size() >= old_bc.requestsInfo[i].max_length) {
     request_completed = true;
-  } else if (is_eos_token(request.tokens.back())) {
+  } else if (is_eos_token(request.tokens.back()) && !request.ignore_eos) {
     // Encounter EOS token id
     request_completed = true;
   }
@@ -985,7 +985,7 @@ void RequestManager::handle_completed_inf_req(BatchConfig const &old_bc,
   GenerationResult &gr = request_generation_results[request.guid];
   std::vector<int> output_tokens = std::vector<int>(
       request.tokens.begin() + gr.input_tokens.size(), request.tokens.end());
-  if (is_eos_token(output_tokens.back())) {
+  if (is_eos_token(output_tokens.back()) && !request.ignore_eos) {
     // remove the EOS token
     output_tokens.pop_back();
   }
