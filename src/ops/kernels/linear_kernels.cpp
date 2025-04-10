@@ -27,8 +27,16 @@ LinearMeta::LinearMeta(FFHandler handler,
                        Linear const *li,
                        MemoryAllocator gpu_mem_allocator,
                        int weightSize)
-    : OpMeta(handler, li), weight_ptr(nullptr) {
+    : OpMeta(handler, li), weight_ptr(nullptr), activation(li->activation),
+      kernel_reg_type(li->kernel_reg_type),
+      kernel_reg_lambda(li->kernel_reg_lambda), use_bias(li->use_bias),
+      add_bias_only_once(li->add_bias_only_once),
+      quantization_type(li->quantization_type), offload(li->offload) {
+  weight_ptr_type = this->input_type[0];
+  trainable_inputs[0] = li->trainable_inputs[0];
+
   DataType data_type = li->data_type;
+  size_t data_size = data_type_size(data_type);
   // allocate weight and bias in the reserve space for cpu offloading
   if (li->offload) {
     weight_ptr = gpu_mem_allocator.allocate_reserved_untyped(
@@ -43,43 +51,52 @@ LinearMeta::LinearMeta(FFHandler handler,
   // peft activation
   size_t out_dim =
       li->outputs[0]->dims[0].size / li->outputs[0]->dims[0].degree;
-  allocated_peft_buffer_size =
-      enable_peft_finetuning ? (data_type_size(data_type) *
-                                BatchConfig::max_sequence_length() * out_dim)
-                             : 0;
-  size_t totalSize =
-      data_type_size(data_type) * batch_size + allocated_peft_buffer_size;
+  if (enable_peft_finetuning &&
+      (activation == AC_MODE_RELU || activation == AC_MODE_SIGMOID)) {
+    // Allocate space for storing the output activations for PEFT finetuning
+    // during inference
+    allocated_peft_buffer_size =
+        data_size * BatchConfig::max_sequence_length() * out_dim;
+  } else {
+    allocated_peft_buffer_size = 0;
+    output_activation_buffer = nullptr;
+  }
+  size_t bias_size = use_bias ? batch_size * data_size : 0;
+
+  size_t totalSize = bias_size + allocated_peft_buffer_size;
   gpu_mem_allocator.create_legion_instance(
       reserveInst, totalSize, "LinearMeta");
   // Allocate an all-one's vector
-  one_ptr = gpu_mem_allocator.allocate_instance_untyped(
-      data_type_size(data_type) * batch_size);
+  if (use_bias) {
+    one_ptr = gpu_mem_allocator.allocate_instance_untyped(bias_size);
+    int parallelism = batch_size;
+    hipStream_t stream;
+    checkCUDA(get_legion_stream(&stream));
+    if (data_type == DT_FLOAT) {
+      Kernels::Linear::Internal::
+          build_one_ptr<<<GET_BLOCKS(parallelism),
+                          min(CUDA_NUM_THREADS, parallelism),
+                          0,
+                          stream>>>((float *)one_ptr, batch_size);
+    } else if (data_type == DT_HALF) {
+      Kernels::Linear::Internal::
+          build_one_ptr<<<GET_BLOCKS(parallelism),
+                          min(CUDA_NUM_THREADS, parallelism),
+                          0,
+                          stream>>>((half *)one_ptr, batch_size);
+    }
+  } else {
+    one_ptr = nullptr;
+  }
   if (enable_peft_finetuning) {
     output_activation_buffer =
         gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
+  } else {
+    output_activation_buffer = nullptr;
   }
-  int parallelism = batch_size;
-  hipStream_t stream;
-  checkCUDA(get_legion_stream(&stream));
-  if (data_type == DT_FLOAT) {
-    Kernels::Linear::Internal::
-        build_one_ptr<<<GET_BLOCKS(parallelism),
-                        min(CUDA_NUM_THREADS, parallelism),
-                        0,
-                        stream>>>((float *)one_ptr, batch_size);
-  } else if (data_type == DT_HALF) {
-    Kernels::Linear::Internal::
-        build_one_ptr<<<GET_BLOCKS(parallelism),
-                        min(CUDA_NUM_THREADS, parallelism),
-                        0,
-                        stream>>>((half *)one_ptr, batch_size);
-  }
-
   // Allocate descriptors
   checkCUDNN(miopenCreateActivationDescriptor(&actiDesc));
   checkCUDNN(miopenCreateTensorDescriptor(&outputTensor));
-
-  allocated_peft_buffer_size = 0;
 }
 
 LinearMeta::~LinearMeta(void) {
@@ -150,50 +167,7 @@ void forward_kernel_wrapper(LinearMeta const *m,
                             int in_dim,
                             int out_dim,
                             int batch_size) {
-  hipStream_t stream;
-  checkCUDA(get_legion_stream(&stream));
-  hipEvent_t t_start, t_end;
-  if (m->profiling) {
-    checkCUDA(hipEventCreate(&t_start));
-    checkCUDA(hipEventCreate(&t_end));
-    checkCUDA(hipEventRecord(t_start, stream));
-  }
-  if (m->input_type[0] == DT_FLOAT) {
-    Internal::forward_kernel<float>(m,
-                                    input_ptr,
-                                    output_ptr,
-                                    weight_ptr,
-                                    bias_ptr,
-                                    in_dim,
-                                    out_dim,
-                                    batch_size,
-                                    stream);
-  } else if (m->input_type[0] == DT_HALF) {
-    Internal::forward_kernel<half>(m,
-                                   input_ptr,
-                                   output_ptr,
-                                   weight_ptr,
-                                   bias_ptr,
-                                   in_dim,
-                                   out_dim,
-                                   batch_size,
-                                   stream);
-  }
-
-  if (m->profiling) {
-    checkCUDA(hipEventRecord(t_end, stream));
-    checkCUDA(hipEventSynchronize(t_end));
-    float elapsed = 0;
-    checkCUDA(hipEventElapsedTime(&elapsed, t_start, t_end));
-    checkCUDA(hipEventDestroy(t_start));
-    checkCUDA(hipEventDestroy(t_end));
-    printf("%s [Linear] forward time = %.2lfms\n", m->op_name, elapsed);
-    // print_tensor<float>((float*)input_ptr, in_dim * batch_size,
-    // "[Linear:forward:input]"); print_tensor<float>((float*)weight_ptr, in_dim
-    // * out_dim, "[Linear:forward:kernel]");
-    // print_tensor<float>((float*)output_ptr, out_dim * batch_size,
-    // "[Linear:forward:output]");
-  }
+  assert(false && "Not implemented yet");
 }
 
 void inference_kernel_wrapper(LinearMeta *m,
@@ -215,30 +189,30 @@ void inference_kernel_wrapper(LinearMeta *m,
   }
 
   if (m->input_type[0] == DT_FLOAT) {
-    Internal::forward_kernel<float>(m,
-                                    input_ptr,
-                                    output_ptr,
-                                    weight_ptr,
-                                    bias_ptr,
-                                    in_dim,
-                                    out_dim,
-                                    batch_size,
-                                    stream);
+    Internal::inference_kernel<float>(m,
+                                      input_ptr,
+                                      output_ptr,
+                                      weight_ptr,
+                                      bias_ptr,
+                                      in_dim,
+                                      out_dim,
+                                      batch_size,
+                                      stream);
     if ((m->activation == AC_MODE_RELU || m->activation == AC_MODE_SIGMOID) &&
         bc->num_finetuning_fwd_requests() > 0) {
       Internal::store_peft_activations<float>(
           m, bc, out_dim, static_cast<float *>(output_ptr), stream);
     }
   } else if (m->input_type[0] == DT_HALF) {
-    Internal::forward_kernel<half>(m,
-                                   input_ptr,
-                                   output_ptr,
-                                   weight_ptr,
-                                   bias_ptr,
-                                   in_dim,
-                                   out_dim,
-                                   batch_size,
-                                   stream);
+    Internal::inference_kernel<half>(m,
+                                     input_ptr,
+                                     output_ptr,
+                                     weight_ptr,
+                                     bias_ptr,
+                                     in_dim,
+                                     out_dim,
+                                     batch_size,
+                                     stream);
     if ((m->activation == AC_MODE_RELU || m->activation == AC_MODE_SIGMOID) &&
         bc->num_finetuning_fwd_requests() > 0) {
       Internal::store_peft_activations<half>(
@@ -319,75 +293,9 @@ void backward_kernel_wrapper(LinearMeta const *m,
                              int in_dim,
                              int out_dim,
                              int batch_size) {
-  hipStream_t stream;
-  checkCUDA(get_legion_stream(&stream));
-
-  hipEvent_t t_start, t_end;
-  if (m->profiling) {
-    checkCUDA(hipEventCreate(&t_start));
-    checkCUDA(hipEventCreate(&t_end));
-    checkCUDA(hipEventRecord(t_start, stream));
-  }
-  if (m->input_type[0] == DT_FLOAT) {
-    Internal::backward_kernel<float>(m,
-                                     input_ptr,
-                                     input_grad_ptr,
-                                     output_ptr,
-                                     output_grad_ptr,
-                                     kernel_ptr,
-                                     kernel_grad_ptr,
-                                     bias_grad_ptr,
-                                     in_dim,
-                                     out_dim,
-                                     batch_size,
-                                     stream);
-  } else if (m->input_type[0] == DT_HALF) {
-    Internal::backward_kernel<half>(m,
-                                    input_ptr,
-                                    input_grad_ptr,
-                                    output_ptr,
-                                    output_grad_ptr,
-                                    kernel_ptr,
-                                    kernel_grad_ptr,
-                                    bias_grad_ptr,
-                                    in_dim,
-                                    out_dim,
-                                    batch_size,
-                                    stream);
-  }
-
-  if (m->profiling) {
-    checkCUDA(hipEventRecord(t_end, stream));
-    checkCUDA(hipEventSynchronize(t_end));
-    float elapsed = 0;
-    checkCUDA(hipEventElapsedTime(&elapsed, t_start, t_end));
-    checkCUDA(hipEventDestroy(t_start));
-    checkCUDA(hipEventDestroy(t_end));
-    printf("%s Linear backward time = %.2lfms\n", m->op_name, elapsed);
-    // print_tensor<float>(acc_output_grad.ptr, acc_output_grad.rect.volume(),
-    // "[Linear:backward:output_grad]");
-    // print_tensor<float>(acc_kernel_grad.ptr, acc_kernel_grad.rect.volume(),
-    // "[Linear:backward:kernel_grad]"); print_tensor<1,
-    // float>(acc_bias_grad.ptr, acc_bias_grad.rect,
-    // "[Linear:backward:bias_grad]"); print_tensor<float>(input_grad,
-    // acc_input.rect.volume(), "[Linear:backward:input_grad]");
-  }
+  assert(false && "Not implemented yet");
 }
 
-/*
-__host__
-Parameter* Linear::get_parameter(int index)
-{
-  if (index == 0) {
-    return &weights[0];
-  } else if (index == 1){
-    return &weights[1];
-  } else {
-    assert(0);
-    return NULL;
-  }
-}
-*/
 namespace Internal {
 
 template <typename DT>
@@ -403,15 +311,15 @@ __global__ void AddBiasWithReLU(DT *output_ptr,
 }
 
 template <typename DT>
-void forward_kernel(LinearMeta const *m,
-                    void const *input_ptr,
-                    void *output_ptr,
-                    void const *weight_ptr,
-                    void const *bias_ptr,
-                    int in_dim,
-                    int out_dim,
-                    int batch_size,
-                    ffStream_t stream) {
+void inference_kernel(LinearMeta const *m,
+                      void const *input_ptr,
+                      void *output_ptr,
+                      void const *weight_ptr,
+                      void const *bias_ptr,
+                      int in_dim,
+                      int out_dim,
+                      int batch_size,
+                      ffStream_t stream) {
   // additional processing for uploading weights
   if (m->offload) {
     // Note that we update weight_ptr when uploading weight
@@ -552,7 +460,7 @@ void store_peft_activations(LinearMeta const *m,
   int num_ft_tokens = bc->num_finetuning_fwd_tokens();
   int tokens_previous_requests =
       bc->requestsInfo[i].first_token_offset_in_batch;
-  int tokens_previous_steps = bc->requestsInfo[i].first_token_offset_in_batch;
+  int tokens_previous_steps = bc->requestsInfo[i].first_token_depth_in_request;
   size_t data_size = out_dim * num_ft_tokens * sizeof(DT);
   size_t batch_offset = out_dim * tokens_previous_requests;
   size_t request_offset = out_dim * tokens_previous_steps;
@@ -643,129 +551,6 @@ void peft_bwd_kernel(LinearMeta const *m,
                             output_type,
                             out_dim,
                             &beta,
-                            input_grad_ptr,
-                            input_type,
-                            in_dim,
-                            compute_type,
-                            HIPBLAS_GEMM_DEFAULT));
-  }
-}
-
-template <typename DT>
-void backward_kernel(LinearMeta const *m,
-                     void const *input_ptr,
-                     void *input_grad_ptr,
-                     void const *output_ptr,
-                     void *output_grad_ptr,
-                     void const *kernel_ptr,
-                     void *kernel_grad_ptr,
-                     void *bias_grad_ptr,
-                     int in_dim,
-                     int out_dim,
-                     int batch_size,
-                     hipStream_t stream) {
-  checkCUDA(hipblasSetStream(m->handle.blas, stream));
-  checkCUDNN(miopenSetStream(m->handle.dnn, stream));
-
-  DT alpha = 1.0f;
-  float sgeam_alpha = 1.0f;
-  hipblasDatatype_t input_type = ff_to_cuda_datatype(m->input_type[0]);
-  hipblasDatatype_t weight_type = ff_to_cuda_datatype(m->weight_type[0]);
-  hipblasDatatype_t output_type = ff_to_cuda_datatype(m->output_type[0]);
-  hipblasDatatype_t compute_type = output_type;
-  int output_size = out_dim * batch_size;
-  if (m->activation == AC_MODE_RELU) {
-    relu_backward_kernel(
-        m->output_type[0], output_grad_ptr, output_ptr, output_size, stream);
-  } else if (m->activation == AC_MODE_SIGMOID) {
-    sigmoid_backward_kernel(
-        m->output_type[0], output_grad_ptr, output_ptr, output_size, stream);
-  } else {
-    // TODO: only support relu and sigmoid for now
-    assert(m->activation == AC_MODE_NONE);
-  }
-  // Compute weight gradient
-  // NOTE: we use alpha=1 for kernel_grad to accumulate gradients
-  checkCUDA(hipblasGemmEx(m->handle.blas,
-                          HIPBLAS_OP_N,
-                          HIPBLAS_OP_T,
-                          in_dim,
-                          out_dim,
-                          batch_size,
-                          &alpha,
-                          input_ptr,
-                          input_type,
-                          in_dim,
-                          output_grad_ptr,
-                          output_type,
-                          out_dim,
-                          &alpha,
-                          kernel_grad_ptr,
-                          weight_type,
-                          in_dim,
-                          compute_type,
-                          HIPBLAS_GEMM_DEFAULT));
-  if (m->kernel_reg_type == REG_MODE_NONE) {
-    // do nothing
-  } else if (m->kernel_reg_type == REG_MODE_L2) {
-    checkCUDA(hipblasSgeam(m->handle.blas,
-                           HIPBLAS_OP_N,
-                           HIPBLAS_OP_N,
-                           in_dim,
-                           out_dim,
-                           &sgeam_alpha,
-                           (float *)kernel_grad_ptr,
-                           in_dim,
-                           &(m->kernel_reg_lambda),
-                           (float *)kernel_ptr,
-                           in_dim,
-                           (float *)kernel_grad_ptr,
-                           in_dim));
-  } else {
-    assert(false && "Only L2 regularization is supported");
-  }
-
-  // Compute bias gradient
-  // NOTE: we use alpha=1 for bias_grad to accumulate gradients
-  // use_bias = True
-  if (bias_grad_ptr != NULL) {
-    checkCUDA(hipblasGemmEx(m->handle.blas,
-                            HIPBLAS_OP_N,
-                            HIPBLAS_OP_T,
-                            1,
-                            out_dim,
-                            batch_size,
-                            &alpha,
-                            static_cast<DT *>(m->one_ptr),
-                            HIPBLAS_R_32F,
-                            1,
-                            output_grad_ptr,
-                            output_type,
-                            out_dim,
-                            &alpha,
-                            bias_grad_ptr,
-                            weight_type,
-                            1,
-                            compute_type,
-                            HIPBLAS_GEMM_DEFAULT));
-  }
-  // Compute data gradient
-  // NOTE: we use alpha=1 for input_grad to accumulate gradients
-  if (input_grad_ptr != NULL) {
-    checkCUDA(hipblasGemmEx(m->handle.blas,
-                            HIPBLAS_OP_N,
-                            HIPBLAS_OP_N,
-                            in_dim,
-                            batch_size,
-                            out_dim,
-                            &alpha,
-                            kernel_ptr,
-                            weight_type,
-                            in_dim,
-                            output_grad_ptr,
-                            output_type,
-                            out_dim,
-                            &alpha,
                             input_grad_ptr,
                             input_type,
                             in_dim,

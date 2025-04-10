@@ -561,8 +561,9 @@ PEFTModelID *
 
       std::string base_layer_name(base_layer->name);
 
-      if ((target_name == "q_proj" || target_name == "k_proj" || target_name == "v_proj") &&
-        base_layer_name.find("qkv_proj") != std::string::npos) {
+      if ((target_name == "q_proj" || target_name == "k_proj" ||
+           target_name == "v_proj") &&
+          base_layer_name.find("qkv_proj") != std::string::npos) {
         found = true;
         break;
       }
