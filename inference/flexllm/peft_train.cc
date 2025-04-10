@@ -228,6 +228,7 @@ std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
     int prompt_length = entry["prompt_length"];
     int response_length = entry["response_length"];
     std::string text = entry["prompt"];
+    double arrival_time_us = entry["arrival_time"].get<double>() * 1000000;
 
     Request inference_req;
     if (benchmarking) {
@@ -237,6 +238,8 @@ std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
       inference_req.prompt = text;
     }
     inference_req.max_new_tokens = response_length;
+    inference_req.ignore_eos = true;
+    inference_req.arrival_time_us = arrival_time_us;
     requests.push_back(inference_req);
   }
   return requests;
@@ -503,9 +506,9 @@ void FlexFlow::top_level_task(Task const *task,
 
   // Run workload
   {
-    std::vector<Request> requests;
+    std::vector<Request> inference_requests;
     if (!file_paths.prompt_file_path.empty()) {
-      requests = load_requests(file_paths.prompt_file_path, 128);
+      inference_requests = load_requests(file_paths.prompt_file_path, 128);
     }
     // Add fine-tuning request
     assert(!file_paths.dataset_file_path.empty() &&
@@ -523,10 +526,11 @@ void FlexFlow::top_level_task(Task const *task,
     fine_tuning_req.peft_finetuning_info.gradient_accumulation_steps =
         gradient_accumulation_steps;
     fine_tuning_req.peft_finetuning_info.num_logging_steps = num_logging_steps;
-    requests.push_back(fine_tuning_req);
+    std::vector<Request> finetuning_requests;
+    finetuning_requests.push_back(fine_tuning_req);
 
     std::cout << "----------inference started--------------" << std::endl;
-    std::vector<GenerationResult> result = model.generate(requests);
+    std::vector<GenerationResult> result = model.generate_online(inference_requests, finetuning_requests);
     std::cout << "----------inference finished--------------" << std::endl;
   }
 
