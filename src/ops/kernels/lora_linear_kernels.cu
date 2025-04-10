@@ -65,29 +65,29 @@ void inference_kernel_wrapper(LoraLinearMeta *m,
     cudaEventRecord(t_start, stream);
   }
   if (m->input_type[0] == DT_FLOAT) {
-    Internal::inference_kernel<float>(m,
-                                      bc,
-                                      input.get_float_ptr(),
-                                      output.get_float_ptr(),
-                                      in_dim,
-                                      out_dim,
-                                      stream);
+    Internal::inference_kernel<float, float>(m,
+                                             bc,
+                                             input.get_float_ptr(),
+                                             output.get_float_ptr(),
+                                             in_dim,
+                                             out_dim,
+                                             stream);
   } else if (m->input_type[0] == DT_HALF) {
-    Internal::inference_kernel<half>(m,
-                                     bc,
-                                     input.get_half_ptr(),
-                                     output.get_half_ptr(),
-                                     in_dim,
-                                     out_dim,
-                                     stream);
+    Internal::inference_kernel<half, half>(m,
+                                           bc,
+                                           input.get_half_ptr(),
+                                           output.get_half_ptr(),
+                                           in_dim,
+                                           out_dim,
+                                           stream);
   } else if (m->input_type[0] == DT_BFLOAT16) {
-    Internal::inference_kernel<__ff_bfloat16>(m,
-                                     bc,
-                                     input.get_bfloat16_ptr(),
-                                     output.get_bfloat16_ptr(),
-                                     in_dim,
-                                     out_dim,
-                                     stream);
+    Internal::inference_kernel<float, __ff_bfloat16>(m,
+                                                     bc,
+                                                     input.get_bfloat16_ptr(),
+                                                     output.get_bfloat16_ptr(),
+                                                     in_dim,
+                                                     out_dim,
+                                                     stream);
   } else {
     assert(false && "Unsupported data type");
   }
@@ -150,15 +150,15 @@ void peft_bwd_kernel_wrapper(Context ctx,
                                     stream);
   } else if (m->input_type[0] == DT_BFLOAT16) {
     Internal::peft_bwd_kernel<__ff_bfloat16>(ctx,
-                                    runtime,
-                                    m,
-                                    bc,
-                                    shard_id,
-                                    input_grad.get_bfloat16_ptr(),
-                                    output_grad.get_bfloat16_ptr(),
-                                    in_dim,
-                                    out_dim,
-                                    stream);
+                                             runtime,
+                                             m,
+                                             bc,
+                                             shard_id,
+                                             input_grad.get_bfloat16_ptr(),
+                                             output_grad.get_bfloat16_ptr(),
+                                             in_dim,
+                                             out_dim,
+                                             stream);
   } else {
     assert(false && "Unsupported data type");
   }
@@ -193,11 +193,11 @@ bool lora_applies_to_this_layer(LoraLinearMeta *m,
 
 namespace Internal {
 
-template <typename DT>
+template <typename SCALE_DT, typename DATA_DT>
 void inference_kernel(LoraLinearMeta *m,
                       BatchConfig const *bc,
-                      DT const *input_ptr,
-                      DT *output_ptr,
+                      DATA_DT const *input_ptr,
+                      DATA_DT *output_ptr,
                       int in_dim,
                       int out_dim,
                       ffStream_t stream) {
@@ -208,7 +208,8 @@ void inference_kernel(LoraLinearMeta *m,
   cudaDataType_t lr_actv_type = output_type;
   assert(input_type == output_type);
   cudaDataType_t weight_type = output_type;
-  cudaDataType_t compute_type = output_type;
+  cudaDataType_t compute_type =
+      output_type == CUDA_R_16BF ? CUDA_R_32F : output_type;
 
   int num_peft_requests = 0;
   for (int i = 0; i < bc->max_requests_per_batch(); i++) {
@@ -251,7 +252,7 @@ void inference_kernel(LoraLinearMeta *m,
       assert(m->handle.workSpaceSize >= data_type_size(m->input_type[1]) *
                                             num_peft_tokens * lora_config.rank);
     }
-    DT alpha = 1.0f, beta = 0.0f;
+    SCALE_DT alpha = 1.0f, beta = 0.0f;
     // buffer = weight_first * input
     // [rank, num_peft_tokens] = [in_dim, rank].T * [in_dim, num_peft_tokens]
     checkCUDA(cublasGemmEx(m->handle.blas,
@@ -277,7 +278,8 @@ void inference_kernel(LoraLinearMeta *m,
     // [out_dim, num_peft_tokens] = [rank, out_dim].T * [rank, num_peft_tokens]
     // Note that we use alpha in both places since we do
     // an in-place update for LoraLinear
-    DT scaling_constant = (DT)(lora_config.lora_alpha / lora_config.rank);
+    SCALE_DT scaling_constant =
+        (SCALE_DT)(lora_config.lora_alpha / lora_config.rank);
     checkCUDA(cublasGemmEx(m->handle.blas,
                            CUBLAS_OP_T,
                            CUBLAS_OP_N,

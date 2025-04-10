@@ -218,6 +218,16 @@ void inference_kernel_wrapper(LinearMeta *m,
       Internal::store_peft_activations<half>(
           m, bc, out_dim, static_cast<half *>(output_ptr), stream);
     }
+  } else if (m->input_type[0] == DT_BFLOAT16) {
+    Internal::inference_kernel<float>(m,
+                                      input_ptr,
+                                      output_ptr,
+                                      weight_ptr,
+                                      bias_ptr,
+                                      in_dim,
+                                      out_dim,
+                                      batch_size,
+                                      stream);
   }
 
   if (m->profiling) {

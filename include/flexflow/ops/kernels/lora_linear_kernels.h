@@ -47,11 +47,11 @@ void save_peft_weights_if_needed(LoraLinearMeta *m,
 namespace Internal {
 // template <typename DT>
 // void init_kernel(LoraLinearMeta *m, int seed, ffStream_t stream);
-template <typename DT>
+template <typename SCALE_DT, typename DATA_DT>
 void inference_kernel(LoraLinearMeta *m,
                       BatchConfig const *bc,
-                      DT const *input_ptr,
-                      DT *output_ptr,
+                      DATA_DT const *input_ptr,
+                      DATA_DT *output_ptr,
                       int in_dim,
                       int out_dim,
                       ffStream_t stream);

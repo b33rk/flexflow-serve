@@ -950,6 +950,9 @@ template __host__ void copy_tensor_host_to_dev<float>(float *dst,
 template __host__ void copy_tensor_host_to_dev<half>(half *dst,
                                                      half const *src,
                                                      size_t num_elements);
+template __host__ void copy_tensor_host_to_dev<__ff_bfloat16>(__ff_bfloat16 *dst,
+                                                               __ff_bfloat16 const *src,
+                                                               size_t num_elements);
 template __host__ void copy_tensor_host_to_dev<double>(double *dst,
                                                        double const *src,
                                                        size_t num_elements);

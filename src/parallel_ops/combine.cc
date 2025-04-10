@@ -76,7 +76,7 @@ Combine::Combine(FFModel &model,
               params.name) {}
 
 Combine::Combine(FFModel &model,
-                 const ParallelTensor _input,
+                 ParallelTensor const _input,
                  int _combine_legion_dim,
                  int _combine_degree,
                  char const *name)
@@ -525,6 +525,10 @@ bool Combine::peft_bwd_task(Task const *task,
     backward_kernel<float>(output_grad.get_float_ptr(),
                            input_grad.get_float_ptr(),
                            output_grad.domain.get_volume());
+  } else if (data_type == DT_BFLOAT16) {
+    backward_kernel<__ff_bfloat16>(output_grad.get_bfloat16_ptr(),
+                                   input_grad.get_bfloat16_ptr(),
+                                   output_grad.domain.get_volume());
   } else if (data_type == DT_DOUBLE) {
     backward_kernel<double>(output_grad.get_double_ptr(),
                             input_grad.get_double_ptr(),
