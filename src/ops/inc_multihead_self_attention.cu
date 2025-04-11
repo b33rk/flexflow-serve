@@ -2252,7 +2252,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
                                  0,
                                  peft_stream>>>(
         input_grad_ptr,
-        m->complex_input,
+        m->complex_input_bwd,
         m->peft_token_infos_device,
         m->rotary_embedding_meta->rope_theta,
         (m->rotary_embedding_meta->rope_type == "llama3"),
