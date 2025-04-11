@@ -404,7 +404,7 @@ private:
 
   // peft
   std::unordered_map<PEFTModelID, LoraLinearConfig> peft_configs;
-  int max_lora_rank = 32;
+  int max_lora_rank = 16;
   int max_concurrent_adapters = 0;
   // peft benchmarking
   bool enable_peft_finetuning = false;

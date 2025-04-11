@@ -309,6 +309,7 @@ void FlexFlow::top_level_task(Task const *task,
   int num_layers_per_finetuning_step = -1;
   bool run_warmup = false;
   int num_kv_cache_slots = -1;
+  int rank = 16;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
@@ -415,7 +416,6 @@ void FlexFlow::top_level_task(Task const *task,
          "Invalid LLM model type passed (or no type was passed).");
 
   // load PEFT config
-  int rank = 16;
   LoraOptimizerConfig *optim_config = new LoraSGDOptimizerConfig(0.001f);
   std::vector<std::string> target_modules = {"down_proj"};
   LoraLinearConfig peft_config_finetuning(file_paths.cache_folder_path,
@@ -442,6 +442,7 @@ void FlexFlow::top_level_task(Task const *task,
       model_type, bos_token_id, eos_token_ids, tokenizer_filepath);
   rm->register_output_filepath(file_paths.output_file_path);
   rm->set_enable_peft_finetuning(enable_peft_finetuning);
+  rm->set_max_lora_rank(rank);
 
   FFModel model(ffconfig, ffconfig.cpu_offload);
   model.set_num_kv_cache_pages(

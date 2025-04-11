@@ -299,8 +299,7 @@ void LLAMA::create_llama_model(FFModel &ff,
   // If PEFT is enabled, add LoRA layers
   if (ff.config.enable_peft) {
     // todo: add attention projections
-    std::vector<std::string> target_modules = {
-        "qkv_proj", "o_proj", "gate_proj", "down_proj", "up_proj"};
+    std::vector<std::string> target_modules = {"down_proj"};
     ff.add_lora_layers(target_modules);
   }
 
