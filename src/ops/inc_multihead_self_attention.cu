@@ -1844,9 +1844,9 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                       int shard_id,
                       DT const *qkv_ptr,
                       DT *output_ptr,
-                      cudaStream_t inf_stream,
-                      cudaStream_t peft_stream) {
-
+                      cudaStream_t main_stream) {
+  // Step 0: Preparation (shared by inference and finetuning)
+  // ==========================================================================
   // qkv_ptr: [qProjSize, tot_num_heads, num_new_tokens]
   assert(m->qProjSize == m->kProjSize && m->qProjSize == m->vProjSize);
   size_t tot_num_heads = m->num_q_heads + 2 * m->num_kv_heads;
@@ -1896,18 +1896,20 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   attention_prep_kernel<<<GET_BLOCKS(parallelism),
                           min(CUDA_NUM_THREADS, parallelism),
                           0,
-                          inf_stream>>>(
+                          main_stream>>>(
       general_params, data_pointers, rope_params);
 
+  cudaEvent_t prep_done, finetuning_done;
+
   if (bc->num_finetuning_fwd_tokens() > 0) {
-    // wait until preparation has finished
-    cudaEvent_t prep_done;
-    cudaEventCreate(&prep_done);
-    cudaEventRecord(prep_done, inf_stream);
-    cudaStreamWaitEvent(peft_stream, prep_done, 0);
+    checkCUDA(cudaEventCreate(&prep_done));
+    checkCUDA(cudaEventCreate(&finetuning_done));
+    // wait until main stream is done running the prep kernel
+    checkCUDA(cudaEventRecord(prep_done, main_stream));
+    cudaStreamWaitEvent(m->handle.peft_fwd_stream, prep_done, 0);
 
     flash_compute_attention_kernel_peft<DT>(
-        m, bc, output_ptr, shard_id, peft_stream);
+        m, bc, output_ptr, shard_id, m->handle.peft_fwd_stream);
 
     assert(m->peft_token_infos != nullptr);
     assert(m->peft_token_infos_size == sizeof(BatchConfig::PerTokenInfo) *
@@ -1921,13 +1923,21 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
       m->peft_token_infos[prev_steps_tokens + j] =
           bc->tokensInfo[tokens_previous_requests + j];
     }
+    checkCUDA(cudaEventRecord(finetuning_done, m->handle.peft_fwd_stream));
   }
 
-  // flashinfer sdpa
+  // Step 2: Run inference
+  // ==========================================================================
   assert(bc->num_finetuning_fwd_tokens() >= 0 &&
          bc->num_finetuning_bwd_tokens() >= 0);
   if (bc->num_inference_tokens() > 0) {
-    flashinfer_incr_attention<DT>(m, bc, shard_id, output_ptr, inf_stream);
+    flashinfer_incr_attention<DT>(m, bc, shard_id, output_ptr, main_stream);
+  }
+
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    checkCUDA(cudaStreamWaitEvent(main_stream, finetuning_done, 0));
+    checkCUDA(cudaEventDestroy(prep_done));
+    checkCUDA(cudaEventDestroy(finetuning_done));
   }
 }
 
@@ -2114,7 +2124,7 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
                                  0,
                                  peft_stream>>>(
         input_grad_ptr,
-        m->complex_input,
+        m->complex_input_bwd,
         m->peft_token_infos_device,
         m->rotary_embedding_meta->rope_theta,
         (m->rotary_embedding_meta->rope_type == "llama3"),
@@ -2152,10 +2162,8 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
     int shard_id,
     GenericTensorAccessorR const &input,
     GenericTensorAccessorW const &output) {
-  cudaStream_t inf_stream;
-  checkCUDA(get_legion_stream(&inf_stream));
-  cudaStream_t peft_stream;
-  checkCUDA(get_legion_stream(&peft_stream));
+  cudaStream_t stream;
+  checkCUDA(get_legion_stream(&stream));
 
   // cudaEvent_t t_start, t_end;
   // if (m->profiling) {
@@ -2172,8 +2180,7 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
                                                      shard_id,
                                                      input.get_half_ptr(),
                                                      output.get_half_ptr(),
-                                                     inf_stream,
-                                                     peft_stream);
+                                                     stream);
   }
   // else if (input.data_type == DT_BFLOAT16) {
   //   Kernels::IncMultiHeadAttention::inference_kernel(m,
@@ -2181,8 +2188,7 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
   //                                                    shard_id,
   //                                                    input.get_bfloat16_ptr(),
   //                                                    output.get_bfloat16_ptr(),
-  //                                                    inf_stream,
-  //                                                    peft_stream);
+  //                                                    stream);
   // }
   else {
     assert(false && "Unspported data type");
