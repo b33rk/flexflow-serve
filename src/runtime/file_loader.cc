@@ -191,8 +191,8 @@ void load_attention_weights_v2(DT *ptr,
   int replicate_num = num_q_heads / num_kv_heads;
 
   // stride for q, k, v, o
-  size_t stride_size = (q_size + k_size + v_size + o_size) /
-                       tensor_parallelism_degree;
+  size_t stride_size =
+      (q_size + k_size + v_size + o_size) / tensor_parallelism_degree;
   for (auto filename : weight_filenames) {
     std::cout << "Loading weight file " << filename << std::endl;
     std::string weight_filepath = join_path({weights_folder, filename});
@@ -263,7 +263,8 @@ void load_attention_weights_v2(DT *ptr,
     }
 
     int data_index = 0;
-    int one_partition_size = head_dim * (num_q_heads / tensor_parallelism_degree);
+    int one_partition_size =
+        head_dim * (num_q_heads / tensor_parallelism_degree);
     for (int i = 0; i < qo_weight_file_size; i++) {
       int part_idx = (i / one_partition_size) % tensor_parallelism_degree;
       int block_num = (i / one_partition_size);
@@ -743,7 +744,6 @@ void FileDataLoader::load_single_weight_tensor(FFModel *ff,
   }
   assert(volume_ == volume * num_replicas);
   // assert(data_type_size(weight->data_type) == sizeof(DT));
-  DT *data = (DT *)malloc(sizeof(DT) * volume);
 
   std::string weight_filename = removeGuidOperatorName(std::string(l->name));
 
@@ -757,7 +757,7 @@ void FileDataLoader::load_single_weight_tensor(FFModel *ff,
         l->op_type == OP_SPEC_INC_MULTIHEAD_SELF_ATTENTION ||
         l->op_type == OP_TREE_INC_MULTIHEAD_SELF_ATTENTION) {
       if (weight_idx == 0) {
-        load_attention_weights_v2(data,
+        load_attention_weights_v2(weight,
                                   num_heads,
                                   num_kv_heads,
                                   hidden_dim,
@@ -770,7 +770,7 @@ void FileDataLoader::load_single_weight_tensor(FFModel *ff,
         long long value;
         l->get_int_property("final_bias", value);
         bool final_bias = (bool)value;
-        load_attention_bias_v2(data,
+        load_attention_bias_v2(weight,
                                num_heads,
                                num_kv_heads,
                                hidden_dim,
@@ -787,12 +787,12 @@ void FileDataLoader::load_single_weight_tensor(FFModel *ff,
       std::cout << "Loading weight file " << weight_filename << std::endl;
       std::string weight_filepath =
           join_path({weights_folder, weight_filename});
-      load_from_file(data, volume, weight_filepath);
+      load_from_file(weight, volume, weight_filepath);
     } else if (l->name != nullptr &&
                std::string(l->name).find("gate_and_up") != std::string::npos) {
       assert(weight_idx == 0);
       assert(l->numWeights == 1); // We do not support bias in SwiGLU now
-      load_gate_and_up(data,
+      load_gate_and_up(weight,
                        weight_filename,
                        weights_folder,
                        volume,
@@ -807,19 +807,14 @@ void FileDataLoader::load_single_weight_tensor(FFModel *ff,
       std::cout << "Loading weight file " << weight_filename << std::endl;
       std::string weight_filepath =
           join_path({weights_folder, weight_filename});
-      load_from_file(data, volume, weight_filepath);
+      load_from_file(weight, volume, weight_filepath);
     }
   }
 
-  // Copy the weight data from the buffer to the weight
-  DT *ptr = weight;
-  for (size_t i = 0; i < num_replicas; i++) {
-    memcpy(ptr, data, volume * sizeof(DT));
-    ptr += volume;
+  // Copy the weight data from the first replica to other replicas
+  for (size_t i = 1; i < num_replicas; i++) {
+    memcpy(weight + i * volume, weight, volume * sizeof(DT));
   }
-
-  // Free buffer memory
-  free(data);
 }
 
 void FileDataLoader::load_weight_task(
