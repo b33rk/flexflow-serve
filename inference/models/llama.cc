@@ -114,7 +114,7 @@ void LLAMA::create_llama_model(FFModel &ff,
       case BEAM_SEARCH_MODE: {
         mha = ff.spec_inc_multihead_self_attention(
             qkv_proj,
-            llama_config.head_dim*llama_config.num_attention_heads,
+            llama_config.head_dim * llama_config.num_attention_heads,
             llama_config.num_attention_heads,
             llama_config.num_key_value_heads,
             llama_config.head_dim,
@@ -136,7 +136,7 @@ void LLAMA::create_llama_model(FFModel &ff,
       case TREE_VERIFY_MODE: {
         mha = ff.inc_multihead_self_attention_verify(
             qkv_proj,
-            llama_config.head_dim*llama_config.num_attention_heads,
+            llama_config.head_dim * llama_config.num_attention_heads,
             llama_config.num_attention_heads,
             llama_config.num_key_value_heads,
             llama_config.head_dim,
@@ -158,7 +158,7 @@ void LLAMA::create_llama_model(FFModel &ff,
       case INC_DECODING_MODE: {
         mha = ff.inc_multihead_self_attention(
             qkv_proj,
-            llama_config.head_dim*llama_config.num_attention_heads,
+            llama_config.head_dim * llama_config.num_attention_heads,
             llama_config.num_attention_heads,
             llama_config.num_key_value_heads,
             llama_config.head_dim,

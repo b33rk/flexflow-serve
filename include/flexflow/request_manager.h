@@ -106,7 +106,7 @@ struct Request {
     std::vector<float> finetuning_losses;
     // bwd state
     int last_processed_bwd_layer = INT_MAX;
-    int max_samples = -1;  // -1: no limit
+    int max_samples = -1; // -1: no limit
     // how many gradient accumulation steps to do before updating the weights.
     // if left as -1, it will be set to the number of entries in the dataset
     int gradient_accumulation_steps = -1;

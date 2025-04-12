@@ -2175,12 +2175,8 @@ void IncMultiHeadSelfAttention::inference_kernel_wrapper(
   assert(input.data_type == output.data_type);
 
   if (input.data_type == DT_HALF) {
-    Kernels::IncMultiHeadAttention::inference_kernel(m,
-                                                     bc,
-                                                     shard_id,
-                                                     input.get_half_ptr(),
-                                                     output.get_half_ptr(),
-                                                     stream);
+    Kernels::IncMultiHeadAttention::inference_kernel(
+        m, bc, shard_id, input.get_half_ptr(), output.get_half_ptr(), stream);
   }
   // else if (input.data_type == DT_BFLOAT16) {
   //   Kernels::IncMultiHeadAttention::inference_kernel(m,

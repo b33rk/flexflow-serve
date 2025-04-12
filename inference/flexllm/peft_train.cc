@@ -332,7 +332,7 @@ void FlexFlow::top_level_task(Task const *task,
                    max_finetuning_samples,
                    max_training_epochs,
                    gradient_accumulation_steps,
-                    num_logging_steps,
+                   num_logging_steps,
                    num_layers_per_finetuning_step,
                    run_warmup);
   enable_peft_finetuning = file_paths.dataset_file_path.empty() ? false : true;
@@ -532,7 +532,8 @@ void FlexFlow::top_level_task(Task const *task,
     finetuning_requests.push_back(fine_tuning_req);
 
     std::cout << "----------inference started--------------" << std::endl;
-    std::vector<GenerationResult> result = model.generate_online(inference_requests, finetuning_requests);
+    std::vector<GenerationResult> result =
+        model.generate_online(inference_requests, finetuning_requests);
     std::cout << "----------inference finished--------------" << std::endl;
   }
 

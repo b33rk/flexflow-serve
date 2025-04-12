@@ -183,7 +183,8 @@ bool RequestManager::load_request_token_ids(Request &request) {
 
       for (auto &prompt : dataset_json) {
         if (request.peft_finetuning_info.max_samples > 0 &&
-            request.dataset.size() >= request.peft_finetuning_info.max_samples) {
+            request.dataset.size() >=
+                request.peft_finetuning_info.max_samples) {
           break;
         }
         std::string text = prompt.get<std::string>();
@@ -1608,8 +1609,9 @@ void RequestManager::process_finetuning_req_bwd_progress(
                       request.peft_finetuning_info.completed_training_steps /
                           ((int)request.dataset.size()),
                       request.peft_finetuning_info.max_training_epochs);
-  }
-  else if (request.peft_finetuning_info.completed_training_steps % request.peft_finetuning_info.num_logging_steps == 0) {
+  } else if (request.peft_finetuning_info.completed_training_steps %
+                 request.peft_finetuning_info.num_logging_steps ==
+             0) {
     log_req_mgr.print("Completed finetuning step %i/%i",
                       request.peft_finetuning_info.completed_training_steps,
                       tot_steps);
