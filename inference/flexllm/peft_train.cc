@@ -301,7 +301,6 @@ void FlexFlow::top_level_task(Task const *task,
   int max_requests_per_batch = 1;
   int max_tokens_per_batch = 128;
   int max_sequence_length = 256;
-  int max_training_epochs = 2;
   int max_finetuning_samples = -1; // -1: no limit
   int max_training_epochs = 1;
   int gradient_accumulation_steps = 8;
