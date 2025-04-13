@@ -248,4 +248,23 @@ std::ostream &operator<<(std::ostream &s, OperatorType op_type) {
   return s;
 }
 
+const char* peftSupportModeToString(PeftSupportMode mode) {
+  switch(mode) {
+    case PEFT_DISABLED:         return "PEFT_DISABLED";
+    case PEFT_INFERENCE_ONLY:     return "PEFT_INFERENCE_ONLY";
+    case COSERVING:               return "COSERVING";
+    case TEMPORAL_SHARING:        return "TEMPORAL_SHARING";
+    case SPATIAL_SHARING:         return "SPATIAL_SHARING";
+    default:                      return "UNKNOWN";
+  }
+}
+bool peft_finetuning_enabled(PeftSupportMode peft_support_mode) {
+  return peft_support_mode == COSERVING ||
+         peft_support_mode == TEMPORAL_SHARING ||
+         peft_support_mode == SPATIAL_SHARING;
+}
+bool peft_enabled(PeftSupportMode peft_support_mode) {
+  return peft_support_mode != PEFT_DISABLED;
+}
+
 }; // namespace FlexFlow

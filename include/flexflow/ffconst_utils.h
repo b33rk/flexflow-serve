@@ -18,6 +18,10 @@ size_t get_quantization_to_byte_size(DataType type,
 
 std::ostream &operator<<(std::ostream &, OperatorType);
 
+const char* peftSupportModeToString(PeftSupportMode mode);
+bool peft_finetuning_enabled(PeftSupportMode peft_support_mode);
+bool peft_enabled(PeftSupportMode peft_support_mode);
+
 }; // namespace FlexFlow
 
 #endif // _FLEXFLOW_FFCONST_UTILS_H

@@ -411,7 +411,6 @@ OpMeta *Embedding::init_task(Task const *task,
   EmbeddingMeta *m = new EmbeddingMeta(handle, embed);
   m->profiling = embed->profiling;
   m->inference_debugging = embed->inference_debugging;
-  m->enable_peft_finetuning = embed->enable_peft_finetuning;
   m->aggr = embed->aggr;
   std::strcpy(m->op_name, embed->name);
   m->layer_guid = embed->layer_guid;

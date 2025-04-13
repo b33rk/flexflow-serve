@@ -25,8 +25,7 @@ SigmoidSiluMultiMeta::SigmoidSiluMultiMeta(FFHandler handle,
     : OpMeta(handle, ssm) {
   profiling = ssm->profiling;
   inference_debugging = ssm->inference_debugging;
-  enable_peft_finetuning = ssm->enable_peft_finetuning;
-  if (enable_peft_finetuning) {
+  if (peft_finetuning_enabled(peft_support_mode)) {
     size_t in_dim =
         ssm->inputs[0]->dims[0].size / ssm->inputs[0]->dims[0].degree;
     allocated_peft_buffer_size = 2 * data_type_size(input_type[0]) *

@@ -50,7 +50,7 @@ LinearMeta::LinearMeta(FFHandler handler,
   // peft activation
   size_t out_dim =
       li->outputs[0]->dims[0].size / li->outputs[0]->dims[0].degree;
-  if (enable_peft_finetuning &&
+  if (peft_finetuning_enabled(peft_support_mode) &&
       (activation == AC_MODE_RELU || activation == AC_MODE_SIGMOID)) {
     // Allocate space for storing the output activations for PEFT finetuning
     // during inference
@@ -87,7 +87,7 @@ LinearMeta::LinearMeta(FFHandler handler,
   } else {
     one_ptr = nullptr;
   }
-  if (enable_peft_finetuning) {
+  if (peft_finetuning_enabled(peft_support_mode)) {
     output_activation_buffer =
         gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
   } else {

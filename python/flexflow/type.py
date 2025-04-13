@@ -163,6 +163,20 @@ class RequestType(Enum):
     REQ_INFERENCE = 4001
     REQ_FINETUNING = 4002
 
+class PeftSupportMode(Enum):
+    PEFT_DISABLED = 5001
+    PEFT_INFERENCE_ONLY = 5002
+    COSERVING = 5003
+    TEMPORAL_SHARING = 5004
+    SPATIAL_SHARING = 5005
+    def __str__(self):
+        return self.name
+
+def peft_finetuning_enabled(peft_support_mode: PeftSupportMode):
+    return peft_support_mode != PeftSupportMode.PEFT_DISABLED and peft_support_mode != PeftSupportMode.PEFT_INFERENCE_ONLY
+
+def peft_enabled(peft_support_mode: PeftSupportMode):
+    return peft_support_mode != PeftSupportMode.PEFT_DISABLED
 
 def enum_to_int(enum, enum_item):
     for item in enum:

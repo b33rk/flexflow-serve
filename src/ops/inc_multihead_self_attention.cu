@@ -2328,10 +2328,10 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   *position_bias = _position_bias;
 
   num_kv_cache_pages = _num_kv_cache_pages;
-  assert(num_kv_cache_pages > 0 || enable_peft_finetuning);
+  assert(num_kv_cache_pages > 0 || peft_finetuning_enabled(peft_support_mode));
 
   // spec decoding and peft finetuning are mutually exclusive
-  if (enable_peft_finetuning) {
+  if (peft_finetuning_enabled(peft_support_mode)) {
     assert(infer_mode == INC_DECODING_MODE);
   }
 
@@ -2365,7 +2365,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                   BatchConfig::max_spec_tree_token_num()));
     }
     kv_cache_instance_size += (key_cache_size + value_cache_size) * size_of_dt;
-    if (enable_peft_finetuning) {
+    if (peft_finetuning_enabled(peft_support_mode)) {
       // add kv cache for single sequence
       peft_key_cache_size = peft_value_cache_size =
           num_kv_heads * kProjSize * BatchConfig::max_sequence_length();
@@ -2393,7 +2393,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                    (num_q_heads + num_kv_heads) /
                    2; // only used for Q and K, not V
     inf_instance_size += complex_size * sizeof(cuFloatComplex);
-    if (enable_peft_finetuning) {
+    if (peft_finetuning_enabled(peft_support_mode)) {
       complex_size_bwd = BatchConfig::max_sequence_length() * qProjSize *
                          (num_q_heads + num_kv_heads) /
                          2; // only used for Q and K, not V
@@ -2406,7 +2406,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       inf_instance_size += 2 * qk_prod_size * size_of_dt;
     }
     // PEFT partial results buffers
-    if (enable_peft_finetuning) {
+    if (peft_finetuning_enabled(peft_support_mode)) {
       allocated_peft_buffer_size1 = BatchConfig::max_sequence_length() *
                                     num_q_heads * qProjSize * size_of_dt;
       flash_attn_softmax_lse_size =
@@ -2466,7 +2466,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       valueCache = kv_cache_mem_allocator.allocate_instance_untyped(
           value_cache_size * size_of_dt);
     }
-    if (enable_peft_finetuning) {
+    if (peft_finetuning_enabled(peft_support_mode)) {
       assert(infer_mode == INC_DECODING_MODE);
       keyCachePeft = peft_mem_allocator.allocate_instance_untyped(
           peft_key_cache_size * size_of_dt);
@@ -2520,7 +2520,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
           qk_prod_size * size_of_dt);
     }
     // peft partial result buffers
-    if (enable_peft_finetuning) {
+    if (peft_finetuning_enabled(peft_support_mode)) {
       query_activation_buffer = peft_mem_allocator.allocate_instance_untyped(
           allocated_peft_buffer_size1);
       peft_token_infos_device =

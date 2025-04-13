@@ -84,6 +84,14 @@ enum RequestType {
   REQ_FINETUNING = 4002,
 };
 
+enum PeftSupportMode {
+  PEFT_DISABLED = 5001,
+  PEFT_INFERENCE_ONLY = 5002,
+  COSERVING = 5003,
+  TEMPORAL_SHARING = 5004,
+  SPATIAL_SHARING = 5005,
+};
+
 // This is consistent with TASO's OpType
 // https://github.com/jiazhihao/TASO/blob/master/include/taso/ops.h#L75-L138
 enum OperatorType {

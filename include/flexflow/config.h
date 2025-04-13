@@ -178,7 +178,7 @@ public:
   size_t offload_reserve_space_size;
   DataType quantization_type;
   // PEFT related fields
-  bool enable_peft, enable_peft_finetuning;
+  PeftSupportMode peft_support_mode;
   // Control parallelizable dimensions
   bool only_data_parallel;
   bool enable_sample_parallel;

@@ -37,7 +37,7 @@ ResidualRMSNormMeta::ResidualRMSNormMeta(FFHandler handler,
 
   size_t rms_ptr_size = 0;
   allocated_peft_buffer_size = 0;
-  if (enable_peft_finetuning) {
+  if (peft_finetuning_enabled(peft_support_mode)) {
     rms_ptr_size = rms->effective_batch_size * sizeof(float);
     allocated_peft_buffer_size =
         BatchConfig::max_sequence_length() * in_dim * data_size;
@@ -45,7 +45,7 @@ ResidualRMSNormMeta::ResidualRMSNormMeta(FFHandler handler,
   size_t totalSize = rms_ptr_size + allocated_peft_buffer_size;
   gpu_mem_allocator.create_legion_instance(
       reserveInst, totalSize, "ResidualRMSNormMeta");
-  if (enable_peft_finetuning) {
+  if (peft_finetuning_enabled(peft_support_mode)) {
     rms_ptr = gpu_mem_allocator.allocate_instance_untyped(rms_ptr_size);
     input_activation =
         gpu_mem_allocator.allocate_instance_untyped(allocated_peft_buffer_size);
@@ -202,7 +202,7 @@ void store_peft_activations(ResidualRMSNormMeta const *m,
                             size_t in_dim,
                             DT const *residual_output_ptr,
                             cudaStream_t stream) {
-  assert(m->enable_peft_finetuning);
+  assert(peft_finetuning_enabled(m->peft_support_mode));
   assert(bc->num_finetuning_fwd_tokens() >= 1);
 
   int num_ft_tokens = bc->num_finetuning_fwd_tokens();

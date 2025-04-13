@@ -248,7 +248,6 @@ OpMeta *ArgMax::init_task(Task const *task,
                                  gpu_mem_allocator);
   m->profiling = s->profiling;
   m->inference_debugging = s->inference_debugging;
-  m->enable_peft_finetuning = s->enable_peft_finetuning;
   m->beam_search = s->beam_search;
   std::strcpy(m->op_name, s->name);
   m->layer_guid = s->layer_guid;

@@ -379,8 +379,8 @@ void RequestManager::push_spec_infer_tree_width(int tree_width) {
   spec_infer_tree_width.emplace_back(tree_width);
 }
 
-void RequestManager::set_enable_peft_finetuning(bool enable_peft_finetuning_) {
-  enable_peft_finetuning = enable_peft_finetuning_;
+void RequestManager::set_peft_support_mode(PeftSupportMode peft_support_mode_) {
+  peft_support_mode = peft_support_mode_;
 }
 
 void RequestManager::set_inference_finished(bool finished) {
@@ -547,7 +547,7 @@ int RequestManager::get_num_layers_per_finetuning_step() {
 
 PEFTModelID *
     FFModel::register_peft_adapter(LoraLinearConfig const &peft_config) {
-  assert(config.enable_peft &&
+  assert(peft_enabled(config.peft_support_mode) &&
          "Cannot add a LoRA layer if PEFT mode is not enabled");
   if (peft_config.target_modules.size() == 0) {
     printf("PEFT config does not contain any target module\n");
@@ -657,7 +657,7 @@ RequestGuid RequestManager::register_new_request(Request const &request_) {
 }
 
 RequestGuid RequestManager::register_new_peft_request(Request const &request_) {
-  assert(enable_peft_finetuning && "PEFT finetuning is not enabled");
+  assert(peft_finetuning_enabled(peft_support_mode) && "PEFT finetuning is not enabled");
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
   // Add a new request
   Request request = Request::from_other(request_);
@@ -954,7 +954,7 @@ void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
     }
   }
   int inference_batch_size =
-      BatchConfig::max_requests_per_batch() - (int)enable_peft_finetuning;
+      BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
   for (int req_idx = 0; req_idx < inference_batch_size; req_idx++) {
     if (old_fwd_bc.request_completed[req_idx]) {
       continue;
@@ -1131,7 +1131,7 @@ void RequestManager::add_continuing_inf_req_to_new_batch(
   assert(processed_tokens < request.tokens.size() &&
          "Continuing request has already finished");
   int inference_batch_size =
-      BatchConfig::max_requests_per_batch() - (int)enable_peft_finetuning;
+      BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
 
   if (old_bc.requestsInfo[i].peft_model_id != PEFTModelID::NO_ID) {
     num_concurrent_inf_adapters += 1;
@@ -1290,7 +1290,7 @@ void RequestManager::handle_completed_finetuning_req(
   }
 
   int inference_batch_size =
-      BatchConfig::max_requests_per_batch() - (int)enable_peft_finetuning;
+      BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
   assert(!old_finetuning_bc.request_completed[inference_batch_size] &&
          "Finetuning request not found in new batch");
 
@@ -1330,13 +1330,13 @@ void RequestManager::handle_completed_finetuning_req(
 
 void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
   // printf("Entering add_finetuning_req_fwd_batch\n");
-  assert(enable_peft_finetuning && "PEFT finetuning is not enabled");
+  assert(peft_finetuning_enabled(peft_support_mode) && "PEFT finetuning is not enabled");
   assert(!pending_peft_request_queue.empty() &&
          "Trying to add a new finetuning request when there are none");
   assert(new_bc.num_tokens < get_max_tokens_per_batch() &&
          "Trying to add a new finetuning request when the batch is full");
   int inference_batch_size =
-      BatchConfig::max_requests_per_batch() - (int)enable_peft_finetuning;
+      BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
   assert(new_bc.request_completed[inference_batch_size] &&
          "Finetuning request already present in new batch");
   Request &request = pending_peft_request_queue.front();
@@ -1401,13 +1401,13 @@ void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
 
 void RequestManager::add_finetuning_req_bwd_batch(BatchConfig &new_bc) {
   // printf("Entering add_finetuning_req_bwd_batch\n");
-  assert(enable_peft_finetuning && "PEFT finetuning is not enabled");
+  assert(peft_finetuning_enabled(peft_support_mode) && "PEFT finetuning is not enabled");
   assert(!pending_peft_request_queue.empty() &&
          "Trying to add a new finetuning request when there are none");
   assert(new_bc.num_tokens <= get_max_tokens_per_batch() &&
          "Trying to add a new finetuning request when the batch is full");
   int inference_batch_size =
-      BatchConfig::max_requests_per_batch() - (int)enable_peft_finetuning;
+      BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
   assert(new_bc.request_completed[inference_batch_size] &&
          "Finetuning request already present in new batch");
   Request &request = pending_peft_request_queue.front();
@@ -1514,7 +1514,7 @@ void RequestManager::process_finetuning_req_fwd_progress(
     return;
   }
   int inference_batch_size =
-      BatchConfig::max_requests_per_batch() - (int)enable_peft_finetuning;
+      BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
   assert(!old_bc.request_completed[inference_batch_size] &&
          "Finetuning request not found in new batch");
   assert(old_bc.requestsInfo[inference_batch_size].num_tokens_in_batch > 0 &&
@@ -1576,7 +1576,7 @@ void RequestManager::process_finetuning_req_bwd_progress(
     return;
   }
   int inference_batch_size =
-      BatchConfig::max_requests_per_batch() - (int)enable_peft_finetuning;
+      BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
   assert(!old_bc.request_completed[inference_batch_size] &&
          "Finetuning request not found in new batch");
   // check that request in batch is the same as the first one in the pending
@@ -1689,7 +1689,7 @@ void RequestManager::process_work_from_old_batch(
 
   // Step 2: Finetuning. Process work from previous bwd iteration: update
   // records of finetuning bwd progress
-  if (enable_peft_finetuning) {
+  if (peft_finetuning_enabled(peft_support_mode)) {
     process_finetuning_req_fwd_progress(old_bc, result);
     process_finetuning_req_bwd_progress(old_bc);
   }
@@ -1730,7 +1730,7 @@ BatchConfig
   // when finetuning is enabled, the last entry in the batch cannot be used for
   // inference
   int inference_batch_size =
-      BatchConfig::max_requests_per_batch() - (int)enable_peft_finetuning;
+      BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
   int num_concurrent_inf_adapters = 0;
 
   // Step 2: evict any requests that will not fit in the kv cache
@@ -3785,7 +3785,7 @@ std::vector<GenerationResult>
     // if the current request has not arrived yet, submit finetuning work if
     // available, then sleep until next request arrives
     else {
-      if (this->config.enable_peft_finetuning && !added_ft_req) {
+      if (peft_finetuning_enabled(this->config.peft_support_mode) && !added_ft_req) {
         // std::cout << "Time " << (current_time_us-start_time_us)/1000 <<
         // "Registering PEFT request" << std::endl;
         RequestGuid guid = rm->register_new_peft_request(ft_requests.at(0));
@@ -4003,7 +4003,7 @@ void RequestManager::serve_incr_decoding(FFModel *llm) {
                                                runtime);
     InferenceResultFuture irf = im->inference(llm, 0, bcf);
     std::vector<FinetuningBwdFuture> bwd_f;
-    if (llm->config.enable_peft) {
+    if (peft_finetuning_enabled(llm->config.peft_support_mode)) {
       bwd_f = im->peft_bwd(llm, 0, bcf);
     } else {
       for (int i = 0; i < tp_degree; i++) {

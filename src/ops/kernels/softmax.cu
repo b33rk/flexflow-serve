@@ -36,8 +36,7 @@ SoftmaxMeta::SoftmaxMeta(FFHandler handler,
   dim = softmax->dim;
   profiling = softmax->profiling;
   inference_debugging = softmax->inference_debugging;
-  enable_peft_finetuning = softmax->enable_peft_finetuning;
-  if (enable_peft_finetuning && is_last_op) {
+  if (peft_finetuning_enabled(peft_support_mode) && is_last_op) {
     allocated_peft_buffer_size =
         input_domain.get_volume() * data_type_size(softmax->data_type);
     gpu_mem_allocator.create_legion_instance(
@@ -291,7 +290,7 @@ void store_peft_activations(SoftmaxMeta *m,
                             int num_classes,
                             DT *output_ptr,
                             cudaStream_t stream) {
-  assert(m->enable_peft_finetuning);
+  assert(peft_finetuning_enabled(m->peft_support_mode));
   assert(m->output_grad_ptr != nullptr);
 
   int num_ft_tokens = bc->num_finetuning_fwd_tokens();
