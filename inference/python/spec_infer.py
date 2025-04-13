@@ -60,7 +60,7 @@ def get_configs():
             "offload_reserve_space_size": 8 * 1024,  # 8GB
             "use_4bit_quantization": False,
             "use_8bit_quantization": False,
-            "peft_support_mode": ff.PeftSupportMode.DISABLED,
+            "peft_support_mode": ff.PeftSupportMode.PEFT_DISABLED,
             "profiling": False,
             "benchmarking": False,
             "inference_debugging": False,

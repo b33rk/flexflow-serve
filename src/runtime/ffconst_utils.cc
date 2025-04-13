@@ -248,7 +248,7 @@ std::ostream &operator<<(std::ostream &s, OperatorType op_type) {
   return s;
 }
 
-const char* peftSupportModeToString(PeftSupportMode mode) {
+const char* peftSupportModeToString(const PeftSupportMode mode) {
   switch(mode) {
     case PEFT_DISABLED:         return "PEFT_DISABLED";
     case PEFT_INFERENCE_ONLY:     return "PEFT_INFERENCE_ONLY";
@@ -258,12 +258,12 @@ const char* peftSupportModeToString(PeftSupportMode mode) {
     default:                      return "UNKNOWN";
   }
 }
-bool peft_finetuning_enabled(PeftSupportMode peft_support_mode) {
+bool peft_finetuning_enabled(const PeftSupportMode peft_support_mode) {
   return peft_support_mode == COSERVING ||
          peft_support_mode == TEMPORAL_SHARING ||
          peft_support_mode == SPATIAL_SHARING;
 }
-bool peft_enabled(PeftSupportMode peft_support_mode) {
+bool peft_enabled(const PeftSupportMode peft_support_mode) {
   return peft_support_mode != PEFT_DISABLED;
 }
 

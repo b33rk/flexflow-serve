@@ -193,7 +193,7 @@ def init(
             "fusion": fusion,
             "log_instance_cration": log_instance_cration,
         }
-    print("configs_dict: ", configs_dict)
+
     # Check that mandatory configs are present
     required_keys = ["num_gpus", "memory_per_gpu", "zero_copy_memory_per_node"]
     for required_key in required_keys:

@@ -177,6 +177,7 @@ void flexflow_config_set_pipeline_parallelism_degree(flexflow_config_t handle_,
 void flexflow_config_set_peft_support_mode(flexflow_config_t handle_,
                                             enum PeftSupportMode value){
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  DEBUG_PRINT("flexflow_config_set_peft_support_mode peft support mode %s\n", peftSupportModeToString(value));
   handle->peft_support_mode = value;
 }
 
@@ -2676,7 +2677,7 @@ void flexflow_request_manager_set_peft_support_mode(
     flexflow_request_manager_t handle_, enum PeftSupportMode peft_support_mode_) {
   RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
   handle->set_peft_support_mode(peft_support_mode_);
-  DEBUG_PRINT("[RequestManager] set peft support mode %d", peft_support_mode_);
+  DEBUG_PRINT("[RequestManager] set peft_support_mode %s", peftSupportModeToString(peft_support_mode_));
 }
 
 void flexflow_request_manager_set_num_transformers_layers(

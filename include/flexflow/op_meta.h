@@ -16,7 +16,7 @@ public:
   FFHandler handle;
   bool profiling; // Measure the run time of the task
   bool inference_debugging;
-  enum PeftSupportMode peft_support_mode;
+  PeftSupportMode peft_support_mode;
   int decoding_step;
   int bwd_step;
   char op_name[MAX_OPNAME];

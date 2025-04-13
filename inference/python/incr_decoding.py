@@ -60,7 +60,7 @@ def get_configs():
             "offload_reserve_space_size": 8 * 1024,  # 8GB
             "use_4bit_quantization": False,
             "use_8bit_quantization": False,
-            "peft_support_mode": ff.PeftSupportMode.DISABLED,
+            "peft_support_mode": ff.PeftSupportMode.PEFT_DISABLED,
             "profiling": False,
             "benchmarking": False,
             "inference_debugging": False,
@@ -87,8 +87,11 @@ def get_configs():
 
 
 def main():
+    print("FlexFlow LLM Inference Example (Incremental Decoding)")
     configs_dict = get_configs()
     configs = SimpleNamespace(**configs_dict)
+    print(configs_dict)
+    print(configs)
 
     # Initialize the FlexFlow runtime. ff.init() takes a dictionary or the path to a JSON file with the configs
     ff.init(configs_dict)
