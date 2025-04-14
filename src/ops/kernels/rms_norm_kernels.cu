@@ -142,13 +142,59 @@ __global__ void RMSNormFusedForwardKernel(int64_t data_dim,
 }
 
 template <typename T>
+void inference_kernel_spatial_sharing(RMSNormMeta const *m,
+                                      BatchConfig const *bc,
+                                      T const *input_ptr,
+                                      T const *weight_ptr,
+                                      T *output_ptr,
+                                      cudaStream_t main_stream) {
+  // launch finetuning fwd tokens kernel if there are any finetuning fwd tokens
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    checkCUDA(cudaEventRecord(m->handle.peft_fwd_can_start, main_stream)); 
+    checkCUDA(cudaStreamWaitEvent(m->handle.peft_fwd_stream, m->handle.peft_fwd_can_start, 0));
+
+    RMSNormFusedForwardKernel<T>
+        <<<bc->num_finetuning_fwd_tokens(), std::min(CUDA_NUM_THREADS, m->in_dim), 0, m->handle.peft_fwd_stream>>>(
+            m->in_dim,
+            m->eps,
+            input_ptr + m->in_dim * bc->num_inference_tokens(),
+            static_cast<float *>(m->rms_ptr) + bc->requestsInfo[bc->finetuning_request_index()].first_token_depth_in_request,
+            0 /*first_ft_token_idx*/, 
+            weight_ptr,
+            output_ptr + m->in_dim * bc->num_inference_tokens());
+
+    checkCUDA(cudaEventRecord(m->handle.peft_fwd_done, m->handle.peft_fwd_stream));
+  }
+
+  // launch inference kernel if there are inference tokens
+  if (bc->num_inference_tokens() > 0) {
+    RMSNormFusedForwardKernel<T>
+        <<<bc->num_inference_tokens(), std::min(CUDA_NUM_THREADS, m->in_dim), 0, main_stream>>>(
+            m->in_dim,
+            m->eps,
+            input_ptr,
+            nullptr /*rms_ptr*/,
+            bc->num_inference_tokens() /*first_ft_token_idx*/, 
+            weight_ptr,
+            output_ptr);
+  }
+
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    checkCUDA(cudaStreamWaitEvent(main_stream, m->handle.peft_fwd_done, 0));
+  }
+}
+
+template <typename T>
 void inference_kernel(RMSNormMeta const *m,
                       BatchConfig const *bc,
                       T const *input_ptr,
                       T const *weight_ptr,
                       T *output_ptr,
                       cudaStream_t stream) {
-
+  if (m->peft_support_mode == SPATIAL_SHARING) {
+    inference_kernel_spatial_sharing(m, bc, input_ptr, weight_ptr, output_ptr, stream);
+    return;
+  }
   int num_tokens = bc->num_active_tokens();
   int data_dim = m->in_dim;
   if (num_tokens <= 0) {

@@ -33,6 +33,9 @@ SoftmaxMeta::SoftmaxMeta(FFHandler handler,
   checkCUDNN(cudnnCreateTensorDescriptor(&outputTensor));
   checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
       outputTensor, input_domain, softmax->data_type));
+  checkCUDNN(cudnnCreateTensorDescriptor(&outputTensorPeftFwd));
+  checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
+      outputTensorPeftFwd, input_domain, softmax->data_type));
   dim = softmax->dim;
   profiling = softmax->profiling;
   inference_debugging = softmax->inference_debugging;
@@ -256,14 +259,81 @@ void backward_kernel(SoftmaxMeta const *m,
 }
 
 template <typename DT>
+void inference_kernel_spatial_sharing(SoftmaxMeta const *m,
+                                    BatchConfig const *bc,
+                                    DT const *input_ptr,
+                                    DT *output_ptr,
+                                    int num_classes,
+                                    cudaStream_t main_stream) {
+  // launch finetuning fwd tokens kernel if there are any finetuning fwd tokens
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    checkCUDA(cudaEventRecord(m->handle.peft_fwd_can_start, main_stream)); 
+    checkCUDA(cudaStreamWaitEvent(m->handle.peft_fwd_stream, m->handle.peft_fwd_can_start, 0));
+
+    checkCUDNN(cudnnSetStream(m->handle.peft_fwd_dnn, m->handle.peft_fwd_stream));
+    float alpha = 1.0f, beta = 0.0f;
+    cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
+    checkCUDNN(cudnnSetTensor4dDescriptor(m->outputTensorPeftFwd,
+                                          CUDNN_TENSOR_NCHW,
+                                          cudnn_data_type,
+                                          bc->num_finetuning_fwd_tokens(),
+                                          num_classes,
+                                          1,
+                                          1));
+    checkCUDNN(cudnnSoftmaxForward(m->handle.peft_fwd_dnn,
+                                  CUDNN_SOFTMAX_ACCURATE,
+                                  CUDNN_SOFTMAX_MODE_CHANNEL,
+                                  &alpha,
+                                  m->outputTensorPeftFwd,
+                                  input_ptr + num_classes * bc->num_inference_tokens(),
+                                  &beta,
+                                  m->outputTensorPeftFwd,
+                                  output_ptr + num_classes * bc->num_inference_tokens()));
+
+    checkCUDA(cudaEventRecord(m->handle.peft_fwd_done, m->handle.peft_fwd_stream));
+  }
+
+  // launch inference kernel if there are inference tokens
+  if (bc->num_inference_tokens() > 0) {
+
+    checkCUDNN(cudnnSetStream(m->handle.dnn, main_stream));
+    float alpha = 1.0f, beta = 0.0f;
+    cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
+    checkCUDNN(cudnnSetTensor4dDescriptor(m->outputTensor,
+                                          CUDNN_TENSOR_NCHW,
+                                          cudnn_data_type,
+                                          bc->num_inference_tokens(),
+                                          num_classes,
+                                          1,
+                                          1));
+    checkCUDNN(cudnnSoftmaxForward(m->handle.dnn,
+                                  CUDNN_SOFTMAX_ACCURATE,
+                                  CUDNN_SOFTMAX_MODE_CHANNEL,
+                                  &alpha,
+                                  m->outputTensor,
+                                  input_ptr,
+                                  &beta,
+                                  m->outputTensor,
+                                  output_ptr));
+  }
+
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    checkCUDA(cudaStreamWaitEvent(main_stream, m->handle.peft_fwd_done, 0));
+  }
+}
+
+template <typename DT>
 void inference_kernel(SoftmaxMeta const *m,
                       BatchConfig const *bc,
                       DT const *input_ptr,
                       DT *output_ptr,
                       int num_classes,
                       cudaStream_t stream) {
+  if (m->peft_support_mode == SPATIAL_SHARING) {
+    inference_kernel_spatial_sharing(m, bc, input_ptr, output_ptr, num_classes, stream);
+    return;
+  }
   checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
-
   float alpha = 1.0f, beta = 0.0f;
   cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
   checkCUDNN(cudnnSetTensor4dDescriptor(m->outputTensor,

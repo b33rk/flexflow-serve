@@ -1139,8 +1139,8 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
     return;
   }
 
-  checkCUDA(cublasSetStream(m->handle.peft_blas, peft_stream));
-  checkCUDNN(cudnnSetStream(m->handle.peft_dnn, peft_stream));
+  checkCUDA(cublasSetStream(m->handle.peft_bwd_blas, peft_stream));
+  checkCUDNN(cudnnSetStream(m->handle.peft_bwd_dnn, peft_stream));
   cudaDataType_t cublas_data_type = ff_to_cuda_datatype(m->output_type[0]);
   cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
   assert(data_type_size(m->output_type[0]) == sizeof(DT));
@@ -1899,14 +1899,10 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
                           main_stream>>>(
       general_params, data_pointers, rope_params);
 
-  cudaEvent_t prep_done, finetuning_done;
 
   if (bc->num_finetuning_fwd_tokens() > 0) {
-    checkCUDA(cudaEventCreate(&prep_done));
-    checkCUDA(cudaEventCreate(&finetuning_done));
-    // wait until main stream is done running the prep kernel
-    checkCUDA(cudaEventRecord(prep_done, main_stream));
-    cudaStreamWaitEvent(m->handle.peft_fwd_stream, prep_done, 0);
+    checkCUDA(cudaEventRecord(m->handle.peft_fwd_can_start, main_stream)); 
+    checkCUDA(cudaStreamWaitEvent(m->handle.peft_fwd_stream, m->handle.peft_fwd_can_start, 0));
 
     flash_compute_attention_kernel_peft<DT>(
         m, bc, output_ptr, shard_id, m->handle.peft_fwd_stream);
@@ -1923,7 +1919,8 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
       m->peft_token_infos[prev_steps_tokens + j] =
           bc->tokensInfo[tokens_previous_requests + j];
     }
-    checkCUDA(cudaEventRecord(finetuning_done, m->handle.peft_fwd_stream));
+
+    checkCUDA(cudaEventRecord(m->handle.peft_fwd_done, m->handle.peft_fwd_stream));
   }
 
   // Step 2: Run inference
@@ -1935,9 +1932,7 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
   }
 
   if (bc->num_finetuning_fwd_tokens() > 0) {
-    checkCUDA(cudaStreamWaitEvent(main_stream, finetuning_done, 0));
-    checkCUDA(cudaEventDestroy(prep_done));
-    checkCUDA(cudaEventDestroy(finetuning_done));
+    checkCUDA(cudaStreamWaitEvent(main_stream, m->handle.peft_fwd_done, 0));
   }
 }
 
@@ -1952,8 +1947,8 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
   // Step 0: param check as in peft_bwd_kernel
   // ================================================================
   assert(!m->offload);
-  checkCUDA(cublasSetStream(m->handle.peft_blas, peft_stream));
-  checkCUDNN(cudnnSetStream(m->handle.peft_dnn, peft_stream));
+  checkCUDA(cublasSetStream(m->handle.peft_bwd_blas, peft_stream));
+  checkCUDNN(cudnnSetStream(m->handle.peft_bwd_dnn, peft_stream));
   cudaDataType_t cublas_data_type = ff_to_cuda_datatype(m->output_type[0]);
   cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
   assert(data_type_size(m->output_type[0]) == sizeof(DT));
