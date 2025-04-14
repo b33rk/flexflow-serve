@@ -177,7 +177,7 @@ Tensor FFModel::inc_multiquery_self_attention_verify(
   }
   if (qkv_bias || final_bias) {
     // q, k, v, o
-    int qkv_bias_size = qk_dim * num_q_heads + (qk_dim + v_dim) * num_q_heads;
+    int qkv_bias_size = qk_dim * num_q_heads + (qk_dim + v_dim) * num_kv_heads;
     int dims[1] = {(qkv_bias ? qkv_bias_size : 0) + (final_bias ? o_dim : 0)};
     li->weights[1] = create_weight_legion_ordering(1,
                                                    dims,
@@ -380,7 +380,8 @@ TreeIncMultiHeadSelfAttention::TreeIncMultiHeadSelfAttention(
         CHOSEN_SYNC_TYPE);
     if (qkv_bias || final_bias) {
       ParallelTensorShape bias_shape = _input->get_shape();
-      int qkv_bias_size = qk_dim * num_q_heads + (qk_dim + v_dim) * num_q_heads;
+      int qkv_bias_size =
+          qk_dim * num_q_heads + (qk_dim + v_dim) * num_kv_heads;
       bias_shape.dims[0].size =
           (qkv_bias ? qkv_bias_size : 0) + (final_bias ? o_dim : 0);
       bias_shape.dims[1].size = bias_shape.dims[2].size = 1;
@@ -490,7 +491,8 @@ TreeIncMultiHeadSelfAttention::TreeIncMultiHeadSelfAttention(
         CHOSEN_SYNC_TYPE);
     if (qkv_bias || final_bias) {
       ParallelTensorShape bias_shape = _input->get_shape();
-      int qkv_bias_size = qk_dim * num_q_heads + (qk_dim + v_dim) * num_q_heads;
+      int qkv_bias_size =
+          qk_dim * num_q_heads + (qk_dim + v_dim) * num_kv_heads;
       bias_shape.dims[0].size =
           (qkv_bias ? qkv_bias_size : 0) + (final_bias ? o_dim : 0);
       bias_shape.dims[1].size = bias_shape.dims[2].size = 1;

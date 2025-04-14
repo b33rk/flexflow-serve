@@ -55,7 +55,7 @@ bool IncMultiHeadSelfAttentionParams::is_valid(
 }
 
 Tensor FFModel::inc_multihead_self_attention(
-    const Tensor input,
+    Tensor const input,
     int embed_dim,
     int num_heads,
     int kdim,
@@ -95,7 +95,7 @@ Tensor FFModel::inc_multihead_self_attention(
 }
 
 Tensor FFModel::groupquery_self_attention(
-    const Tensor input,
+    Tensor const input,
     int embed_dim,
     int num_q_heads,
     int num_kv_heads,
@@ -181,8 +181,7 @@ Tensor FFModel::groupquery_self_attention(
   }
   if (qkv_bias || final_bias) {
     // q, k, v, o
-    // TODO: eliminate the replication for key and value bias
-    int qkv_bias_size = qk_dim * num_q_heads + (qk_dim + v_dim) * num_q_heads;
+    int qkv_bias_size = qk_dim * num_q_heads + (qk_dim + v_dim) * num_kv_heads;
     int dims[1] = {(qkv_bias ? qkv_bias_size : 0) + (final_bias ? o_dim : 0)};
     li->weights[1] = create_weight_legion_ordering(1,
                                                    dims,
@@ -308,7 +307,7 @@ Op *IncMultiHeadSelfAttention::create_operator_from_layer(
 IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
     FFModel &model,
     LayerID const &_layer_guid,
-    const ParallelTensor _input,
+    ParallelTensor const _input,
     int _embed_dim,
     int _num_q_heads,
     int _num_kv_heads,
@@ -394,7 +393,8 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
         CHOSEN_SYNC_TYPE);
     if (qkv_bias || final_bias) {
       ParallelTensorShape bias_shape = _input->get_shape();
-      int qkv_bias_size = qk_dim * num_q_heads + (qk_dim + v_dim) * num_q_heads;
+      int qkv_bias_size =
+          qk_dim * num_q_heads + (qk_dim + v_dim) * num_kv_heads;
       bias_shape.dims[0].size =
           (qkv_bias ? qkv_bias_size : 0) + (final_bias ? o_dim : 0);
       bias_shape.dims[1].size = bias_shape.dims[2].size = 1;
@@ -420,8 +420,8 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
 
 IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
     FFModel &model,
-    const ParallelTensor _input,
-    const ParallelTensor _weight,
+    ParallelTensor const _input,
+    ParallelTensor const _weight,
     int _embed_dim,
     int _num_q_heads,
     int _num_kv_heads,
@@ -507,7 +507,8 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
         CHOSEN_SYNC_TYPE);
     if (qkv_bias || final_bias) {
       ParallelTensorShape bias_shape = _input->get_shape();
-      int qkv_bias_size = qk_dim * num_q_heads + (qk_dim + v_dim) * num_q_heads;
+      int qkv_bias_size =
+          qk_dim * num_q_heads + (qk_dim + v_dim) * num_kv_heads;
       bias_shape.dims[0].size =
           (qkv_bias ? qkv_bias_size : 0) + (final_bias ? o_dim : 0);
       bias_shape.dims[1].size = bias_shape.dims[2].size = 1;
@@ -537,7 +538,7 @@ IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
 IncMultiHeadSelfAttention::IncMultiHeadSelfAttention(
     FFModel &model,
     IncMultiHeadSelfAttention const &other,
-    const ParallelTensor input,
+    ParallelTensor const input,
     bool allocate_weights)
     : IncMultiHeadSelfAttention(model,
                                 other.layer_guid,

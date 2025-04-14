@@ -26,7 +26,8 @@ void LLAMA::create_llama_model(FFModel &ff,
                                InferenceMode mode,
                                GenerationConfig generation_config,
                                bool streaming_cache,
-                               bool use_full_precision) {
+                               bool use_full_precision,
+                               bool qkv_bias) {
   // do not apply cpu offload in beam search model.
   LLAMAConfig llama_config(model_config_file_path);
   llama_config.print();
@@ -104,7 +105,7 @@ void LLAMA::create_llama_model(FFModel &ff,
             llama_config.hidden_size / llama_config.num_attention_heads,
             llama_config.hidden_size / llama_config.num_attention_heads,
             0.0f,    /*dropout*/
-            false,   /*qkv_bias*/
+            qkv_bias, /*qkv_bias*/
             false,   /*final_bias*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -129,7 +130,7 @@ void LLAMA::create_llama_model(FFModel &ff,
             llama_config.hidden_size / llama_config.num_attention_heads,
             llama_config.hidden_size / llama_config.num_attention_heads,
             0.0f,    /*dropout*/
-            false,   /*qkv_bias*/
+            qkv_bias, /*qkv_bias*/
             false,   /*final_bias*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/
@@ -153,7 +154,7 @@ void LLAMA::create_llama_model(FFModel &ff,
             llama_config.hidden_size / llama_config.num_attention_heads,
             llama_config.hidden_size / llama_config.num_attention_heads,
             0.0f,    /*dropout*/
-            false,   /*qkv_bias*/
+            qkv_bias, /*qkv_bias*/
             false,   /*final_bias*/
             false,   /*add_zero_attn*/
             DT_NONE, /*data_type*/

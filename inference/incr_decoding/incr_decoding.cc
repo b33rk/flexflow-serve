@@ -306,10 +306,14 @@ void FlexFlow::top_level_task(Task const *task,
                                   /*ignore_comments */ true);
   ModelType model_type = ModelType::UNKNOWN;
   auto architectures = model_config["architectures"];
+  bool qwen = false;
   for (auto const &str : architectures) {
     if (str == "LlamaForCausalLM" || str == "LLaMAForCausalLM" ||
         str == "MistralForCausalLM" || str == "Qwen2ForCausalLM") {
       model_type = ModelType::LLAMA;
+      if (str == "Qwen2ForCausalLM") {
+        qwen = true;
+      }
       break;
     } else if (str == "OPTForCausalLM") {
       model_type = ModelType::OPT;
@@ -379,7 +383,8 @@ void FlexFlow::top_level_task(Task const *task,
                               INC_DECODING_MODE,
                               generationConfig,
                               streaming_cache,
-                              use_full_precision);
+                              use_full_precision,
+                              /*qkv_bias*/ qwen);
   } else if (model_type == ModelType::OPT) {
     OPT::create_opt_model(model,
                           config_filepath,
