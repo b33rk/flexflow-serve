@@ -2821,9 +2821,9 @@ void RequestManager::background_serving_task(
     // Registered SSMs: perform speculative inference
     rm->serve_spec_infer(llm);
   }
-#ifdef FF_USE_NCCL
-  llm->finish_nccl_comms();
-#endif
+// #ifdef FF_USE_NCCL
+//   llm->finish_nccl_comms();
+// #endif
 }
 
 /*static*/
