@@ -174,7 +174,7 @@ void get_model_meta(FilePaths &file_paths,
       join_path({file_paths.cache_folder_path,
                  "weights",
                  model_metadata.model_names.llm_model_name,
-                 use_full_precision || use_bf16_precision ? "full-precision" : "half-precision"});
+                 use_full_precision ? "full-precision" : "half-precision"});
 
   std::ifstream llm_config_file_handle(model_metadata.llm_model_config_path);
   if (!llm_config_file_handle.good()) {

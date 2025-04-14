@@ -120,14 +120,30 @@ void forward_kernel_wrapper(EmbeddingMeta const *m,
   } else {
     assert(false && "Unsupported DataType in Embedding");
   }
-  if (m->profiling) {
-    checkCUDA(cudaDeviceSynchronize());
-    // print_tensor<TI>(input_ptr, input_domain.get_volume(),
-    // "[Embedding:forward:input]"); print_tensor<float>(kernel_ptr,
-    // kernel_domain.get_volume(), "[Embedding:forward:weight]");
-    // print_tensor<float>(output_ptr, output_domain.get_volume(),
-    // "[Embedding:forward:output]");
+  // if (m->profiling) {
+  checkCUDA(cudaDeviceSynchronize());
+  print_tensor<int>(
+      input.get_int32_ptr(), 32, "[Embedding:forward:input]");
+
+  if (weight.data_type == DT_HALF) {
+    print_tensor<half>(
+        weight.get_half_ptr(), 32, "[Embedding:forward:weight]");
+  } else if (weight.data_type == DT_FLOAT) {
+    print_tensor<float>(
+        weight.get_float_ptr(), 32, "[Embedding:forward:weight]");
+  } else {
+    assert(false && "Unsupported DataType in Embedding");
   }
+  if (output.data_type == DT_FLOAT) {
+    print_tensor<float>(
+        output.get_float_ptr(), 32, "[Embedding:forward:output]");
+  } else if (output.data_type == DT_HALF) {
+    print_tensor<half>(
+        output.get_half_ptr(), 32, "[Embedding:forward:output]");
+  } else {
+    assert(false && "Unsupported DataType in Embedding");
+  }
+  // }
 }
 
 /*static*/

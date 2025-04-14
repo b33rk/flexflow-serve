@@ -248,10 +248,10 @@ class LLM:
                 model_name.lower(),
                 (
                     "full-precision"
-                    if self.data_type == DataType.DT_FLOAT or self.data_type == DataType.DT_BFLOAT16
+                    if self.data_type == DataType.DT_FLOAT
                     else "half-precision"
                 ),
-                # temp: bfloat16 precision share the same folder as full precision
+                # temp: bfloat16 precision share the same folder as half precision
             )
         elif resource_type == CachedResourceType.TOKENIZER:
             return os.path.join(

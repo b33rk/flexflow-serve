@@ -267,7 +267,7 @@ void FlexFlow::top_level_task(Task const *task,
       join_path({file_paths.cache_folder_path,
                  "weights",
                  llm_model_name,
-                 use_full_precision || use_bf16_precision ? "full-precision"
+                 use_full_precision ? "full-precision"
                                                           : "half-precision"});
   std::ifstream config_file_handle(config_filepath);
   if (!config_file_handle.good()) {
