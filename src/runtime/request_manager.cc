@@ -1216,7 +1216,7 @@ void RequestManager::update_ssm_prefill_results(
 
 BatchConfig RequestManager::prepare_next_batch() {
   if (is_background_server_terminated()) {
-    return BatchConfig();
+    return BatchConfig(decoding_mode == SPECULATIVE_DECODING ? InferenceMode::TREE_SEARCH_MODE : InferenceMode::INC_DECODING_MODE);
   }
   switch (request_manager_status) {
     case PREFILLING:
@@ -1228,7 +1228,7 @@ BatchConfig RequestManager::prepare_next_batch() {
             return prepare_ssm_prefilling_batch();
           } else {
             // Return an empty batch config
-            return BatchConfig();
+            return BatchConfig(decoding_mode == SPECULATIVE_DECODING ? InferenceMode::TREE_SEARCH_MODE : InferenceMode::INC_DECODING_MODE);
           }
         } else if (prefill_model == LLM) {
           return prepare_llm_prefilling_batch();
@@ -1254,7 +1254,7 @@ BatchConfig RequestManager::prepare_next_batch() {
         return prepare_next_spec_batch_config();
       } else {
         // Return an empty batch config
-        return BatchConfig();
+        return BatchConfig(decoding_mode == SPECULATIVE_DECODING ? InferenceMode::TREE_SEARCH_MODE : InferenceMode::INC_DECODING_MODE);
       }
     case LLM_VERIFY:
       return prepare_verify_batch_config();
