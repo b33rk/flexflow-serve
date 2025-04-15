@@ -205,7 +205,7 @@ enum TaskIDs {
   // NCCL tasks
   NCCL_GETUNIQUEID_TASK_ID,
   NCCL_INIT_COMMS_TASK_ID,
-//   NCCL_FINISH_COMMS_TASK_ID,
+  NCCL_FINISH_COMMS_TASK_ID,
   // Search
   STRATEGY_SEARCH_TASK_ID,
   // Graph
@@ -1100,7 +1100,7 @@ public:
                      bool use_propagation) const;
 #ifdef FF_USE_NCCL
   ncclComm_t *find_nccl_comms(MachineView const &view) const;
-//   void finish_nccl_comms();
+  void finish_nccl_comms();
 #endif
 #ifdef FF_USE_PROPAGATE
   void propagate(std::map<Op *, ParallelConfig> const &current,
