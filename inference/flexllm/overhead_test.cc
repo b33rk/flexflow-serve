@@ -188,7 +188,7 @@ std::vector<Request> make_requests(int max_requests_per_batch,
   int target_num_steps = 10;
   if (max_fwd_tokens_per_batch > 0) {
     target_num_steps +=
-        10*((finetuning_entry_size + max_fwd_tokens_per_batch - 1) /
+        5*((finetuning_entry_size + max_fwd_tokens_per_batch - 1) /
             max_fwd_tokens_per_batch +
         (tot_llm_layers + bwd_layers_per_step - 1) / bwd_layers_per_step);
   }
@@ -209,7 +209,8 @@ std::vector<Request> make_requests(int max_requests_per_batch,
     finetuning_req.max_length = finetuning_entry_size;
     finetuning_req.peft_model_id =
         (peft_model_id != nullptr) ? *peft_model_id : PEFTModelID::NO_ID;
-    finetuning_req.peft_finetuning_info.max_training_epochs = 10;
+    finetuning_req.peft_finetuning_info.max_training_epochs = 5;
+    finetuning_req.peft_finetuning_info.num_logging_steps = 10;
     finetuning_req.warmup = false;
     requests.push_back(finetuning_req);
   }

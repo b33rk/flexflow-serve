@@ -1087,7 +1087,22 @@ std::vector<at::Tensor> _wrapper_mha_bwd_1(
   flash::set_params_alibi(params, alibi_slopes_, batch_size, num_heads);
 
   if (seqlen_q > 0) {
-    launch(params, stream);
+    try {
+      // code that might raise error
+      launch(params, stream);
+    } catch (const std::exception &e) {
+      fprintf(stderr, "Caught in FlashAttention backward kernel.\n");
+      std::cerr << e.what() << std::endl;
+      // throw; // optional rethrow
+      // assert(false);
+    } catch(const c10::Error& e) {
+        // Print the error to the terminal.
+        fprintf(stderr, "Caught in FlashAttention backward kernel.\n");
+        std::cerr << e.what() << std::endl;
+        // assert(false);
+    }
+
+    
   } else {
     // If seqlen_q == 0, then we have an empty tensor. We need to set the output
     // to 0.
