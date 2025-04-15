@@ -231,13 +231,6 @@ void compute_qkv(IncMultiHeadSelfAttentionMeta const *m,
                                     m->num_kv_heads,
                                     *m->scaling_query,
                                     m->scaling_factor);
-    std::cout << "apply_proj_bias_qkv" << std::endl;
-    std::cout << "global num q heads: " << m->global_num_q_heads << std::endl;
-    std::cout << "num q heads: " << m->num_q_heads << std::endl;
-    std::cout << "global num kv heads: " << m->global_num_kv_heads << std::endl;
-    std::cout << "num kv heads: " << m->num_kv_heads << std::endl;
-    std::cout << "kv head dim: " << m->qk_dim * m->num_kv_heads << std::endl;
-    std::cout << "q head dim: " << m->qk_dim * m->num_q_heads << std::endl;
   } else if (*m->scaling_query) {
     scaling_query_kernel<<<GET_BLOCKS(parallelism),
                            min(CUDA_NUM_THREADS, parallelism),
