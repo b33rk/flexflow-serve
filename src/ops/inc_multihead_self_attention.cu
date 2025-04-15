@@ -1222,6 +1222,9 @@ void flash_compute_attention_kernel_peft(IncMultiHeadSelfAttentionMeta *m,
                                    return_softmax,
                                    gen_,
                                    peft_stream);
+  // todo(gabriele): check if this works as stream guard
+  // checkCUDA(cudaStreamSynchronize(peft_stream));
+
   auto out = result[0];
   auto softmax_lse = result[1];
   auto p = result[2];
@@ -2033,6 +2036,9 @@ void flash_peft_bwd_kernel(IncMultiHeadSelfAttentionMeta *m,
                                    gen_,
                                    rng_state,
                                    peft_stream);
+  // todo(gabriele): check if this works as stream guard
+  // checkCUDA(cudaStreamSynchronize(peft_stream));
+
   auto dq = result[0];
   auto dk = result[1];
   auto dv = result[2];
