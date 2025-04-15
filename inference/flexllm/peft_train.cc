@@ -523,6 +523,10 @@ void FlexFlow::top_level_task(Task const *task,
     std::vector<Request> inference_requests;
     if (!file_paths.prompt_file_path.empty()) {
       inference_requests = load_requests(file_paths.prompt_file_path, 128);
+      // cap number of inference requests to 2048 for spatial sharing, otherwise it will be too time consuming
+      if (ffconfig.peft_support_mode == TEMPORAL_SHARING && inference_requests.size() > 2048) {
+        inference_requests.resize(2048);
+      }
     }
 
     // Add fine-tuning request
