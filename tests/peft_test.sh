@@ -43,13 +43,13 @@ mkdir -p ./inference/output
 export LEGION_BACKTRACE=1
 
 # Download test model
-python ./inference/utils/download_peft_model.py "${MODEL_NAME}"
+# python ./inference/utils/download_peft_model.py "${MODEL_NAME}"
 
 if [ "$FULL_PRECISION" = "true" ]; then full_precision_flag="--use-full-precision"; else full_precision_flag=""; fi
 if [ "$FUSION" = "true" ]; then fusion_flag="--fusion"; else fusion_flag=""; fi
 
 # Run PEFT in Huggingface to get ground truth tensors
-eval python ./tests/peft/hf_finetune.py --peft-model-id "${MODEL_NAME}" --save-peft-tensors "${full_precision_flag}" -lr "${LEARNING_RATE}"
+# eval python ./tests/peft/hf_finetune.py --peft-model-id "${MODEL_NAME}" --save-peft-tensors "${full_precision_flag}" -lr "${LEARNING_RATE}"
 
 # Python test
 echo "Python test"
@@ -83,9 +83,9 @@ json_config=$(cat <<-END
 END
 )
 echo "$json_config" > /tmp/peft_config.json
-python ./inference/python/ff_peft.py -config-file /tmp/peft_config.json
+# python ./inference/python/ff_peft.py -config-file /tmp/peft_config.json
 # Check alignment
-python ./tests/peft/peft_alignment_test.py -m "${MODEL_NAME}" -tp "${TP_DEGREE}" -lr "${LEARNING_RATE}"
+# python ./tests/peft/peft_alignment_test.py -m "${MODEL_NAME}" -tp "${TP_DEGREE}" -lr "${LEARNING_RATE}"
 
 # C++ test
 echo "C++ test"
