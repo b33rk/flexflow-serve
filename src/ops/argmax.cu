@@ -71,7 +71,7 @@ __global__ void argmaxKernel(T const *__restrict__ input,
   int thread_idx = -1;
   for (int i = threadIdx.x; i < vocab_size; i += BLOCK_SIZE) {
     float val = toFloat(col_ptr[i]);
-    if (val > thread_max) {
+    if (val > thread_max || (val == thread_max && thread_idx == -1)) {
       thread_max = val;
       thread_idx = i;
     }
@@ -133,12 +133,14 @@ void inference_kernel_spatial_sharing(ArgMaxMeta const *m,
                                       BatchConfig const *bc,
                                       DT const *input_ptr,
                                       int *indices_ptr,
-                                      float *prob_ptr,
-                                      int *parent,
                                       int const num_classes,
                                       float *loss,
                                       cudaStream_t main_stream) {
   assert(!m->beam_search);
+  assert(input_ptr != nullptr);
+  assert(indices_ptr != nullptr);
+  assert(loss != nullptr);
+  assert(bc != nullptr);
   
   // launch finetuning fwd tokens kernel if there are any finetuning fwd tokens
   if (bc->num_finetuning_fwd_tokens() > 0) {
@@ -149,7 +151,7 @@ void inference_kernel_spatial_sharing(ArgMaxMeta const *m,
                       num_classes, 
                       bc->num_finetuning_fwd_tokens(), 
                       indices_ptr + bc->num_inference_tokens(), 
-                      prob_ptr + bc->num_inference_tokens(), 
+                      nullptr, 
                       m->handle.peft_fwd_stream);
 
     // print_tensor(indices_ptr, batch_size, "indices_ptr: ");
@@ -194,7 +196,7 @@ void inference_kernel_spatial_sharing(ArgMaxMeta const *m,
   // launch inference kernel if there are inference tokens
   if (bc->num_inference_tokens() > 0) {
     launchArgmaxKernel(
-      input_ptr, num_classes, bc->num_inference_tokens(), indices_ptr, prob_ptr, main_stream);
+      input_ptr, num_classes, bc->num_inference_tokens(), indices_ptr, nullptr, main_stream);
   }
 
   if (bc->num_finetuning_fwd_tokens() > 0) {
@@ -218,8 +220,6 @@ void ArgMax::inference_kernel(ArgMaxMeta const *m,
                                      bc,
                                      input_ptr,
                                      indices_ptr,
-                                     prob_ptr,
-                                     parent,
                                      num_classes,
                                      loss,
                                      stream);

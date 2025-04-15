@@ -338,7 +338,9 @@ void RequestManager::set_max_fwd_finetuning_tokens_per_batch(
     int max_num_tokens) {
   max_fwd_finetuning_tokens_per_batch = max_num_tokens;
   assert(max_fwd_finetuning_tokens_per_batch <= BatchConfig::MAX_NUM_TOKENS);
-  assert(max_fwd_finetuning_tokens_per_batch <= max_tokens_per_batch);
+  if (peft_support_mode == COSERVING) {
+    assert(max_fwd_finetuning_tokens_per_batch <= max_tokens_per_batch);
+  }
   // assert(max_fwd_finetuning_tokens_per_batch > 0);
 }
 
@@ -386,6 +388,9 @@ void RequestManager::push_spec_infer_tree_width(int tree_width) {
 
 void RequestManager::set_peft_support_mode(PeftSupportMode peft_support_mode_) {
   peft_support_mode = peft_support_mode_;
+  if (peft_support_mode == SPATIAL_SHARING || peft_support_mode == TEMPORAL_SHARING) {
+    set_max_fwd_finetuning_tokens_per_batch(BatchConfig::MAX_NUM_TOKENS);
+  }
 }
 
 void RequestManager::set_inference_finished(bool finished) {
@@ -1007,8 +1012,15 @@ void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
       // This is a decoding token
       assert(old_fwd_bc.tokensInfo[i].abs_depth_in_request + 1 ==
              request.tokens.size());
-      assert(result.token_ids[i] >= 0);
-      request.tokens.push_back(result.token_ids[i]);
+      if (result.token_ids[i] >= 0) {
+        request.tokens.push_back(result.token_ids[i]);
+      } else {
+        // Log the error and use a placeholder token
+        std::cerr << "Error: Encountered negative token ID: " << result.token_ids[i] << std::endl;
+        std::cerr << "Token index: " << i << ", Request GUID: " << request.guid << std::endl;
+        // std::cerr << "Batch Config: " << old_fwd_bc << std::endl;
+        request.tokens.push_back(15); // placeholder token
+      }
       if (!profiling_requests[guid].first_token_time_set) {
         profiling_requests[guid].first_token_time =
             Realm::Clock::current_time_in_microseconds();

@@ -254,7 +254,7 @@ std::vector<Request> load_trace(nlohmann::ordered_json prompt_json,
     } else {
       inference_req.prompt = text;
     }
-    inference_req.max_new_tokens = response_length;
+    inference_req.max_new_tokens = max(response_length, 2);
     inference_req.ignore_eos = true;
     inference_req.arrival_time_us = arrival_time_us;
     requests.push_back(inference_req);

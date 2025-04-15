@@ -211,7 +211,7 @@ void forward_kernel_spatial_sharing(EmbeddingMeta const *m,
   
   // launch inference kernel if there are inference tokens
   if (bc->num_inference_tokens() > 0) {
-    int parallelism = bc->num_finetuning_fwd_tokens() * out_dim;
+    int parallelism = bc->num_inference_tokens() * out_dim;
     embed_forward_no_aggr<TI, TD>
       <<<GET_BLOCKS(parallelism), CUDA_NUM_THREADS, 0, main_stream>>>(
           input_ptr, output_ptr, weight_ptr, out_dim, bc->num_inference_tokens());
