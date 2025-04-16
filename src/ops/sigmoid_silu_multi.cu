@@ -99,9 +99,10 @@ void SigmoidSiluMulti::inference_kernel_wrapper(
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
 
-  int num_elements = input1.domain.get_volume();
-  assert(input2.domain.get_volume() == num_elements);
-  assert(output.domain.get_volume() == num_elements);
+  int num_elements = bc->num_active_tokens() *
+                     (input1.domain.hi()[0] - input1.domain.lo()[0] + 1);
+  // assert(input2.domain.get_volume() == num_elements);
+  // assert(output.domain.get_volume() == num_elements);
 
   cudaEvent_t t_start, t_end;
   if (m->profiling) {
@@ -162,7 +163,7 @@ void SigmoidSiluMulti::inference_kernel_wrapper(
     SigmoidSiluMultiKernel<<<GET_BLOCKS(num_elements),
                              min(CUDA_NUM_THREADS, num_elements),
                              0,
-                             stream>>>(input1.domain.get_volume(),
+                             stream>>>(num_elements,
                                        input1.get_float_ptr(),
                                        input2.get_float_ptr(),
                                        output.get_float_ptr());
@@ -170,7 +171,7 @@ void SigmoidSiluMulti::inference_kernel_wrapper(
     SigmoidSiluMultiKernel<<<GET_BLOCKS(num_elements),
                              min(CUDA_NUM_THREADS, num_elements),
                              0,
-                             stream>>>(input1.domain.get_volume(),
+                             stream>>>(num_elements,
                                        input1.get_half_ptr(),
                                        input2.get_half_ptr(),
                                        output.get_half_ptr());
