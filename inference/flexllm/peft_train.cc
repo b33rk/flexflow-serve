@@ -524,7 +524,7 @@ void FlexFlow::top_level_task(Task const *task,
     if (!file_paths.prompt_file_path.empty()) {
       inference_requests = load_requests(file_paths.prompt_file_path, 128);
       // cap number of inference requests to 2048 for spatial sharing, otherwise it will be too time consuming
-      if (ffconfig.peft_support_mode == TEMPORAL_SHARING && inference_requests.size() > 2048) {
+      if ((ffconfig.peft_support_mode == TEMPORAL_SHARING || ffconfig.peft_support_mode == SPATIAL_SHARING) && inference_requests.size() > 2048) {
         inference_requests.resize(2048);
       }
     }
@@ -566,13 +566,10 @@ void FlexFlow::top_level_task(Task const *task,
   if (!file_paths.profiling_folder_path.empty()) {
     std::cout << "Saving profiling info..." << std::endl;
     std::string dataset_name;
-    // set dataset name to "wildchat" if the prompt file path contains
-    // "wildchat"
-    if (file_paths.prompt_file_path.find("wildchat") != std::string::npos) {
-      dataset_name = "wildchat";
-    } else if (file_paths.prompt_file_path.find("sharegpt") !=
-               std::string::npos) {
-      dataset_name = "sharegpt";
+    if (!file_paths.prompt_file_path.empty()) {
+      // Extract just the filename from the path without extension
+      std::filesystem::path p(file_paths.prompt_file_path);
+      dataset_name = p.filename().stem().string();
     } else {
       dataset_name = "unknown";
     }

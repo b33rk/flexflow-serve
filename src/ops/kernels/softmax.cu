@@ -147,6 +147,9 @@ void inference_kernel_wrapper(SoftmaxMeta *m,
     cudaEventCreate(&t_end);
     cudaEventRecord(t_start, stream);
   }
+  if (bc->num_active_tokens() <= 0) {
+    return;
+  }
   int num_classes = output.domain.hi()[0] - output.domain.lo()[0] + 1;
   if (m->output_type[0] == DT_FLOAT) {
     Internal::inference_kernel(m,
@@ -336,13 +339,27 @@ void inference_kernel(SoftmaxMeta const *m,
   checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
   float alpha = 1.0f, beta = 0.0f;
   cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
-  checkCUDNN(cudnnSetTensor4dDescriptor(m->outputTensor,
-                                        CUDNN_TENSOR_NCHW,
-                                        cudnn_data_type,
-                                        bc->num_active_tokens(),
-                                        num_classes,
-                                        1,
-                                        1));
+  // fprintf(stderr, "Error in cudnnSetTensor4dDescriptor: %s\n", e.what());
+  // printf("num_active_tokens: %d, num_classes: %d\n",
+  //         bc->num_active_tokens(), num_classes);
+  // printf("input_ptr: %p, output_ptr: %p\n", input_ptr, output_ptr);
+  // std::cerr << "bc: " << *bc << std::endl;
+  // try {
+    checkCUDNN(cudnnSetTensor4dDescriptor(m->outputTensor,
+                                          CUDNN_TENSOR_NCHW,
+                                          cudnn_data_type,
+                                          bc->num_active_tokens(),
+                                          num_classes,
+                                          1,
+                                          1));
+  // } catch (const std::exception &e) {
+  //   fprintf(stderr, "Error in cudnnSetTensor4dDescriptor: %s\n", e.what());
+  //   fprintf(stderr, "num_active_tokens: %d, num_classes: %d\n",
+  //           bc->num_active_tokens(), num_classes);
+  //   fprintf(stderr, "input_ptr: %p, output_ptr: %p\n", input_ptr, output_ptr);
+  //   std::cerr << "bc: " << *bc << std::endl;
+  //   assert(false);
+  // }
   checkCUDNN(cudnnSoftmaxForward(m->handle.dnn,
                                  CUDNN_SOFTMAX_ACCURATE,
                                  CUDNN_SOFTMAX_MODE_CHANNEL,

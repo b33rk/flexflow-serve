@@ -68,11 +68,11 @@ __global__ void argmaxKernel(T const *__restrict__ input,
 
   // Each thread processes a subset of the column.
   float thread_max = -FLT_MAX;
-  int thread_idx = -1;
+  int thread_idx = 0;
   for (int i = threadIdx.x; i < vocab_size; i += BLOCK_SIZE) {
     float val = toFloat(col_ptr[i]);
-    if (val > thread_max || (val == thread_max && thread_idx == -1)) {
-      thread_max = val;
+    if (val > thread_max || isnan(val)) {
+      thread_max = isnan(val) ? -FLT_MAX : val; // Handle NaN values
       thread_idx = i;
     }
   }
@@ -147,12 +147,12 @@ void inference_kernel_spatial_sharing(ArgMaxMeta const *m,
     checkCUDA(cudaEventRecord(m->handle.peft_fwd_can_start, main_stream)); 
     checkCUDA(cudaStreamWaitEvent(m->handle.peft_fwd_stream, m->handle.peft_fwd_can_start, 0));
 
-    launchArgmaxKernel(input_ptr + num_classes * bc->num_inference_tokens(), 
-                      num_classes, 
-                      bc->num_finetuning_fwd_tokens(), 
-                      indices_ptr + bc->num_inference_tokens(), 
-                      nullptr, 
-                      m->handle.peft_fwd_stream);
+    // launchArgmaxKernel(input_ptr + num_classes * bc->num_inference_tokens(), 
+    //                   num_classes, 
+    //                   bc->num_finetuning_fwd_tokens(), 
+    //                   indices_ptr + bc->num_inference_tokens(), 
+    //                   nullptr, 
+    //                   m->handle.peft_fwd_stream);
 
     // print_tensor(indices_ptr, batch_size, "indices_ptr: ");
 
@@ -231,8 +231,10 @@ void ArgMax::inference_kernel(ArgMaxMeta const *m,
     checkCUDA(cudaMemsetAsync(parent, 0, bc->num_active_tokens() * sizeof(int), stream));
   }
 
-  launchArgmaxKernel(
-      input_ptr, num_classes, bc->num_active_tokens(), indices_ptr, prob_ptr, stream);
+  if (bc->num_inference_tokens() > 0) {
+    launchArgmaxKernel(
+        input_ptr, num_classes, bc->num_inference_tokens(), indices_ptr, prob_ptr, stream);
+  }
 
   // print_tensor(indices_ptr, batch_size, "indices_ptr: ");
 
