@@ -505,7 +505,7 @@ void inference_kernel(LinearMeta const *m,
                       int in_dim,
                       int out_dim,
                       ffStream_t stream) {
-  if (m->peft_support_mode == SPATIAL_SHARING) {
+  if (m->peft_support_mode == SPATIAL_SHARING || m->peft_support_mode == SPATIAL_SHARING_LIMITED) {
     inference_kernel_spatial_sharing<DT>(m, bc, input_ptr, output_ptr, weight_ptr, bias_ptr, in_dim, out_dim, stream);
     return;
   }

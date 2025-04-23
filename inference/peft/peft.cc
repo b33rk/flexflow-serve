@@ -81,6 +81,12 @@ void parse_input_args(char **argv,
         peft_support_mode = TEMPORAL_SHARING;
       } else if (mode == "spatial_sharing" || mode == "spatial-sharing") {
         peft_support_mode = SPATIAL_SHARING;
+      } else if (mode == "spatial_sharing_limited" || mode == "spatial-sharing-limited") {
+        peft_support_mode = SPATIAL_SHARING_LIMITED;
+      } else if (mode == "temporal_sharing_limited" || mode == "temporal-sharing-limited") {
+        peft_support_mode = TEMPORAL_SHARING_LIMITED;
+      } else if (mode == "spatial_sharing_separate_tasks" || mode == "spatial-sharing-separate-tasks") {
+        peft_support_mode = SPATIAL_SHARING_SEPARATE_TASKS;
       } else {
         std::cerr << "Unknown peft support mode: " << mode << std::endl;
         assert(false && "Invalid peft support mode");

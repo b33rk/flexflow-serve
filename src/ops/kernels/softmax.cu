@@ -332,7 +332,7 @@ void inference_kernel(SoftmaxMeta const *m,
                       DT *output_ptr,
                       int num_classes,
                       cudaStream_t stream) {
-  if (m->peft_support_mode == SPATIAL_SHARING) {
+  if (m->peft_support_mode == SPATIAL_SHARING || m->peft_support_mode == SPATIAL_SHARING_LIMITED) {
     inference_kernel_spatial_sharing(m, bc, input_ptr, output_ptr, num_classes, stream);
     return;
   }

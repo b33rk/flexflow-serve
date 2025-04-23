@@ -169,6 +169,9 @@ class PeftSupportMode(Enum):
     COSERVING = 5003
     TEMPORAL_SHARING = 5004
     SPATIAL_SHARING = 5005
+    SPATIAL_SHARING_LIMITED = 5006
+    TEMPORAL_SHARING_LIMITED = 5007
+    SPATIAL_SHARING_SEPARATE_TASKS = 5008
     def __str__(self):
         return self.name
 

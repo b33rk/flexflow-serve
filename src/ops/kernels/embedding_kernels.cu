@@ -235,7 +235,7 @@ void forward_kernel(EmbeddingMeta const *m,
                     // AggrMode aggr,
                     // int outputSize,
                     cudaStream_t stream) {
-  if (m->peft_support_mode == SPATIAL_SHARING) {
+  if (m->peft_support_mode == SPATIAL_SHARING || m->peft_support_mode == SPATIAL_SHARING_LIMITED) {
     forward_kernel_spatial_sharing<TI, TD>(m, bc, input_ptr, output_ptr, weight_ptr, in_dim, out_dim, stream);
     return;
   }

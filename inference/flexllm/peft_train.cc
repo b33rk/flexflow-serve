@@ -177,6 +177,12 @@ void parse_input_args(char **argv,
         peft_support_mode = TEMPORAL_SHARING;
       } else if (mode == "spatial_sharing" || mode == "spatial-sharing") {
         peft_support_mode = SPATIAL_SHARING;
+      } else if (mode == "spatial_sharing_limited" || mode == "spatial-sharing-limited") {
+        peft_support_mode = SPATIAL_SHARING_LIMITED;
+      } else if (mode == "temporal_sharing_limited" || mode == "temporal-sharing-limited") {
+        peft_support_mode = TEMPORAL_SHARING_LIMITED;
+      } else if (mode == "spatial_sharing_separate_tasks" || mode == "spatial-sharing-separate-tasks") {
+        peft_support_mode = SPATIAL_SHARING_SEPARATE_TASKS;
       } else {
         std::cerr << "Unknown peft support mode: " << mode << std::endl;
         assert(false && "Invalid peft support mode");
@@ -524,10 +530,8 @@ void FlexFlow::top_level_task(Task const *task,
     if (!file_paths.prompt_file_path.empty()) {
       inference_requests = load_requests(file_paths.prompt_file_path, 128);
       // cap number of inference requests to 2048 for spatial sharing, otherwise it will be too time consuming
-      if (ffconfig.peft_support_mode == SPATIAL_SHARING && inference_requests.size() > 1024) {
-        inference_requests.resize(1024);
-      } else if (ffconfig.peft_support_mode == TEMPORAL_SHARING && inference_requests.size() > 1024) {
-        inference_requests.resize(1024);
+      if ((ffconfig.peft_support_mode == SPATIAL_SHARING || ffconfig.peft_support_mode == TEMPORAL_SHARING || ffconfig.peft_support_mode == SPATIAL_SHARING_LIMITED || ffconfig.peft_support_mode == TEMPORAL_SHARING_LIMITED || ffconfig.peft_support_mode == SPATIAL_SHARING_SEPARATE_TASKS) && inference_requests.size() > 2048) {
+        inference_requests.resize(2048);
       }
     }
 

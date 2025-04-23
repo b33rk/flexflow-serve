@@ -215,7 +215,7 @@ void ArgMax::inference_kernel(ArgMaxMeta const *m,
                             int const num_classes,
                             float *loss,
                             cudaStream_t stream) {
-  if (m->peft_support_mode == SPATIAL_SHARING) {
+  if (m->peft_support_mode == SPATIAL_SHARING || m->peft_support_mode == SPATIAL_SHARING_LIMITED) {
     inference_kernel_spatial_sharing(m,
                                      bc,
                                      input_ptr,

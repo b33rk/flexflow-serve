@@ -347,7 +347,7 @@ void RequestManager::set_max_fwd_finetuning_tokens_per_batch(
 int RequestManager::get_max_fwd_finetuning_tokens_per_batch() {
   // assert(max_fwd_finetuning_tokens_per_batch > 0 &&
   // max_fwd_finetuning_tokens_per_batch <= max_tokens_per_batch);
-  if (peft_support_mode == SPATIAL_SHARING || peft_support_mode == TEMPORAL_SHARING) {
+  if (peft_support_mode == SPATIAL_SHARING || peft_support_mode == TEMPORAL_SHARING || peft_support_mode == SPATIAL_SHARING_SEPARATE_TASKS) {
     assert(max_fwd_finetuning_tokens_per_batch == BatchConfig::MAX_NUM_TOKENS);
   } else {
     assert(max_fwd_finetuning_tokens_per_batch < BatchConfig::MAX_NUM_TOKENS);
@@ -388,7 +388,7 @@ void RequestManager::push_spec_infer_tree_width(int tree_width) {
 
 void RequestManager::set_peft_support_mode(PeftSupportMode peft_support_mode_) {
   peft_support_mode = peft_support_mode_;
-  if (peft_support_mode == SPATIAL_SHARING || peft_support_mode == TEMPORAL_SHARING) {
+  if (peft_support_mode == SPATIAL_SHARING || peft_support_mode == TEMPORAL_SHARING || peft_support_mode == SPATIAL_SHARING_SEPARATE_TASKS) {
     set_max_fwd_finetuning_tokens_per_batch(BatchConfig::MAX_NUM_TOKENS);
   }
 }
@@ -773,7 +773,8 @@ void RequestManager::check_new_bc(BatchConfig const &new_bc) {
   }
 
   switch(peft_support_mode) {
-    case SPATIAL_SHARING: {
+    case SPATIAL_SHARING: 
+    case SPATIAL_SHARING_SEPARATE_TASKS: {
       break;
     } 
     case TEMPORAL_SHARING: {
@@ -788,7 +789,9 @@ void RequestManager::check_new_bc(BatchConfig const &new_bc) {
         assert(new_bc.num_finetuning_fwd_tokens() == 0);
       }
       break;
-    } 
+    }
+    case SPATIAL_SHARING_LIMITED:
+    case TEMPORAL_SHARING_LIMITED:
     case COSERVING: {
       assert(new_bc.num_active_tokens() <= max_tokens_per_batch);
       break;
@@ -832,13 +835,19 @@ BatchConfig RequestManager::prepare_next_batch_task(
 }
 
 void RequestManager::update_peft_temporal_sharing_state(void) {
-  assert(peft_support_mode == TEMPORAL_SHARING);
+  assert(peft_support_mode == TEMPORAL_SHARING || 
+         peft_support_mode == TEMPORAL_SHARING_LIMITED);
   if (peft_temporal_sharing_state == INFERENCE) {
-    peft_temporal_sharing_state = FINETUNING_FWD;
+    peft_temporal_sharing_inf_step++;
+    if (peft_temporal_sharing_inf_step >= 10 || peft_support_mode == TEMPORAL_SHARING) {
+      peft_temporal_sharing_inf_step = 0;
+      peft_temporal_sharing_state = FINETUNING_FWD;
+    }
   } else if (peft_temporal_sharing_state == FINETUNING_FWD) {
     peft_temporal_sharing_state = FINETUNING_BWD;
   } else if (peft_temporal_sharing_state == FINETUNING_BWD) {  
     peft_temporal_sharing_state = INFERENCE;
+    peft_temporal_sharing_inf_step = 0;
   } else {
     assert(false && "Invalid temporal sharing state");
   }
@@ -1409,7 +1418,7 @@ void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
   assert(peft_finetuning_enabled(peft_support_mode) && "PEFT finetuning is not enabled");
   assert(!pending_peft_request_queue.empty() &&
          "Trying to add a new finetuning request when there are none");
-  if (peft_support_mode != TEMPORAL_SHARING && peft_support_mode != SPATIAL_SHARING) {
+  if (peft_support_mode != TEMPORAL_SHARING && peft_support_mode != SPATIAL_SHARING && peft_support_mode != SPATIAL_SHARING_SEPARATE_TASKS) {
     assert(new_bc.num_tokens < get_max_tokens_per_batch() &&
           "Trying to add a new finetuning request when the batch is full");
   }
@@ -1434,7 +1443,7 @@ void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
   int batch_capacity_left =
       std::min(get_max_fwd_finetuning_tokens_per_batch(),
                get_max_tokens_per_batch() - new_bc.num_active_tokens());
-  if (peft_support_mode == TEMPORAL_SHARING || peft_support_mode == SPATIAL_SHARING) {
+  if (peft_support_mode == TEMPORAL_SHARING || peft_support_mode == SPATIAL_SHARING || peft_support_mode == SPATIAL_SHARING_SEPARATE_TASKS) {
     assert(get_max_fwd_finetuning_tokens_per_batch() == BatchConfig::MAX_NUM_TOKENS);
     batch_capacity_left =
       std::min(get_max_fwd_finetuning_tokens_per_batch(),
@@ -1488,7 +1497,7 @@ void RequestManager::add_finetuning_req_bwd_batch(BatchConfig &new_bc) {
   assert(peft_finetuning_enabled(peft_support_mode) && "PEFT finetuning is not enabled");
   assert(!pending_peft_request_queue.empty() &&
          "Trying to add a new finetuning request when there are none");
-  if (peft_support_mode != TEMPORAL_SHARING && peft_support_mode != SPATIAL_SHARING) {
+  if (peft_support_mode != TEMPORAL_SHARING && peft_support_mode != SPATIAL_SHARING && peft_support_mode != SPATIAL_SHARING_SEPARATE_TASKS) {
     assert(new_bc.num_tokens <= get_max_tokens_per_batch() &&
           "Trying to add a new finetuning request when the batch is full");
   }
@@ -1530,7 +1539,7 @@ void RequestManager::add_finetuning_req_bwd_batch(BatchConfig &new_bc) {
   new_bc.requestsInfo[inference_batch_size].finetuning_backward_phase = true;
 
   int num_layers_per_finetuning_step = get_num_layers_per_finetuning_step();
-  if (peft_support_mode == TEMPORAL_SHARING || peft_support_mode == SPATIAL_SHARING) {
+  if (peft_support_mode == TEMPORAL_SHARING || peft_support_mode == SPATIAL_SHARING || peft_support_mode == SPATIAL_SHARING_SEPARATE_TASKS) {
     num_layers_per_finetuning_step = get_num_transformer_layers();
   }
 
@@ -1783,7 +1792,8 @@ void RequestManager::process_work_from_old_batch(
   if (peft_finetuning_enabled(peft_support_mode)) {
     process_finetuning_req_fwd_progress(old_bc, result);
     process_finetuning_req_bwd_progress(old_bc);
-    if (peft_support_mode == TEMPORAL_SHARING) {
+    if (peft_support_mode == TEMPORAL_SHARING ||
+        peft_support_mode == TEMPORAL_SHARING_LIMITED) {
       update_peft_temporal_sharing_state();
     }
   }
@@ -1869,27 +1879,32 @@ BatchConfig
   // Step 1: Create new batch config
   BatchConfig new_bc;
 
-  if (peft_support_mode != TEMPORAL_SHARING) {
+  if (peft_support_mode != TEMPORAL_SHARING && 
+      peft_support_mode != TEMPORAL_SHARING_LIMITED) {
     add_inference_work_if_needed(new_bc, old_bc);
   } else {
     // old_bc is only allowed to have inference tokens if we just finished a INFERENCE phase
-    if (old_bc.num_inference_tokens() > 0) {
-      assert(peft_temporal_sharing_state == FINETUNING_FWD &&
-             "Old batch should not have inference tokens");
-    }
+    // if (old_bc.num_inference_tokens() > 0) {
+    //   // assert(peft_temporal_sharing_state == FINETUNING_FWD &&
+    //   //        "Old batch should not have inference tokens");
+    // }
     if (peft_temporal_sharing_state == INFERENCE) {
-      add_inference_work_if_needed(new_bc, ts_saved_old_batch);
+      if (peft_temporal_sharing_inf_step == 0) {
+        add_inference_work_if_needed(new_bc, ts_saved_old_batch);
+      } else {
+        add_inference_work_if_needed(new_bc, old_bc);
+      }
     } else if (peft_temporal_sharing_state == FINETUNING_FWD) {
-      // if we just finished a finetuning fwd phase, we need to save the old batch for later
+      // if we just finished the inference phase, we need to save the old batch for later
       ts_saved_old_batch = old_bc;
     }
   }
 
   // Step 4: add finetuning fwd tokens, if there is additional space
   int slots_available_for_peft_fwd = 0;
-  if (peft_support_mode == COSERVING) {
+  if (peft_support_mode == COSERVING || peft_support_mode == TEMPORAL_SHARING_LIMITED || peft_support_mode == SPATIAL_SHARING_LIMITED) {
     slots_available_for_peft_fwd = get_max_tokens_per_batch() - new_bc.num_tokens;
-  } else if (peft_support_mode == TEMPORAL_SHARING || peft_support_mode == SPATIAL_SHARING) {
+  } else if (peft_support_mode == TEMPORAL_SHARING || peft_support_mode == SPATIAL_SHARING || peft_support_mode == SPATIAL_SHARING_SEPARATE_TASKS) {
     slots_available_for_peft_fwd = BatchConfig::MAX_NUM_TOKENS - new_bc.num_tokens;
   }
   assert(slots_available_for_peft_fwd >= 0);

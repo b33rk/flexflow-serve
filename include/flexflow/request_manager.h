@@ -419,6 +419,7 @@ private:
   PeftSupportMode peft_support_mode = PEFT_DISABLED;
   PeftTemporalSharingState peft_temporal_sharing_state =
       PeftTemporalSharingState::INFERENCE;
+  int peft_temporal_sharing_inf_step = 0;
   BatchConfig ts_saved_old_batch;
   bool inference_finished = false;
   int num_transformer_layers = 0;
