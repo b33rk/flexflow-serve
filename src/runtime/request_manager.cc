@@ -25,6 +25,7 @@
 #include <iomanip>
 #include <new>
 #include <random>
+#include <sstream>
 #include <stack>
 #include <stdexcept>
 #include <thread>
@@ -904,7 +905,8 @@ void RequestManager::request_complete_clean_up(int batch_index) {
   //     *os << "Decoding time: 0 ms" << std::endl;
   //   }
   //   *os << "Total time: "
-  //       << (profile_info.finish_time - profile_info.start_time) * 1e-3 << " ms"
+  //       << (profile_info.finish_time - profile_info.start_time) * 1e-3 << "
+  //       ms"
   //       << std::endl;
   //   *os << "LLM decoding steps: " << profile_info.llm_decoding_steps
   //       << std::endl;
@@ -1216,7 +1218,9 @@ void RequestManager::update_ssm_prefill_results(
 
 BatchConfig RequestManager::prepare_next_batch() {
   if (is_background_server_terminated()) {
-    return BatchConfig(decoding_mode == SPECULATIVE_DECODING ? InferenceMode::TREE_SEARCH_MODE : InferenceMode::INC_DECODING_MODE);
+    return BatchConfig(decoding_mode == SPECULATIVE_DECODING
+                           ? InferenceMode::TREE_SEARCH_MODE
+                           : InferenceMode::INC_DECODING_MODE);
   }
   switch (request_manager_status) {
     case PREFILLING:
@@ -1228,7 +1232,9 @@ BatchConfig RequestManager::prepare_next_batch() {
             return prepare_ssm_prefilling_batch();
           } else {
             // Return an empty batch config
-            return BatchConfig(decoding_mode == SPECULATIVE_DECODING ? InferenceMode::TREE_SEARCH_MODE : InferenceMode::INC_DECODING_MODE);
+            return BatchConfig(decoding_mode == SPECULATIVE_DECODING
+                                   ? InferenceMode::TREE_SEARCH_MODE
+                                   : InferenceMode::INC_DECODING_MODE);
           }
         } else if (prefill_model == LLM) {
           return prepare_llm_prefilling_batch();
@@ -1254,7 +1260,9 @@ BatchConfig RequestManager::prepare_next_batch() {
         return prepare_next_spec_batch_config();
       } else {
         // Return an empty batch config
-        return BatchConfig(decoding_mode == SPECULATIVE_DECODING ? InferenceMode::TREE_SEARCH_MODE : InferenceMode::INC_DECODING_MODE);
+        return BatchConfig(decoding_mode == SPECULATIVE_DECODING
+                               ? InferenceMode::TREE_SEARCH_MODE
+                               : InferenceMode::INC_DECODING_MODE);
       }
     case LLM_VERIFY:
       return prepare_verify_batch_config();
@@ -2907,6 +2915,8 @@ void RequestManager::serve_spec_infer(FFModel *llm) {
     im->init_operators_inference(ssm);
   }
 
+  std::cout << "Finish loading model weights." << std::endl;
+
   InferenceResultFuture irf_0;
   {
     // Initialize futures for incr decoding
@@ -2929,6 +2939,7 @@ void RequestManager::serve_spec_infer(FFModel *llm) {
       auto const &ir = infer_result_future_pipeline.front();
       ir.get_void_result();
     }
+    std::cout << "End blocking." << std::endl;
     // deque finished batches
     while (infer_result_future_pipeline.size() > 1) {
       auto const &ir = infer_result_future_pipeline.front();
@@ -2940,6 +2951,7 @@ void RequestManager::serve_spec_infer(FFModel *llm) {
     }
 
     runtime->begin_trace(ctx, 12345 /*trace_id*/);
+    std::cout << "Trace 12345 starts." << std::endl;
     for (int ssm_step_i = 0; ssm_step_i < get_max_tree_depth(); ssm_step_i++) {
       InferenceResultFuture irf = infer_result_future_pipeline.back();
       BatchConfigFuture bcf = get_next_batch_config(irf, ctx, runtime);
@@ -2951,6 +2963,7 @@ void RequestManager::serve_spec_infer(FFModel *llm) {
     FutureMap fm = im->inference(llm, 0, bcf);
     infer_result_future_pipeline.push(fm.get_future(0));
     runtime->end_trace(ctx, 12345 /*trace_id*/);
+    std::cout << "Trace 12345 ends." << std::endl;
   }
 }
 
@@ -3026,6 +3039,13 @@ void RequestManager::trigger_request_completion_future(
 void RequestManager::terminate_background_server_at_exit() {
   RequestManager *rm = RequestManager::get_request_manager();
   rm->terminate_background_server();
+  std::cout << "Background server terminated." << std::endl;
+}
+
+std::string format_float(double value, int precision = 2) {
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(precision) << value;
+  return oss.str();
 }
 
 void RequestManager::terminate_background_server() {
@@ -3067,17 +3087,18 @@ void RequestManager::terminate_background_server() {
       str += std::to_string(request.decode_length());
       float speedup = (float)request.decode_length() /
                       profiling_info.second.llm_decoding_steps;
-      str += " " + std::to_string(speedup) + "\n";
+      str += "\t" + format_float(speedup) + "\t";
+      str += "(SLO: " + format_float(request.slo_ratio) + ")\n";
     }
-    str += "\n total_time_ms(" + std::to_string(total_time / 1000.0) + ")";
+    str += "\n total_time_ms(" + format_float(total_time / 1000.0) + ")";
     str += "\n total_requests(" + std::to_string(total_requests) + "/" +
            std::to_string(all_requests.size()) + ")";
     str += "\n total_tokens(" + std::to_string(total_tokens) + ")";
     // throughput
     str += "\n throughput_requests_per_sec(" +
-           std::to_string(total_requests / (total_time / 1e6)) + ")";
+           format_float(total_requests / (total_time / 1e6)) + ")";
     str += "\n throughput_tokens_per_sec(" +
-           std::to_string(total_tokens / (total_time / 1e6)) + ")";
+           format_float(total_tokens / (total_time / 1e6)) + ")";
 
     double average_latency_per_request = 0;
     std::string latency_per_request_ms = "\n latency_per_request_ms( ";
@@ -3088,7 +3109,7 @@ void RequestManager::terminate_background_server() {
       // latency_per_request_ms += "[" + std::to_string(profiling_info.first)
       // +
       // ","; latency_per_request_ms += std::to_string(latency_ms) + "] ";
-      latency_per_request_ms += std::to_string(latency_ms) + " ";
+      latency_per_request_ms += format_float(latency_ms) + " ";
       average_latency_per_request += latency_ms;
     }
     latency_per_request_ms += ")";
@@ -3096,7 +3117,7 @@ void RequestManager::terminate_background_server() {
 
     average_latency_per_request /= total_requests;
     str += "\n average_latency_per_request_ms(" +
-           std::to_string(average_latency_per_request) + ")";
+           format_float(average_latency_per_request) + ")";
 
     std::string ttft_per_request_ms = "\n ttft_per_request_ms( ";
     for (auto const &profiling_info : profiling_requests) {
@@ -3109,7 +3130,7 @@ void RequestManager::terminate_background_server() {
         prefilling_time_ms =
             (profiling.finish_time - profiling.start_time) / 1000.0;
       }
-      ttft_per_request_ms += std::to_string(prefilling_time_ms) + " ";
+      ttft_per_request_ms += format_float(prefilling_time_ms) + " ";
     }
     ttft_per_request_ms += ")";
     str += ttft_per_request_ms;
@@ -3125,7 +3146,7 @@ void RequestManager::terminate_background_server() {
             (profiling.finish_time - profiling.start_decoding_time) / 1000.0 /
             request.decode_length();
       }
-      tpot_per_request_ms += std::to_string(per_token_time_ms) + " ";
+      tpot_per_request_ms += format_float(per_token_time_ms, 3) + " ";
       auto &tpot = tpots[request.slo_ratio];
       tpot.first++;
       tpot.second += per_token_time_ms;
@@ -3137,7 +3158,7 @@ void RequestManager::terminate_background_server() {
     for (auto const &kv : tpots) {
       double average_tpot = kv.second.second / kv.second.first;
       average_tpot_per_slo_ms +=
-          std::to_string(kv.first) + ":" + std::to_string(average_tpot) + " ";
+          format_float(kv.first) + ":" + format_float(average_tpot, 3) + " ";
     }
     average_tpot_per_slo_ms += ")";
     str += average_tpot_per_slo_ms;
@@ -3163,9 +3184,9 @@ void RequestManager::terminate_background_server() {
       double slo_ratio = kv.first;
       std::vector<double> const &tpot_values = kv.second;
 
-      all_tpots_by_slo += std::to_string(slo_ratio) + ":[";
+      all_tpots_by_slo += format_float(slo_ratio) + ":[";
       for (size_t i = 0; i < tpot_values.size(); ++i) {
-        all_tpots_by_slo += std::to_string(tpot_values[i]);
+        all_tpots_by_slo += format_float(tpot_values[i], 3);
         if (i < tpot_values.size() - 1) {
           all_tpots_by_slo += ",";
         }
@@ -3175,7 +3196,7 @@ void RequestManager::terminate_background_server() {
     all_tpots_by_slo += ")";
     str += all_tpots_by_slo;
 
-    std::string req_per_step = "\n requests_per_step( ";
+    std::string req_per_step = "\nrequests_per_step( ";
     for (int nb : profiling.requests_per_step) {
       req_per_step += std::to_string(nb) + " ";
     }
@@ -3185,16 +3206,16 @@ void RequestManager::terminate_background_server() {
     if (profiling.ssm_step_times.size() > 0) {
       // assert(profiling.ssm_step_times.size() ==
       //        profiling.llm_step_times.size());
-      std::string ssm_step_times_ms = "\n ssm_step_times_ms( ";
+      std::string ssm_step_times_ms = "\nssm_step_times_ms( ";
       for (double time : profiling.ssm_step_times) {
-        ssm_step_times_ms += std::to_string(time) + " ";
+        ssm_step_times_ms += format_float(time, 3) + " ";
       }
       ssm_step_times_ms += ")";
       str += ssm_step_times_ms;
     }
 
     if (profiling.ssm_steps.size() > 0) {
-      std::string ssm_steps = "\n ssm_steps( ";
+      std::string ssm_steps = "\nssm_steps( ";
       for (int nb : profiling.ssm_steps) {
         ssm_steps += std::to_string(nb) + " ";
       }
@@ -3202,14 +3223,14 @@ void RequestManager::terminate_background_server() {
       str += ssm_steps;
     }
 
-    std::string llm_step_times_ms = "\n llm_step_times_ms( ";
+    std::string llm_step_times_ms = "\nllm_step_times_ms( ";
     for (double time : profiling.llm_step_times) {
-      llm_step_times_ms += std::to_string(time) + " ";
+      llm_step_times_ms += format_float(time, 3) + " ";
     }
     llm_step_times_ms += ")";
     str += llm_step_times_ms;
 
-    std::string generated_tokens_per_step = "\n generated_tokens_per_step( ";
+    std::string generated_tokens_per_step = "\ngenerated_tokens_per_step( ";
     for (int nb : profiling.generated_tokens_per_step) {
       generated_tokens_per_step += std::to_string(nb) + " ";
     }
@@ -3217,7 +3238,7 @@ void RequestManager::terminate_background_server() {
     str += generated_tokens_per_step;
 
     std::string tokens_in_verification_per_step =
-        "\n tokens_in_verification_per_step( ";
+        "\ntokens_in_verification_per_step( ";
     for (int nb : profiling.tokens_in_verification_per_step) {
       tokens_in_verification_per_step += std::to_string(nb) + " ";
     }
@@ -3240,7 +3261,7 @@ void RequestManager::terminate_background_server() {
 
     // Calculate and output average llm_step_times for each group
     std::string avg_llm_time_by_verification_tokens =
-        "\n avg_llm_time_by_verification_tokens( ";
+        "\navg_llm_time_by_verification_tokens(";
     for (auto const &group : llm_times_by_verification_tokens) {
       int tokens = group.first;
       std::vector<double> const &times = group.second;
@@ -3254,7 +3275,7 @@ void RequestManager::terminate_background_server() {
 
       // Add to output string
       avg_llm_time_by_verification_tokens +=
-          std::to_string(tokens) + ":" + std::to_string(avg_time) + "\n";
+          std::to_string(tokens) + ":" + format_float(avg_time) + " ";
     }
     avg_llm_time_by_verification_tokens += ")";
     str += avg_llm_time_by_verification_tokens;
@@ -3277,7 +3298,7 @@ void RequestManager::terminate_background_server() {
 
     // Calculate and output average verification throughput for each group
     std::string avg_verification_throughput =
-        "\n avg_verification_throughput_tokens_per_s( ";
+        "\navg_verification_throughput_tokens_per_s(";
     for (auto const &group : verification_throughput_by_tokens) {
       int tokens = group.first;
       std::vector<double> const &throughputs = group.second;
@@ -3292,7 +3313,7 @@ void RequestManager::terminate_background_server() {
 
       // Add to output string
       avg_verification_throughput +=
-          std::to_string(tokens) + ":" + std::to_string(avg_throughput) + "\n";
+          std::to_string(tokens) + ":" + format_float(avg_throughput) + " ";
     }
     avg_verification_throughput += ")";
     str += avg_verification_throughput;
@@ -3312,7 +3333,7 @@ void RequestManager::terminate_background_server() {
     // Calculate and output average generated tokens for each verification token
     // group
     std::string avg_generated_tokens_by_verification =
-        "\n avg_generated_tokens_by_verification( ";
+        "\navg_generated_tokens_by_verification( ";
     for (auto const &group : generated_tokens_by_verification_tokens) {
       int verification_tokens = group.first;
       std::vector<int> const &generated_tokens = group.second;
@@ -3328,8 +3349,8 @@ void RequestManager::terminate_background_server() {
 
       // Add to output string
       avg_generated_tokens_by_verification +=
-          std::to_string(verification_tokens) + ":" +
-          std::to_string(avg_tokens) + " ";
+          std::to_string(verification_tokens) + ":" + format_float(avg_tokens) +
+          " ";
     }
     avg_generated_tokens_by_verification += ")";
     str += avg_generated_tokens_by_verification;
@@ -3337,7 +3358,7 @@ void RequestManager::terminate_background_server() {
     // Calculate generation throughput (average generated tokens / average llm
     // step time) for each verification token group
     std::string generation_throughput_by_verification =
-        "\n generation_throughput_tokens_per_s( ";
+        "\ngeneration_throughput_tokens_per_s(";
     for (auto const &group : generated_tokens_by_verification_tokens) {
       int verification_tokens = group.first;
       std::vector<int> const &generated_tokens = group.second;
@@ -3366,14 +3387,14 @@ void RequestManager::terminate_background_server() {
         // Add to output string
         generation_throughput_by_verification +=
             std::to_string(verification_tokens) + ":" +
-            std::to_string(throughput) + "\n";
+            format_float(throughput) + " ";
       }
     }
     generation_throughput_by_verification += ")";
     str += generation_throughput_by_verification;
 
     std::string mean_generated_tokens_per_step =
-        "\n mean_generated_tokens_per_step( ";
+        "\nmean_generated_tokens_per_step(";
     double mean_generated_tokens =
         (double)std::accumulate(profiling.generated_tokens_per_step.begin(),
                                 profiling.generated_tokens_per_step.end(),
@@ -3383,9 +3404,56 @@ void RequestManager::terminate_background_server() {
                                 profiling.requests_per_step.end(),
                                 0);
     mean_generated_tokens /= total_request_steps;
-    mean_generated_tokens_per_step += std::to_string(mean_generated_tokens);
+    mean_generated_tokens_per_step += format_float(mean_generated_tokens);
     mean_generated_tokens_per_step += ")";
     str += mean_generated_tokens_per_step;
+
+    // Compute SLO attainment by SLO scale
+    std::unordered_map<double, std::pair<int, int>>
+        attainment_by_slo; // pair<attained_count, total_count>
+
+    // Count attained vs total requests for each SLO ratio
+    for (auto const &request_pair : all_requests) {
+      int request_id = request_pair.first;
+      Request const &request = request_pair.second;
+
+      // Skip requests that aren't completed
+      if (request.status == Request::COMPLETED) {
+        // Initialize the entry if needed
+        if (attainment_by_slo.find(request.slo_ratio) ==
+            attainment_by_slo.end()) {
+          attainment_by_slo[request.slo_ratio] = std::make_pair(0, 0);
+        }
+
+        // Increment total count for this SLO ratio
+        attainment_by_slo[request.slo_ratio].second++;
+
+        // Increment attained count if SLO was met
+        if (request.attained) {
+          attainment_by_slo[request.slo_ratio].first++;
+        }
+      }
+    }
+
+    // Format and output attainment percentages by SLO ratio
+    std::string slo_attainment_by_scale = "\nslo_attainment_by_scale(";
+    for (auto const &kv : attainment_by_slo) {
+      double slo_ratio = kv.first;
+      int attained_count = kv.second.first;
+      int total_count = kv.second.second;
+
+      // Calculate attainment percentage
+      double attainment_pct =
+          (total_count > 0) ? (double)attained_count / total_count : 0.0;
+
+      // Add to output string with format: slo_ratio:attainment(attained/total)
+      slo_attainment_by_scale += format_float(slo_ratio) + " : " +
+                                 format_float(attainment_pct * 100) + "% (" +
+                                 std::to_string(attained_count) + "/" +
+                                 std::to_string(total_count) + ") ";
+    }
+    slo_attainment_by_scale += ")";
+    str += slo_attainment_by_scale;
 
     double attainment = 0, goodput = 0;
     for (auto request_pair : all_requests) {
@@ -3398,20 +3466,20 @@ void RequestManager::terminate_background_server() {
     attainment /= total_requests;
     goodput /= total_time / 1e6;
 
-    std::string slo_attainment = "\n slo_attainment( ";
-    slo_attainment += std::to_string(attainment);
-    slo_attainment += ")";
+    std::string slo_attainment = "\nslo_attainment(";
+    slo_attainment += format_float(attainment * 100);
+    slo_attainment += "%)";
     str += slo_attainment;
 
-    std::string goodput_str = "\n goodput( ";
-    goodput_str += std::to_string(goodput);
+    std::string goodput_str = "\ngoodput(";
+    goodput_str += format_float(goodput);
     goodput_str += ")";
     str += goodput_str;
 
     if (get_eval_overhead_breakdown()) {
       eval_process_latency_us -=
           eval_schedule_latency_us + eval_other_latency_us;
-      std::string eval_overhead_breakdown_str = "\n eval_overhead_breakdown( ";
+      std::string eval_overhead_breakdown_str = "\neval_overhead_breakdown( ";
       eval_overhead_breakdown_str +=
           "\n  ssm_prefill_us: " + std::to_string(eval_ssm_prefill_latency_us);
       eval_overhead_breakdown_str +=
