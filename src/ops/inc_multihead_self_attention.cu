@@ -64,6 +64,9 @@ void incr_attention(IncMultiHeadSelfAttentionMeta *m,
   uint32_t const num_kv_heads = m->num_kv_heads;
   uint32_t const head_dim = m->qk_dim;
   uint32_t const batch_size = bc->num_active_requests();
+  if (batch_size == 0) {
+    return;
+  }
   float const sm_scale = (*m->qk_prod_scaling) ? 1.0f / sqrt(m->qk_dim) : 1.0f;
 
   //   cudaEventCreate(&t_start);
@@ -425,7 +428,8 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   hidden_size = _hidden_size;
   qk_dim = _qk_dim;
   v_dim = _v_dim;
-  assert(v_dim == qk_dim && "v_dim must be equal to qk_dim for current implementation");
+  assert(v_dim == qk_dim &&
+         "v_dim must be equal to qk_dim for current implementation");
   o_dim = _o_dim;
   size_t size_of_dt = data_type_size(attn->data_type);
   quantization_type = _quantization_type;
@@ -437,18 +441,21 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   num_q_heads = _num_q_heads;
   num_kv_heads = _num_kv_heads;
   local_hidden_size = num_q_heads * qk_dim;
-  total_heads_dim = (num_q_heads + num_kv_heads) * qk_dim + num_kv_heads * v_dim;
+  total_heads_dim =
+      (num_q_heads + num_kv_heads) * qk_dim + num_kv_heads * v_dim;
 
   weightSize =
-      ((hidden_size * qk_dim + (v_dim > 0 ? v_dim : hidden_size) * o_dim) * num_q_heads +
-       hidden_size * (qk_dim + v_dim) * num_kv_heads) * size_of_dt;
+      ((hidden_size * qk_dim + (v_dim > 0 ? v_dim : hidden_size) * o_dim) *
+           num_q_heads +
+       hidden_size * (qk_dim + v_dim) * num_kv_heads) *
+      size_of_dt;
   if (quantization_type != DT_NONE) {
     quantized_weightSize = get_quantization_to_byte_size(
         attn->data_type, quantization_type, weightSize);
   }
   // biasSize = _bias ? o_dim * size_of_dt * 4 : 0;
 
-  int qkv_bias_size = qk_dim * num_q_heads + (qk_dim + v_dim) * num_q_heads;
+  int qkv_bias_size = qk_dim * num_q_heads + (qk_dim + v_dim) * num_kv_heads;
   int final_bias_size = o_dim;
   biasSize =
       (_qkv_bias ? qkv_bias_size : 0) + (final_bias ? final_bias_size : 0);

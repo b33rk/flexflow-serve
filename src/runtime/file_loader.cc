@@ -100,63 +100,54 @@ void load_attention_bias_v2(DT *ptr,
 
   int file_index = 0;
 
-  // now only opt use this.
-  // assert(num_heads == num_kv_heads);
   int idx = 0;
+  size_t q_dim = num_heads * head_dim;
+  size_t kv_dim = num_kv_heads * head_dim;
+  size_t o_dim = hidden_dim;
 
   for (auto filename : bias_files) {
     std::cout << "Loading weight file " << filename << std::endl;
     std::string weight_filepath = join_path({weights_folder, filename});
 
-    int n_heads = file_index == 0 ? num_heads : num_kv_heads;
+    size_t bias_size = 0;
+    switch (file_index) {
+      case 0:
+        bias_size = q_dim;
+        break;
+      case 1:
+      case 2:
+        bias_size = kv_dim;
+        break;
+      case 3:
+        bias_size = o_dim;
+        break;
+      default:
+        std::cout << "file index is " << file_index << std::endl;
+        assert(false && "file index out of range");
+    }
 
-    int replicate_num = num_heads / num_kv_heads;
-
-    size_t qkv_partial_size = head_dim * n_heads;
-    size_t qkv_replicate_size = head_dim * num_heads;
-    size_t out_partial_size = hidden_dim;
-    size_t partial_size =
-        (file_index < 3) ? qkv_partial_size : out_partial_size;
     std::ifstream in(weight_filepath, std::ios::in | std::ios::binary);
     assert(in.good() && "incorrect bias file path");
-    std::vector<DT> host_array(partial_size);
-    size_t loaded_data_size = sizeof(DT) * partial_size;
+    std::vector<DT> host_array(bias_size);
+    size_t loaded_data_size = sizeof(DT) * bias_size;
     in.seekg(0, in.end);
     in.seekg(0, in.beg);
     in.read((char *)host_array.data(), loaded_data_size);
     size_t in_get_size = in.gcount();
 
     if (in_get_size != loaded_data_size) {
-      printf(
-          "load bias data error: in_get_size (%lu) != loaded_data_size (%lu)\n",
-          in_get_size,
-          loaded_data_size);
+      std::cout << "load bias data error" << std::endl;
+      std::cout << "in_get_size: " << in_get_size << std::endl;
+      std::cout << "loaded_data_size: " << loaded_data_size << std::endl;
       assert(false);
     }
-    assert(partial_size == host_array.size());
-
-    size_t data_index = 0;
-
-    // q, o
-    if (file_index == 0 || file_index == 3) {
-      for (int i = 0; i < partial_size; i++) {
-        ptr[idx + i] = host_array.at(data_index);
-        data_index++;
-      }
-    } else {
-      // k, v
-      for (int i = 0; i < partial_size; i++) {
-        for (int j = 0; j < replicate_num; j++) {
-          ptr[idx + j * partial_size + i] = host_array.at(data_index);
-        }
-        data_index++;
-      }
-    }
-
-    file_index++;
-    idx += qkv_replicate_size;
-
+    assert(bias_size == host_array.size());
     in.close();
+
+    // Copy the data to the pointer with memcpy
+    memcpy(ptr + idx, host_array.data(), sizeof(DT) * bias_size);
+    idx += bias_size;
+    file_index++;
   }
 }
 

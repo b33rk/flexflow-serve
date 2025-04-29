@@ -87,34 +87,45 @@ __global__ void apply_proj_bias_qkv(DT *input_ptr,
                                     int v_dim,
                                     int global_num_q_heads,
                                     int num_q_heads,
+                                    int global_num_kv_heads,
+                                    int num_kv_heads,
                                     bool scaling_query,
-                                    float scaling_factor,
-                                    int hidden_size) {
-  CUDA_KERNEL_LOOP(i, num_tokens * hidden_size * QKV_WEIGHT_NUM) {
-    // for simplicity, assume q, k, v is in same shape
-    // 0->q, 1->k, 2->v
-    // int qkv_index = i / (num_tokens * qk_dim) % 3;
+                                    float scaling_factor) {
+  CUDA_KERNEL_LOOP(
+      i,
+      num_tokens * (qk_dim * num_q_heads + (qk_dim + v_dim) * num_kv_heads)) {
 
-    int token_idx = i / (hidden_size * QKV_WEIGHT_NUM);
-    size_t in_token_idx = i - token_idx * hidden_size * QKV_WEIGHT_NUM;
+    size_t proj_dim = (qk_dim * num_q_heads + (qk_dim + v_dim) * num_kv_heads);
+    size_t in_token_idx = i % proj_dim;
 
-    int qkv_index = in_token_idx / hidden_size;
+    size_t local_k_offset = qk_dim * num_q_heads;
+    size_t local_v_offset = local_k_offset + qk_dim * num_kv_heads;
 
-    int proj_size = qkv_index == 0 ? qk_dim : qk_dim;
+    size_t global_k_offset = qk_dim * global_num_q_heads;
+    size_t global_v_offset = global_k_offset + qk_dim * global_num_kv_heads;
 
-    int head_idx =
-        (in_token_idx - qkv_index * num_q_heads * proj_size) / proj_size;
-    int global_head_idx = head_idx + shard_id * num_q_heads;
+    size_t global_q_head_idx = shard_id * num_q_heads + in_token_idx / qk_dim;
+    size_t global_k_head_idx =
+        shard_id * num_kv_heads + (in_token_idx - local_k_offset) / qk_dim;
+    size_t global_v_head_idx =
+        shard_id * num_kv_heads + (in_token_idx - local_v_offset) / v_dim;
 
-    size_t pre_length =
+    size_t q_head_offset = in_token_idx % qk_dim;
+    size_t k_head_offset = (in_token_idx - local_k_offset) % qk_dim;
+    size_t v_head_offset = (in_token_idx - local_v_offset) % v_dim;
+
+    size_t qkv_index = in_token_idx < local_k_offset
+                           ? 0
+                           : (in_token_idx < local_v_offset ? 1 : 2);
+
+    input_ptr[i] +=
         qkv_index == 0
-            ? 0
-            : (qkv_index == 1 ? qk_dim * global_num_q_heads
-                              : qk_dim * global_num_q_heads * KV_WEIGHT_NUM);
-
-    size_t bias_idx = pre_length + global_head_idx * proj_size + i % proj_size;
-
-    input_ptr[i] += bias_ptr[bias_idx];
+            ? bias_ptr[global_q_head_idx * qk_dim + q_head_offset]
+            : (qkv_index == 1
+                   ? bias_ptr[global_k_offset + global_k_head_idx * qk_dim +
+                              k_head_offset]
+                   : bias_ptr[global_v_offset + global_v_head_idx * v_dim +
+                              v_head_offset]);
 
     if (scaling_query && qkv_index == 0) {
       input_ptr[i] *= scaling_factor;
@@ -130,8 +141,7 @@ __global__ void scaling_query_kernel(DT *input_ptr,
                                      int total_heads_dim) {
   CUDA_KERNEL_LOOP(i, num_tokens * q_heads_dim) {
     int token_idx = i / q_heads_dim;
-    input_ptr[i % q_heads_dim + token_idx * total_heads_dim] *=
-        scaling_factor;
+    input_ptr[i % q_heads_dim + token_idx * total_heads_dim] *= scaling_factor;
   }
 }
 
@@ -204,8 +214,8 @@ void compute_qkv(IncMultiHeadSelfAttentionMeta const *m,
 
   // Step 2: apply bias for QKV, or scale the query
   if (*m->qkv_bias) {
-    assert(false && "TODO not resolved");
-    // TODO: bias, change QKV_WEIGHT_NUM to q_heads+k_heads+v_heads
+    parallelism = num_tokens * (m->qk_dim * m->num_q_heads +
+                                (m->qk_dim + m->v_dim) * m->num_kv_heads);
     apply_proj_bias_qkv<<<GET_BLOCKS(parallelism),
                           min(CUDA_NUM_THREADS, parallelism),
                           0,
@@ -217,10 +227,11 @@ void compute_qkv(IncMultiHeadSelfAttentionMeta const *m,
                                     m->v_dim,
                                     m->global_num_q_heads,
                                     m->num_q_heads,
+                                    m->global_num_kv_heads,
+                                    m->num_kv_heads,
                                     *m->scaling_query,
-                                    m->scaling_factor,
-                                    m->local_hidden_size);
-  } else if (m->scaling_query) {
+                                    m->scaling_factor);
+  } else if (*m->scaling_query) {
     scaling_query_kernel<<<GET_BLOCKS(parallelism),
                            min(CUDA_NUM_THREADS, parallelism),
                            0,
@@ -258,7 +269,9 @@ __global__ void apply_pos_encoding_to_tokens_in_batch_kernel(
     }
     int head_idx = idx / (qk_dim / 2);
     idx = idx % (qk_dim / 2);
-    int real_part_index = token_idx * total_heads_dim + (q_tensor ? 0 : q_heads_dim) + head_idx * qk_dim + idx;
+    int real_part_index = token_idx * total_heads_dim +
+                          (q_tensor ? 0 : q_heads_dim) + head_idx * qk_dim +
+                          idx;
     int complex_part_index = real_part_index + qk_dim / 2;
 
     cuFloatComplex cii = {input_ptr[real_part_index],
@@ -494,9 +507,8 @@ __global__ void
     // key and value cache should be stored interleaved
     kvCache_ptr[to_k_idx + offset] =
         static_cast<half>(qkv_proj_array[from_idx + q_heads_dim + offset]);
-    kvCache_ptr[to_v_idx + offset] =
-        static_cast<half>(qkv_proj_array[from_idx + q_heads_dim +
-                                         kv_heads_dim + offset]);
+    kvCache_ptr[to_v_idx + offset] = static_cast<half>(
+        qkv_proj_array[from_idx + q_heads_dim + kv_heads_dim + offset]);
   }
 }
 
@@ -685,9 +697,8 @@ __global__ void
 
   pre_pos_enc_buf[to_k_idx + offset] =
       static_cast<half>(qkv_proj_array[from_idx + q_heads_dim + offset]);
-  pre_pos_enc_buf[to_v_idx + offset] =
-      static_cast<half>(qkv_proj_array[from_idx + q_heads_dim +
-                                       kv_heads_dim + offset]);
+  pre_pos_enc_buf[to_v_idx + offset] = static_cast<half>(
+      qkv_proj_array[from_idx + q_heads_dim + kv_heads_dim + offset]);
 }
 
 template <typename DT>

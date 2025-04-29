@@ -306,10 +306,14 @@ void FlexFlow::top_level_task(Task const *task,
                                   /*ignore_comments */ true);
   ModelType model_type = ModelType::UNKNOWN;
   auto architectures = model_config["architectures"];
+  bool qwen = false;
   for (auto const &str : architectures) {
     if (str == "LlamaForCausalLM" || str == "LLaMAForCausalLM" ||
-        str == "MistralForCausalLM") {
+        str == "MistralForCausalLM" || str == "Qwen2ForCausalLM") {
       model_type = ModelType::LLAMA;
+      if (str == "Qwen2ForCausalLM") {
+        qwen = true;
+      }
       break;
     } else if (str == "OPTForCausalLM") {
       model_type = ModelType::OPT;
@@ -361,8 +365,8 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_baseline_latency(baseline_latency_ms);
   rm->set_ssm_spec_latency(ssm_spec_latency_ms);
   rm->set_llm_verify_latency(llm_verify_latency_ms);
-  rm->set_max_tree_depth(8);
-  rm->set_max_tree_width(16);
+  rm->set_max_tree_depth(2);
+  rm->set_max_tree_width(2);
   rm->set_verbose(verbose);
   rm->set_streaming_cache(streaming_cache);
   rm->set_fcfs_slo(fcfs_slo);
@@ -379,7 +383,8 @@ void FlexFlow::top_level_task(Task const *task,
                               INC_DECODING_MODE,
                               generationConfig,
                               streaming_cache,
-                              use_full_precision);
+                              use_full_precision,
+                              /*qkv_bias*/ qwen);
   } else if (model_type == ModelType::OPT) {
     OPT::create_opt_model(model,
                           config_filepath,

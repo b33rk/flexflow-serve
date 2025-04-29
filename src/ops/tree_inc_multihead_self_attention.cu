@@ -152,6 +152,9 @@ void tree_verify_attention(TreeIncMultiHeadSelfAttentionMeta *m,
   uint32_t const num_kv_heads = m->num_kv_heads;
   uint32_t const head_dim = m->qk_dim;
   uint32_t const batch_size = bc->num_active_requests();
+  if (batch_size == 0) {
+    return;
+  }
   float const sm_scale = (*m->qk_prod_scaling) ? 1.0f / sqrt(m->qk_dim) : 1.0f;
 
   //   cudaEventCreate(&t_start);

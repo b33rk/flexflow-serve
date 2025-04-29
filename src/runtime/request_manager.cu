@@ -389,8 +389,8 @@ void RequestManager::load_batch_config_task(
       }
 
       // prepare attention forward handler
-      {
-        int batch_size = batch_config->num_active_requests();
+      int batch_size = batch_config->num_active_requests();
+      if (batch_size != 0) {
         static int32_t q_indptr_h[BatchConfig::MAX_NUM_REQUESTS + 1],
             kv_indptr_h[BatchConfig::MAX_NUM_REQUESTS + 1],
             kv_last_page_len_h[BatchConfig::MAX_NUM_REQUESTS];
@@ -538,8 +538,8 @@ void RequestManager::load_batch_config_task(
       }
 
       // prepare attention forward handler
-      {
-        int batch_size = batch_config->num_active_requests();
+      int batch_size = batch_config->num_active_requests();
+      if (batch_size != 0) {
         BatchPrefillHandler *handler = nullptr;
 
         if (!batch_config->prompt_phase) {
@@ -660,8 +660,8 @@ void RequestManager::load_batch_config_task(
       }
 
       // prepare attention forward handler
-      {
-        int batch_size = batch_config->num_active_requests();
+      int batch_size = batch_config->num_active_requests();
+      if (batch_size != 0) {
         BatchPrefillHandler *handler = nullptr;
 
         if (!batch_config->prompt_phase) {

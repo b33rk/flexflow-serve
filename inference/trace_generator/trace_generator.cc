@@ -213,7 +213,7 @@ void get_model_meta(FilePaths &file_paths,
   auto architectures = llm_model_config["architectures"];
   for (auto const &str : architectures) {
     if (str == "LlamaForCausalLM" || str == "LLaMAForCausalLM" ||
-        str == "MistralForCausalLM") {
+        str == "MistralForCausalLM" || str == "Qwen2ForCausalLM") {
       model_metadata.llm_model_type = ModelType::LLAMA;
       break;
     } else if (str == "OPTForCausalLM") {
@@ -275,7 +275,7 @@ void get_model_meta(FilePaths &file_paths,
     auto architectures = ssm_model_config["architectures"];
     for (auto const &str : architectures) {
       if (str == "LlamaForCausalLM" || str == "LLaMAForCausalLM" ||
-          str == "MistralForCausalLM") {
+          str == "MistralForCausalLM" || str == "Qwen2ForCausalLM") {
         ssm_model_type = ModelType::LLAMA;
         break;
       } else if (str == "OPTForCausalLM") {
@@ -336,8 +336,6 @@ void FlexFlow::top_level_task(Task const *task,
   int max_tokens_per_ssm_batch = -1;
   int max_tokens_per_prefilling_batch = -1;
   int expansion_degree = 3;
-  int max_tree_depth = 8;
-  int max_tree_width = 16;
   RequestManager::DecodingMode decoding_mode =
       RequestManager::SPECULATIVE_DECODING;
   bool spec_sampling = false;
@@ -405,8 +403,8 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_tokens_per_prefilling_batch(max_tokens_per_prefilling_batch);
   rm->set_max_sequence_length(max_sequence_length);
   rm->set_max_output_length(max_output_length);
-  rm->set_max_tree_depth(max_tree_depth);
-  rm->set_max_tree_width(max_tree_width);
+  rm->set_max_tree_depth(2);
+  rm->set_max_tree_width(2);
   rm->set_verbose(verbose);
   rm->set_streaming_cache(streaming_cache);
   rm->register_tokenizer(model_metadata.llm_model_type,

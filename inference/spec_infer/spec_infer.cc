@@ -55,6 +55,8 @@ struct ModelMeta {
   std::vector<ModelType> ssm_model_types;
   std::vector<std::string> ssm_model_config_paths;
   std::vector<std::string> ssm_model_weights_paths;
+
+  bool qkv_bias = false;
 };
 
 void parse_input_args(char **argv,
@@ -288,8 +290,11 @@ void get_model_meta(FilePaths &file_paths,
   auto architectures = llm_model_config["architectures"];
   for (auto const &str : architectures) {
     if (str == "LlamaForCausalLM" || str == "LLaMAForCausalLM" ||
-        str == "MistralForCausalLM") {
+        str == "MistralForCausalLM" || str == "Qwen2ForCausalLM") {
       model_metadata.llm_model_type = ModelType::LLAMA;
+      if (str == "Qwen2ForCausalLM") {
+        model_metadata.qkv_bias = true;
+      }
       break;
     } else if (str == "OPTForCausalLM") {
       model_metadata.llm_model_type = ModelType::OPT;
@@ -350,7 +355,7 @@ void get_model_meta(FilePaths &file_paths,
     auto architectures = ssm_model_config["architectures"];
     for (auto const &str : architectures) {
       if (str == "LlamaForCausalLM" || str == "LLaMAForCausalLM" ||
-          str == "MistralForCausalLM") {
+          str == "MistralForCausalLM" || str == "Qwen2ForCausalLM") {
         ssm_model_type = ModelType::LLAMA;
         break;
       } else if (str == "OPTForCausalLM") {
@@ -525,7 +530,8 @@ void FlexFlow::top_level_task(Task const *task,
                               TREE_VERIFY_MODE,
                               generationConfig,
                               false,
-                              use_full_precision);
+                              use_full_precision,
+                              /*qkv_bias*/ model_metadata.qkv_bias);
   } else if (model_metadata.llm_model_type == ModelType::OPT) {
     OPT::create_opt_model(tree_model,
                           model_metadata.llm_model_config_path,
@@ -574,7 +580,8 @@ void FlexFlow::top_level_task(Task const *task,
                                 TREE_SEARCH_MODE,
                                 generationConfig,
                                 streaming_cache,
-                                use_full_precision);
+                                use_full_precision,
+                                /*qkv_bias*/ model_metadata.qkv_bias);
     } else if (model_metadata.ssm_model_types[ssm_id] == ModelType::OPT) {
       OPT::create_opt_model(beam_model,
                             model_metadata.ssm_model_config_paths[ssm_id],
