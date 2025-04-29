@@ -274,6 +274,7 @@ struct ProfileInfo {
   // To calculate the E2E time of serving
   long long server_start_time = 0;
   long long server_end_time = 0;
+  int prefilling_steps = 0;
 };
 
 class RequestManager {
@@ -589,6 +590,7 @@ private:
   void prune_token_tree_greedy();
   void add_tokens_toward_slo(RequestGuid guid,
                              int &budget,
+                             double num_tokens_to_decode,
                              int num_req_with_slo);
   void add_tokens_toward_memory_occupancy(int budget);
   void add_tokens_toward_goodput(int budget);

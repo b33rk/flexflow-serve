@@ -150,8 +150,9 @@ void inference_kernel_wrapper(Context ctx,
       tensorrt_llm::SelectImplementation(
           num_elements * ((get_bits(dtype) + 7) / 8), num_devices);
 
-  if (strategy == tensorrt_llm::AllReduceStrategyType::RING ||
-      !CanApplyCustomAllReduce(num_elements, dtype)) {
+  //   if (strategy == tensorrt_llm::AllReduceStrategyType::RING ||
+  //       !CanApplyCustomAllReduce(num_elements, dtype)) {
+  if (true) {
     // Dispatch to nccl AllReduce if the customized all-reduce cannot apply.
     ncclDataType_t nccl_data_type = ff_to_nccl_datatype(dtype);
     runtime->concurrent_task_barrier(ctx);

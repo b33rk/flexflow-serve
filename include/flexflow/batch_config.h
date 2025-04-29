@@ -88,7 +88,7 @@ public:
   // Maximum possible values for different parameters
   // These maximum values are used for copying BatchConfig
   // across workers
-  inline static int const MAX_NUM_REQUESTS = 64;
+  inline static int const MAX_NUM_REQUESTS = 96;
   inline static int const MAX_NUM_TOKENS = 1024;
   inline static int const MAX_SPECULATIVE_TREE_BRANCHES = 8;
   inline static int const MAX_TREE_DEPTH = 10;

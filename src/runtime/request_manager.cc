@@ -1347,6 +1347,11 @@ BatchConfig RequestManager::prepare_llm_prefilling_batch() {
   }
   bc.num_tokens = num_tokens;
 
+  // Debug
+  std::cout << "[Debug] RequestManager::prepare_llm_prefilling_batch: "
+            << "num_tokens: " << num_tokens << std::endl;
+  profiling.prefilling_steps++;
+
   if (verbose) {
     std::cout << "prepare_llm_prefilling_batch NEW batchconfig:" << std::endl;
     bc.print();
@@ -2934,12 +2939,13 @@ void RequestManager::serve_spec_infer(FFModel *llm) {
   // reset_profiling_statistics();
   background_server_status = SERVING;
   while (!is_background_server_terminated()) {
+    // std::cout << "[Debug] Begin blocking." << std::endl;
     if (infer_result_future_pipeline.size() >= 4) {
       // Block here to avoid launching too many batches
       auto const &ir = infer_result_future_pipeline.front();
       ir.get_void_result();
     }
-    std::cout << "End blocking." << std::endl;
+    // std::cout << "[Debug] End blocking." << std::endl;
     // deque finished batches
     while (infer_result_future_pipeline.size() > 1) {
       auto const &ir = infer_result_future_pipeline.front();
@@ -2951,7 +2957,7 @@ void RequestManager::serve_spec_infer(FFModel *llm) {
     }
 
     runtime->begin_trace(ctx, 12345 /*trace_id*/);
-    std::cout << "Trace 12345 starts." << std::endl;
+    // std::cout << "[Debug] Trace 12345 starts." << std::endl;
     for (int ssm_step_i = 0; ssm_step_i < get_max_tree_depth(); ssm_step_i++) {
       InferenceResultFuture irf = infer_result_future_pipeline.back();
       BatchConfigFuture bcf = get_next_batch_config(irf, ctx, runtime);
@@ -2963,7 +2969,7 @@ void RequestManager::serve_spec_infer(FFModel *llm) {
     FutureMap fm = im->inference(llm, 0, bcf);
     infer_result_future_pipeline.push(fm.get_future(0));
     runtime->end_trace(ctx, 12345 /*trace_id*/);
-    std::cout << "Trace 12345 ends." << std::endl;
+    // std::cout << "[Debug] Trace 12345 ends." << std::endl;
   }
 }
 
@@ -3088,7 +3094,11 @@ void RequestManager::terminate_background_server() {
       float speedup = (float)request.decode_length() /
                       profiling_info.second.llm_decoding_steps;
       str += "\t" + format_float(speedup) + "\t";
-      str += "(SLO: " + format_float(request.slo_ratio) + ")\n";
+      str += "(SLO: " + format_float(request.slo_ratio) + ")\t";
+      if (request.attained == false) {
+        str += "(Not Attained)\t";
+      }
+      str += "\n";
     }
     str += "\n total_time_ms(" + format_float(total_time / 1000.0) + ")";
     str += "\n total_requests(" + std::to_string(total_requests) + "/" +
@@ -3130,7 +3140,7 @@ void RequestManager::terminate_background_server() {
         prefilling_time_ms =
             (profiling.finish_time - profiling.start_time) / 1000.0;
       }
-      ttft_per_request_ms += format_float(prefilling_time_ms) + " ";
+      ttft_per_request_ms += format_float(prefilling_time_ms) + "  ";
     }
     ttft_per_request_ms += ")";
     str += ttft_per_request_ms;
@@ -3146,7 +3156,7 @@ void RequestManager::terminate_background_server() {
             (profiling.finish_time - profiling.start_decoding_time) / 1000.0 /
             request.decode_length();
       }
-      tpot_per_request_ms += format_float(per_token_time_ms, 3) + " ";
+      tpot_per_request_ms += format_float(per_token_time_ms, 3) + "\t";
       auto &tpot = tpots[request.slo_ratio];
       tpot.first++;
       tpot.second += per_token_time_ms;
@@ -3158,7 +3168,7 @@ void RequestManager::terminate_background_server() {
     for (auto const &kv : tpots) {
       double average_tpot = kv.second.second / kv.second.first;
       average_tpot_per_slo_ms +=
-          format_float(kv.first) + ":" + format_float(average_tpot, 3) + " ";
+          format_float(kv.first) + ":" + format_float(average_tpot, 3) + "\t";
     }
     average_tpot_per_slo_ms += ")";
     str += average_tpot_per_slo_ms;
@@ -3188,7 +3198,7 @@ void RequestManager::terminate_background_server() {
       for (size_t i = 0; i < tpot_values.size(); ++i) {
         all_tpots_by_slo += format_float(tpot_values[i], 3);
         if (i < tpot_values.size() - 1) {
-          all_tpots_by_slo += ",";
+          all_tpots_by_slo += "\t";
         }
       }
       all_tpots_by_slo += "] ";
@@ -3208,7 +3218,7 @@ void RequestManager::terminate_background_server() {
       //        profiling.llm_step_times.size());
       std::string ssm_step_times_ms = "\nssm_step_times_ms( ";
       for (double time : profiling.ssm_step_times) {
-        ssm_step_times_ms += format_float(time, 3) + " ";
+        ssm_step_times_ms += format_float(time, 3) + "\t";
       }
       ssm_step_times_ms += ")";
       str += ssm_step_times_ms;
@@ -3225,7 +3235,7 @@ void RequestManager::terminate_background_server() {
 
     std::string llm_step_times_ms = "\nllm_step_times_ms( ";
     for (double time : profiling.llm_step_times) {
-      llm_step_times_ms += format_float(time, 3) + " ";
+      llm_step_times_ms += format_float(time, 3) + "  ";
     }
     llm_step_times_ms += ")";
     str += llm_step_times_ms;
@@ -3408,6 +3418,11 @@ void RequestManager::terminate_background_server() {
     mean_generated_tokens_per_step += ")";
     str += mean_generated_tokens_per_step;
 
+    str += "\nPrefilling steps: ";
+    str += std::to_string(profiling.prefilling_steps);
+    str += "\nVerifying steps: ";
+    str += std::to_string(profiling.llm_step_times.size());
+
     // Compute SLO attainment by SLO scale
     std::unordered_map<double, std::pair<int, int>>
         attainment_by_slo; // pair<attained_count, total_count>
@@ -3559,10 +3574,8 @@ void RequestManager::add_tokens_to_spec_token_tree(
   // TODO: parameterize MAX_SPECULATIVE_TREE_BRANCHES
   // TODO: support gumbel sampling
 
-  int tree_width =
-      min(get_max_tokens_per_ssm_batch() / get_num_active_requests(),
-          get_max_tree_width());
-  assert(tree_width >= 1);
+  int remaining_budget = get_max_tokens_per_ssm_batch();
+  int remaining_requests = get_num_active_requests();
 
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
@@ -3602,7 +3615,7 @@ void RequestManager::add_tokens_to_spec_token_tree(
            result_idx++) {
         double log_prob = log((double)ssm_inference_result.probs[result_idx]);
         if (log_prob == -std::numeric_limits<double>::infinity()) {
-          continue;
+          log_prob = -1e10;
         }
         if (log_prob == 0.0) {
           // Slightly perturb the log prob to make it strictly less than 0
@@ -3617,7 +3630,13 @@ void RequestManager::add_tokens_to_spec_token_tree(
     }
 
     spec_token_tree.add_layer();
-    int actual_width = min(tree_width, (int)child_probs_v.size());
+
+    int tree_width_limit =
+        min(remaining_budget / remaining_requests, get_max_tree_width());
+    int actual_width = min(tree_width_limit, (int)child_probs_v.size());
+    remaining_budget -= actual_width;
+    remaining_requests--;
+
     if (actual_width == 0) {
       continue;
     }
@@ -3638,6 +3657,9 @@ void RequestManager::add_tokens_to_spec_token_tree(
           std::make_pair(node_ptr, accumulated_log_prob));
     }
   }
+  std::cout << "[Debug] RequestManager::add_tokens_to_spec_token_tree() added "
+            << get_max_tokens_per_ssm_batch() - remaining_budget << " tokens "
+            << std::endl;
 }
 
 void RequestManager::add_tokens_to_spec_token_tree_old_version(
@@ -3734,6 +3756,8 @@ void RequestManager::prune_token_tree() {
 
   std::vector<std::pair<double, int>> num_tokens_to_decode_2_request_index;
   num_tokens_to_decode_2_request_index.reserve(get_max_requests_per_batch());
+  double ssm_spec_latency_estimated =
+      ssm_spec_latency_ms / get_max_tree_depth() * ssm_tree_depth;
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
@@ -3745,9 +3769,12 @@ void RequestManager::prune_token_tree() {
     if (request.get_slo_ratio() > 999) { // infinity
       continue;
     }
+    // double num_tokens_to_decode_per_step =
+    //     (ssm_spec_latency_ms + llm_verify_latency_ms) * correction_factor /
+    //     get_slo_constraint(request);
     double num_tokens_to_decode_per_step =
-        (ssm_spec_latency_ms + llm_verify_latency_ms) * correction_factor /
-        get_slo_constraint(request);
+        (ssm_spec_latency_estimated + llm_verify_latency_ms) *
+        correction_factor / get_slo_constraint(request);
     double expected_num_tokens_decoded =
         request.decode_latency_ms / get_slo_constraint(request);
     double num_tokens_to_decode =
@@ -3760,20 +3787,27 @@ void RequestManager::prune_token_tree() {
         std::make_pair(num_tokens_to_decode, request_index));
   }
 
-  // Sort the requests by spare latency in ascending order
+  // Sort the requests by number of tokens to decode in descending order
   std::sort(num_tokens_to_decode_2_request_index.begin(),
             num_tokens_to_decode_2_request_index.end(),
-            std::less<std::pair<double, int>>());
+            std::greater<std::pair<double, int>>());
 
-  for (auto const &spare_latency_request_index_pair :
+  // Debug
+  std::cout
+      << "[Debug] RequestManager::prune_token_tree() num of active requests: "
+      << num_tokens_to_decode_2_request_index.size() << std::endl;
+
+  for (auto const &num_tokens_to_decode_request_index_pair :
        num_tokens_to_decode_2_request_index) {
-    int request_index = spare_latency_request_index_pair.second;
+    int request_index = num_tokens_to_decode_request_index_pair.second;
     RequestGuid guid = guid_of_requests[request_index];
-    if (all_requests[guid].get_slo_ratio() < 0) {
-      continue;
-    }
-    add_tokens_toward_slo(
-        guid, budget, num_tokens_to_decode_2_request_index.size());
+    // if (all_requests[guid].get_slo_ratio() < 0) {
+    //   continue;
+    // }
+    add_tokens_toward_slo(guid,
+                          budget,
+                          num_tokens_to_decode_request_index_pair.first,
+                          num_tokens_to_decode_2_request_index.size());
   }
 
   assert(budget >= 0);
@@ -3873,25 +3907,32 @@ void RequestManager::prune_token_tree_greedy() {
 
 void RequestManager::add_tokens_toward_slo(RequestGuid guid,
                                            int &budget,
+                                           double num_tokens_to_decode,
                                            int num_req_with_slo) {
   Request &request = all_requests[guid];
-  double num_tokens_to_decode_per_step =
-      (ssm_spec_latency_ms + llm_verify_latency_ms) * correction_factor /
-      get_slo_constraint(request);
-  double expected_num_tokens_decoded =
-      request.decode_latency_ms / get_slo_constraint(request);
+  //   double num_tokens_to_decode_per_step =
+  //       (ssm_spec_latency_ms + llm_verify_latency_ms) * correction_factor /
+  //       get_slo_constraint(request);
+  //   double expected_num_tokens_decoded =
+  //       request.decode_latency_ms / get_slo_constraint(request);
 
-  double num_tokens_to_decode =
-      max(1.0,
-          num_tokens_to_decode_per_step + expected_num_tokens_decoded -
-              request.decode_length());
-  num_tokens_to_decode = min(num_tokens_to_decode, (double)ssm_tree_depth + 1);
+  //   double num_tokens_to_decode =
+  //       max(1.0,
+  //           num_tokens_to_decode_per_step + expected_num_tokens_decoded -
+  //               request.decode_length());
+  //   num_tokens_to_decode = min(num_tokens_to_decode, (double)ssm_tree_depth +
+  //   1);
 
   // The root is already included
   // In function add_root_to_spec_token_tree
   double current_added = 1.0;
 
-  // The max token that can be added to the token tree when fulfilling the SLO
+  std::cout << "[Debug] Request " << request.guid
+            << " SLO constraint: " << get_slo_constraint(request) << " "
+            << "num_tokens_to_decode: " << num_tokens_to_decode << std::endl;
+
+  // The max token that can be added to the token tree when fulfilling the
+  // SLO
   int max_token_toward_slo =
       int(get_max_tokens_per_batch() * 1.2 / num_available_requests);
 
@@ -3903,8 +3944,14 @@ void RequestManager::add_tokens_toward_slo(RequestGuid guid,
     auto [node_ptr, log_acc_prob] =
         request.token_tree_nodes_acc_prob_pair_pq.top();
     request.token_tree_nodes_acc_prob_pair_pq.pop();
+    double prob = exp(log_acc_prob);
+    if (prob < 8e-2) {
+      break;
+    }
     node_ptr->included = true;
-    current_added += exp(log_acc_prob);
+    current_added += prob;
+    std::cout << "[Debug] added token with prob: " << prob
+              << " current_added: " << current_added << std::endl;
     budget--;
     max_token_toward_slo--;
   }
@@ -4001,6 +4048,15 @@ void RequestManager::add_tokens_toward_goodput(int budget) {
   while (budget > 0 and !global_token_tree_node_pq.empty()) {
     auto [node_ptr, acc_log_prob, guid] = global_token_tree_node_pq.top();
     global_token_tree_node_pq.pop();
+    double prob = exp(acc_log_prob);
+    if (prob < 2e-2 && budget % 32 == 0) {
+      std::cout << "[Debug] prob: " << prob << " is too small, break"
+                << std::endl;
+      break;
+    }
+    // Debug
+    std::cout << "[Debug] added token with prob: " << prob << " toward goodput "
+              << std::endl;
     node_ptr->included = true;
     if (!get_request_with_guid(guid)
              .token_tree_nodes_acc_prob_pair_pq.empty()) {
