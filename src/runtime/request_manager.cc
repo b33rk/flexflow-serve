@@ -353,6 +353,9 @@ void RequestManager::set_chunk_size(int chunk_size_) {
          "Chunked prefill must be enabled to set chunk_size");
   assert(chunk_size_ > 0 and chunk_size_ <= BatchConfig::MAX_NUM_TOKENS and
          "Invalid chunk_size");
+  // Make sure this size is a power of two
+  assert((chunk_size_ & (chunk_size_ - 1)) == 0 and
+         "chunk_size must be a power of two");
   chunk_size = chunk_size_;
 }
 
@@ -366,8 +369,12 @@ void RequestManager::set_spec_batch_size(int spec_batch_size_) {
          "Invalid spec_batch_size");
   assert(spec_batch_size_ <= chunk_size and
          "spec_batch_size must be less than or equal to chunk_size");
+  // Make sure this size is a power of two
+  assert((spec_batch_size_ & (spec_batch_size_ - 1)) == 0 and
+         "spec_batch_size must be a power of two");
   spec_batch_size = spec_batch_size_;
 }
+
 void RequestManager::set_chunked_prefill_buffer_size(
     int chunked_prefill_buffer_size_) {
   assert(decoding_mode == RequestManager::SPECULATIVE_DECODING and
@@ -380,6 +387,10 @@ void RequestManager::set_chunked_prefill_buffer_size(
   assert(chunked_prefill_buffer_size_ <= chunk_size - spec_batch_size and
          "chunked_prefill_buffer_size must be less than or equal to "
          "chunk_size - spec_batch_size");
+  // Make sure this size is a power of two
+  assert((chunked_prefill_buffer_size_ & (chunked_prefill_buffer_size_ - 1)) ==
+             0 and
+         "chunked_prefill_buffer_size must be a power of two");
   chunked_prefill_buffer_size = chunked_prefill_buffer_size_;
 }
 
@@ -898,10 +909,47 @@ bool RequestManager::load_pending_request_to_batch() {
   return true;
 }
 
+/* This function decides how many tokens should be used to do speculation and
+ * how many tokens should be used to do prefilling */
 std::pair<int, int> RequestManager::get_num_tokens_in_batch() {
+  // Only called before LLM verification
+  assert(decoding_mode == SPECULATIVE_DECODING and
+         request_manager_status == LLM_VERIFY);
   int total_num_prefill_tokens = 0;
+  // At this time, none of the requests in prefilling_requests have finished
+  // prefilling
   for (auto const request_ptr : prefilling_requests) {
-    total_num_prefill_tokens += request_ptr->tokens.size();
+    total_num_prefill_tokens +=
+        request_ptr->prompt_len - request_ptr->llm_prefill_len;
+  }
+
+  // No prefilling tokens in the batch, only do speculation
+  if (total_num_prefill_tokens == 0) {
+    return std::make_pair(spec_batch_size, 0);
+  }
+
+  // If the number of tokens in the batch is larger than the maximum number of
+  // tokens we allow for prefill, we form a batch of chunk_size, in which
+  // spec_batch_size tokens are used for speculation and the rest for prefill
+  if (total_num_prefill_tokens > chunk_size - spec_batch_size) {
+    return std::make_pair(spec_batch_size, chunk_size - spec_batch_size);
+  }
+
+  // If the number of tokens in the batch is smaller than the maximum, we round
+  // the total number of tokens to chunked_prefill_buffer_size (a power of 2)
+  // that is greater than spec_batch_size + total_num_prefill_tokens The number
+  // of tokens used for speculation is spec_batch_size +
+  // (chunked_prefill_buffer_size - total_num_prefill_tokens %
+  // chunked_prefill_buffer_size)
+  // The number of tokens used for prefill is total_num_prefill_tokens
+
+  if (total_num_prefill_tokens <= chunked_prefill_buffer_size) {
+    // If the number of tokens in the batch is smaller than the batch size, we
+    // need to do prefill
+    return std::make_pair(spec_batch_size + (chunked_prefill_buffer_size -
+                                             (total_num_prefill_tokens %
+                                              chunked_prefill_buffer_size)),
+                          total_num_prefill_tokens);
   }
 }
 
