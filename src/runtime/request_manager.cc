@@ -347,6 +347,49 @@ void RequestManager::set_stta(bool stta_) {
   stta = stta_;
 }
 
+void RequestManager::set_chunked_prefill(bool chunked_prefill_) {
+  assert(decoding_mode == RequestManager::SPECULATIVE_DECODING and
+         "Chunked prefill is only supported in SPECULATIVE_DECODING mode");
+  chunked_prefill = chunked_prefill_;
+}
+
+void RequestManager::set_chunk_size(int chunk_size_) {
+  assert(decoding_mode == RequestManager::SPECULATIVE_DECODING and
+         "Chunked prefill is only supported in SPECULATIVE_DECODING mode");
+  assert(chunked_prefill == true and
+         "Chunked prefill must be enabled to set chunk_size");
+  assert(chunk_size_ > 0 and chunk_size_ <= BatchConfig::MAX_NUM_TOKENS and
+         "Invalid chunk_size");
+  chunk_size = chunk_size_;
+}
+
+void RequestManager::set_spec_batch_size(int spec_batch_size_) {
+  assert(decoding_mode == RequestManager::SPECULATIVE_DECODING and
+         "Chunked prefill is only supported in SPECULATIVE_DECODING mode");
+  assert(chunked_prefill == true and
+         "Chunked prefill must be enabled to set spec_batch_size");
+  assert(spec_batch_size_ > 0 and
+         spec_batch_size_ <= BatchConfig::MAX_NUM_TOKENS and
+         "Invalid spec_batch_size");
+  assert(spec_batch_size_ <= chunk_size and
+         "spec_batch_size must be less than or equal to chunk_size");
+  spec_batch_size = spec_batch_size_;
+}
+void RequestManager::set_chunked_prefill_buffer_size(
+    int chunked_prefill_buffer_size_) {
+  assert(decoding_mode == RequestManager::SPECULATIVE_DECODING and
+         "Chunked prefill is only supported in SPECULATIVE_DECODING mode");
+  assert(chunked_prefill == true and
+         "Chunked prefill must be enabled to set chunked_prefill_buffer_size");
+  assert(chunked_prefill_buffer_size_ > 0 and
+         chunked_prefill_buffer_size_ <= BatchConfig::MAX_NUM_TOKENS and
+         "Invalid chunked_prefill_buffer_size");
+  assert(chunked_prefill_buffer_size_ <= chunk_size - spec_batch_size and
+         "chunked_prefill_buffer_size must be less than or equal to "
+         "chunk_size - spec_batch_size");
+  chunked_prefill_buffer_size = chunked_prefill_buffer_size_;
+}
+
 bool RequestManager::get_spec_infer_old_version() {
   return spec_infer_old_version;
 }
@@ -365,6 +408,22 @@ bool RequestManager::get_fcfs_slo() {
 
 bool RequestManager::get_stta() {
   return stta;
+}
+
+bool RequestManager::get_chunked_prefill() {
+  return chunked_prefill;
+}
+
+int RequestManager::get_chunk_size() {
+  return chunk_size;
+}
+
+int RequestManager::get_spec_batch_size() {
+  return spec_batch_size;
+}
+
+int RequestManager::get_chunked_prefill_buffer_size() {
+  return chunked_prefill_buffer_size;
 }
 
 void RequestManager::set_eval_overhead_breakdown(

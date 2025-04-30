@@ -335,11 +335,19 @@ public:
   void set_equal_schedule(bool equal_schedule);
   void set_fcfs_slo(bool fcfs_slo);
   void set_stta(bool stta);
+  void set_chunked_prefill(bool chunked_prefill);
+  void set_chunk_size(int chunk_size);
+  void set_spec_batch_size(int spec_batch_size);
+  void set_chunked_prefill_buffer_size(int chunked_prefill_buffer_size);
   bool get_spec_infer_old_version();
   bool get_greedy_schedule();
   bool get_equal_schedule();
   bool get_fcfs_slo();
   bool get_stta();
+  bool get_chunked_prefill();
+  int get_chunk_size();
+  int get_spec_batch_size();
+  int get_chunked_prefill_buffer_size();
   inline double get_slo_constraint(Request &request);
   void set_eval_overhead_breakdown(bool eval_overhead_breakdown);
   bool get_eval_overhead_breakdown();
@@ -441,6 +449,9 @@ private:
   int max_tree_width;
   int k;
   int expansion_degree = 3;
+  int chunk_size = 512;
+  int spec_batch_size = 256;
+  int chunked_prefill_buffer_size = 128;
   // Profile based latency
   double baseline_latency_ms = 43;
   double ssm_spec_latency_ms = 17;
@@ -459,6 +470,7 @@ private:
   bool equal_schedule = false;
   bool fcfs_slo = false;
   bool stta = false;                    // The smallest time to attain policy
+  bool chunked_prefill = false;         // The chunked prefill policy
   bool eval_overhead_breakdown = false; // for evaluation purpose
   double eval_ssm_prefill_latency_us = 0.0;
   double eval_llm_prefill_latency_us = 0.0;
