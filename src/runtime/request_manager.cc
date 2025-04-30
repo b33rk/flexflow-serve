@@ -745,18 +745,35 @@ BatchConfigFuture RequestManager::get_next_batch_config(
   return runtime->execute_task(ctx, launcher);
 }
 
+// BatchConfig RequestManager::get_next_batch_config_task(
+//     Task const *task,
+//     std::vector<PhysicalRegion> const &regions,
+//     Context ctx,
+//     Runtime *runtime) {
+//   RequestManager *rm = *((RequestManager **)task->args);
+//   if (rm->request_manager_status == PREFILLING and rm->prefill_model == SSM
+//   and
+//       rm->current_ssm_step != 0) {
+//     // Return an empty batch config, because we only need on step for SSM
+//     // prefilling, and the rest is placeholder for scheduling
+//     return rm->get_next_batch_config(InferenceResult());
+//   } else if (rm->request_manager_status == SSM_SPEC and rm->ssm_completed) {
+//     return rm->get_next_batch_config(InferenceResult());
+//   }
+
+//   InferenceResult const &result =
+//       Future(task->futures[0]).get_result<InferenceResult>();
+//   return rm->get_next_batch_config(result);
+// }
+
+/* New for chunked prefill */
 BatchConfig RequestManager::get_next_batch_config_task(
     Task const *task,
     std::vector<PhysicalRegion> const &regions,
     Context ctx,
     Runtime *runtime) {
   RequestManager *rm = *((RequestManager **)task->args);
-  if (rm->request_manager_status == PREFILLING and rm->prefill_model == SSM and
-      rm->current_ssm_step != 0) {
-    // Return an empty batch config, because we only need on step for SSM
-    // prefilling, and the rest is placeholder for scheduling
-    return rm->get_next_batch_config(InferenceResult());
-  } else if (rm->request_manager_status == SSM_SPEC and rm->ssm_completed) {
+  if (rm->request_manager_status == SSM_SPEC and rm->ssm_completed) {
     return rm->get_next_batch_config(InferenceResult());
   }
 
@@ -1040,98 +1057,139 @@ void RequestManager::update_token_tree_depth() {
                        get_max_tree_depth());
 }
 
+// void RequestManager::update_inference_results(InferenceResult const &result)
+// {
+//   // Update the inference results
+//   if (num_running_requests == 0) {
+//     // Update nothing
+//     // Load the pending request to the batch
+//     load_pending_request_to_batch();
+//     request_manager_status = PREFILLING;
+//     if (decoding_mode == SPECULATIVE_DECODING) {
+//       prefill_model = SSM;
+//       current_ssm_step = 0;
+//     }
+//     return;
+//   }
+
+//   switch (request_manager_status) {
+//     case PREFILLING:
+//       if (decoding_mode == INCREMENTAL_DECODING) {
+//         // This indicates that the prefilling of the requests finishes
+//         bool all_prefilled = update_llm_prefill_results(result);
+//         // Check if there are more empty slots
+//         if (load_pending_request_to_batch() or !all_prefilled) {
+//           // Load the pending request to the batch
+//           request_manager_status = PREFILLING;
+//         } else {
+//           // No more empty slots, start the decoding
+//           while (!prefilled_requests.empty()) {
+//             Request *request = prefilled_requests.front();
+//             request_load_onto_batch(request->batch_index);
+//             prefilled_requests.pop();
+//           }
+//           request_manager_status = DECODING;
+//         }
+//         // Not completed, continue prefilling
+//       } else if (decoding_mode == SPECULATIVE_DECODING) {
+//         if (prefill_model == SSM) {
+//           // A single iteration contains max_tree_depth SSM steps and a
+//           single
+//           // LLM step. To align with this structure, we have to create
+//           // max_tree_depth - 1 empty SSM steps during the prefilling phase.
+//           if (current_ssm_step == 0) {
+//             update_ssm_prefill_results(result);
+//           }
+//           // Except for the first step, we do nothing.
+//           current_ssm_step++;
+
+//           if (current_ssm_step == get_max_tree_depth()) {
+//             prefill_model = LLM;
+//           }
+//         } else if (prefill_model == LLM) {
+//           // This indicates that the prefilling of the requests finishes
+//           bool all_prefilled = update_llm_prefill_results(result);
+//           if (load_pending_request_to_batch() or !all_prefilled) {
+//             request_manager_status = PREFILLING;
+//             prefill_model = SSM;
+//             current_ssm_step = 0;
+//           } else {
+//             // No more empty slots, start the speculation
+//             while (!prefilled_requests.empty()) {
+//               Request *request = prefilled_requests.front();
+//               request_load_onto_batch(request->batch_index);
+//               prefilled_requests.pop();
+//             }
+//             request_manager_status = SSM_SPEC;
+//             // Reset the prefill_request
+//             current_ssm_step = 0;
+//             ssm_completed = false;
+//           }
+//         } else {
+//           assert(false && "Invalid prefill model.");
+//         }
+//       } else {
+//         assert(false && "Invalid inference mode.");
+//       }
+//       break;
+//     case DECODING: {
+//       bool request_completed = update_llm_decode_results(result);
+//       if (load_pending_request_to_batch()) {
+//         request_manager_status = PREFILLING;
+//       } else {
+//         request_manager_status = DECODING;
+//       }
+//     } break;
+//     case LLM_VERIFY: {
+//       bool request_completed = update_llm_verify_results(result);
+//       if (load_pending_request_to_batch()) {
+//         request_manager_status = PREFILLING;
+//         prefill_model = SSM;
+//         current_ssm_step = 0;
+//       } else {
+//         request_manager_status = SSM_SPEC;
+//         current_ssm_step = 0;
+//         ssm_completed = false;
+//       }
+//     } break;
+//     case SSM_SPEC:
+//       // Update current_ssm_step first because when we first call
+//       // update_ssm_inference_results, there's already a step of small model
+//       // inference
+//       current_ssm_step++;
+//       if (!ssm_completed) {
+//         ssm_completed = update_ssm_inference_results(result);
+//       }
+//       // If the ssm speculation is completed, we do nothing
+
+//       if (current_ssm_step == get_max_tree_depth()) {
+//         request_manager_status = LLM_VERIFY;
+//       }
+//       break;
+//     default:
+//       assert(false && "Invalid request manager status.");
+//   }
+// }
+
+/* New for chunked prefill */
 void RequestManager::update_inference_results(InferenceResult const &result) {
   // Update the inference results
   if (num_running_requests == 0) {
     // Update nothing
     // Load the pending request to the batch
     load_pending_request_to_batch();
-    request_manager_status = PREFILLING;
-    if (decoding_mode == SPECULATIVE_DECODING) {
-      prefill_model = SSM;
-      current_ssm_step = 0;
-    }
+    request_manager_status = SSM_SPEC;
+    current_ssm_step = 0;
     return;
   }
 
   switch (request_manager_status) {
-    case PREFILLING:
-      if (decoding_mode == INCREMENTAL_DECODING) {
-        // This indicates that the prefilling of the requests finishes
-        bool all_prefilled = update_llm_prefill_results(result);
-        // Check if there are more empty slots
-        if (load_pending_request_to_batch() or !all_prefilled) {
-          // Load the pending request to the batch
-          request_manager_status = PREFILLING;
-        } else {
-          // No more empty slots, start the decoding
-          while (!prefilled_requests.empty()) {
-            Request *request = prefilled_requests.front();
-            request_load_onto_batch(request->batch_index);
-            prefilled_requests.pop();
-          }
-          request_manager_status = DECODING;
-        }
-        // Not completed, continue prefilling
-      } else if (decoding_mode == SPECULATIVE_DECODING) {
-        if (prefill_model == SSM) {
-          // A single iteration contains max_tree_depth SSM steps and a single
-          // LLM step. To align with this structure, we have to create
-          // max_tree_depth - 1 empty SSM steps during the prefilling phase.
-          if (current_ssm_step == 0) {
-            update_ssm_prefill_results(result);
-          }
-          // Except for the first step, we do nothing.
-          current_ssm_step++;
-
-          if (current_ssm_step == get_max_tree_depth()) {
-            prefill_model = LLM;
-          }
-        } else if (prefill_model == LLM) {
-          // This indicates that the prefilling of the requests finishes
-          bool all_prefilled = update_llm_prefill_results(result);
-          if (load_pending_request_to_batch() or !all_prefilled) {
-            request_manager_status = PREFILLING;
-            prefill_model = SSM;
-            current_ssm_step = 0;
-          } else {
-            // No more empty slots, start the speculation
-            while (!prefilled_requests.empty()) {
-              Request *request = prefilled_requests.front();
-              request_load_onto_batch(request->batch_index);
-              prefilled_requests.pop();
-            }
-            request_manager_status = SSM_SPEC;
-            // Reset the prefill_request
-            current_ssm_step = 0;
-            ssm_completed = false;
-          }
-        } else {
-          assert(false && "Invalid prefill model.");
-        }
-      } else {
-        assert(false && "Invalid inference mode.");
-      }
-      break;
-    case DECODING: {
-      bool request_completed = update_llm_decode_results(result);
-      if (load_pending_request_to_batch()) {
-        request_manager_status = PREFILLING;
-      } else {
-        request_manager_status = DECODING;
-      }
-    } break;
     case LLM_VERIFY: {
       bool request_completed = update_llm_verify_results(result);
-      if (load_pending_request_to_batch()) {
-        request_manager_status = PREFILLING;
-        prefill_model = SSM;
-        current_ssm_step = 0;
-      } else {
-        request_manager_status = SSM_SPEC;
-        current_ssm_step = 0;
-        ssm_completed = false;
-      }
+      load_pending_request_to_batch();
+      request_manager_status = SSM_SPEC;
+      current_ssm_step = 0;
+      ssm_completed = false;
     } break;
     case SSM_SPEC:
       // Update current_ssm_step first because when we first call

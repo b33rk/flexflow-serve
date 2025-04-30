@@ -538,15 +538,20 @@ private:
   void request_offload_from_batch(int batch_index);
   void request_load_onto_batch(int batch_index);
   /* ---------- Incremental Decoding Helper Functions ---------- */
+  [[deprecated("Should not be used in chunked branch.")]]
   bool update_llm_prefill_results(InferenceResult const &result);
+  [[deprecated("Should not be used in chunked branch.")]]
   bool update_llm_decode_results(InferenceResult const &result);
+  [[deprecated("Should not be used in chunked branch.")]]
   BatchConfig prepare_llm_prefilling_batch();
+  [[deprecated("Should not be used in chunked branch.")]]
   BatchConfig prepare_decoding_batch();
   BatchConfig prepare_decoding_batch_fcfs_slo();
   BatchConfig prepare_decoding_batch_stta();
   /* ---------- Incremental Decoding Helper Functions ---------- */
 
   /* ---------- Spec Decoding Helper Functions ---------- */
+  [[deprecated("Should not be used in chunked branch.")]]
   BatchConfig prepare_ssm_prefilling_batch();
   bool update_llm_verify_results(InferenceResult const &llm_verify_result);
   bool
