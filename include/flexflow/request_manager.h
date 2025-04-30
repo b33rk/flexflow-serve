@@ -546,7 +546,9 @@ private:
   BatchConfig prepare_llm_prefilling_batch();
   [[deprecated("Should not be used in chunked branch.")]]
   BatchConfig prepare_decoding_batch();
+  [[deprecated("Should not be used in chunked branch.")]]
   BatchConfig prepare_decoding_batch_fcfs_slo();
+  [[deprecated("Should not be used in chunked branch.")]]
   BatchConfig prepare_decoding_batch_stta();
   /* ---------- Incremental Decoding Helper Functions ---------- */
 
@@ -556,6 +558,7 @@ private:
   bool update_llm_verify_results(InferenceResult const &llm_verify_result);
   bool
       update_ssm_inference_results(InferenceResult const &ssm_inference_result);
+  [[deprecated("Should not be used in chunked branch.")]]
   void update_ssm_prefill_results(InferenceResult const &ssm_prefill_result);
   // Prepare the next speculation batch config. This function is called before
   // the second step of the speculation.

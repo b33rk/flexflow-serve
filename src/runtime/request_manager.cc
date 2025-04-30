@@ -1210,6 +1210,8 @@ void RequestManager::update_inference_results(InferenceResult const &result) {
   }
 }
 
+/* Deprecated */
+/*
 bool RequestManager::update_llm_prefill_results(InferenceResult const &result) {
   int num_tokens = 0;
   std::vector<Request *> incomplete_requests;
@@ -1257,7 +1259,10 @@ bool RequestManager::update_llm_prefill_results(InferenceResult const &result) {
   prefilling_requests.swap(incomplete_requests);
   return prefilling_requests.empty();
 }
+*/
 
+/* Deprecated */
+/*
 bool RequestManager::update_llm_decode_results(InferenceResult const &result) {
   bool request_completed = false;
   int nb_requests_decoded = 0;
@@ -1316,7 +1321,10 @@ bool RequestManager::update_llm_decode_results(InferenceResult const &result) {
   profiling.generated_tokens_per_step.push_back(nb_requests_decoded);
   return request_completed;
 }
+*/
 
+/* Deprecated */
+/*
 void RequestManager::update_ssm_prefill_results(
     InferenceResult const &ssm_prefill_result) {
   // This function is called by update_inference_results when the
@@ -1331,44 +1339,13 @@ void RequestManager::update_ssm_prefill_results(
     }
   }
 }
+*/
 
 BatchConfig RequestManager::prepare_next_batch() {
   if (is_background_server_terminated()) {
-    return BatchConfig(decoding_mode == SPECULATIVE_DECODING
-                           ? InferenceMode::TREE_SEARCH_MODE
-                           : InferenceMode::INC_DECODING_MODE);
+    return BatchConfig(InferenceMode::TREE_SEARCH_MODE);
   }
   switch (request_manager_status) {
-    case PREFILLING:
-      if (decoding_mode == INCREMENTAL_DECODING) {
-        return prepare_llm_prefilling_batch();
-      } else if (decoding_mode == SPECULATIVE_DECODING) {
-        if (prefill_model == SSM) {
-          if (current_ssm_step == 0) {
-            return prepare_ssm_prefilling_batch();
-          } else {
-            // Return an empty batch config
-            return BatchConfig(decoding_mode == SPECULATIVE_DECODING
-                                   ? InferenceMode::TREE_SEARCH_MODE
-                                   : InferenceMode::INC_DECODING_MODE);
-          }
-        } else if (prefill_model == LLM) {
-          return prepare_llm_prefilling_batch();
-        } else {
-          assert(false && "Invalid prefill model.");
-        }
-      } else {
-        assert(false && "Invalid inference mode.");
-      }
-      break;
-    case DECODING:
-      if (get_fcfs_slo()) {
-        return prepare_decoding_batch_fcfs_slo();
-      } else if (get_stta()) {
-        return prepare_decoding_batch_stta();
-      } else {
-        return prepare_decoding_batch();
-      }
     case SSM_SPEC:
       if (current_ssm_step == 0) {
         return prepare_first_spec_batch_config();
@@ -1376,9 +1353,7 @@ BatchConfig RequestManager::prepare_next_batch() {
         return prepare_next_spec_batch_config();
       } else {
         // Return an empty batch config
-        return BatchConfig(decoding_mode == SPECULATIVE_DECODING
-                               ? InferenceMode::TREE_SEARCH_MODE
-                               : InferenceMode::INC_DECODING_MODE);
+        return BatchConfig(InferenceMode::TREE_SEARCH_MODE);
       }
     case LLM_VERIFY:
       return prepare_verify_batch_config();
@@ -1389,6 +1364,8 @@ BatchConfig RequestManager::prepare_next_batch() {
   }
 }
 
+/* Deprecated */
+/*
 BatchConfig RequestManager::prepare_llm_prefilling_batch() {
   // This function is called when the request_manager_status is PREFILLING,
   // which means that there is a request in the prefilling phase.
@@ -1471,7 +1448,10 @@ BatchConfig RequestManager::prepare_llm_prefilling_batch() {
   }
   return bc;
 }
+*/
 
+/* Deprecated */
+/*
 BatchConfig RequestManager::prepare_ssm_prefilling_batch() {
   // This function is called when the request_manager_status is PREFILLING,
   // which means that there is a request in the prefilling phase.
@@ -1541,7 +1521,10 @@ BatchConfig RequestManager::prepare_ssm_prefilling_batch() {
   }
   return bc;
 }
+*/
 
+/* Deprecated */
+/*
 BatchConfig RequestManager::prepare_decoding_batch() {
   // This function is called when the request_manager_status is DECODING. It
   // fills the last token of each request in the current batch to the
@@ -1597,7 +1580,10 @@ BatchConfig RequestManager::prepare_decoding_batch() {
   profiling.llm_step_start = Realm::Clock::current_time_in_microseconds();
   return bc;
 }
+*/
 
+/* Deprecated */
+/*
 BatchConfig RequestManager::prepare_decoding_batch_fcfs_slo() {
   // This function is called when the request_manager_status is DECODING. It
   // fills the last token of each request in the current batch to the
@@ -1699,7 +1685,10 @@ BatchConfig RequestManager::prepare_decoding_batch_fcfs_slo() {
   profiling.llm_step_start = Realm::Clock::current_time_in_microseconds();
   return bc;
 }
+*/
 
+/* Deprecated */
+/*
 BatchConfig RequestManager::prepare_decoding_batch_stta() {
   // This function is called when the request_manager_status is DECODING. It
   // fills the last token of each request in the current batch to the
@@ -1803,6 +1792,8 @@ BatchConfig RequestManager::prepare_decoding_batch_stta() {
   profiling.llm_step_start = Realm::Clock::current_time_in_microseconds();
   return bc;
 }
+*/
+
 /* ----- Speculative Inference Specific functions ----- */
 
 /***** Request Init Phase *****/
