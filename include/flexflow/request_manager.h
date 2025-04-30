@@ -343,6 +343,14 @@ public:
   inline double get_slo_constraint(Request &request);
   void set_eval_overhead_breakdown(bool eval_overhead_breakdown);
   bool get_eval_overhead_breakdown();
+  void set_chunked_prefill_batch_latency_ms(
+      double chunked_prefill_batch_latency);
+  double get_chunked_prefill_batch_latency_ms();
+  void set_spec_batch_latency_ms(double spec_batch_latency);
+  double get_spec_batch_latency_ms();
+  void set_batch_size_2_latency_ms_map(
+      std::map<int, double> &spec_batch_latency_ms_map);
+  std::map<int, double> &get_batch_size_2_latency_ms_map();
   double get_request_expected_latency(Request &request);
   Request &get_request_with_guid(RequestGuid guid);
   int register_ssm_model(FFModel *model);
@@ -445,9 +453,12 @@ private:
   int spec_batch_size = 256;
   int chunked_prefill_buffer_size = 128;
   // Profile based latency
-  double baseline_latency_ms = 43;
-  double ssm_spec_latency_ms = 17;
-  double llm_verify_latency_ms = 65;
+  double baseline_latency_ms = 30;
+  double ssm_spec_latency_ms = 70;
+  double llm_verify_latency_ms = 70;
+  double chunked_prefill_batch_latency_ms = 120.0;
+  double spec_batch_latency_ms = 80;
+  std::map<int, double> batch_size_2_latency_ms_map;
   double correction_factor = 1.05;
 
   State request_manager_status;

@@ -383,6 +383,51 @@ void RequestManager::set_chunked_prefill_buffer_size(
   chunked_prefill_buffer_size = chunked_prefill_buffer_size_;
 }
 
+void RequestManager::set_chunked_prefill_batch_latency_ms(
+    double chunked_prefill_batch_latency_) {
+  assert(decoding_mode == RequestManager::SPECULATIVE_DECODING and
+         "Chunked prefill is only supported in SPECULATIVE_DECODING mode");
+  assert(
+      chunked_prefill == true and
+      "Chunked prefill must be enabled to set chunked_prefill_batch_latency");
+  assert(chunked_prefill_batch_latency_ > 0 and
+         "Invalid "
+         "chunked_prefill_batch_latency");
+  chunked_prefill_batch_latency_ms = chunked_prefill_batch_latency_;
+}
+
+double RequestManager::get_chunked_prefill_batch_latency_ms() {
+  return chunked_prefill_batch_latency_ms;
+}
+
+void RequestManager::set_spec_batch_latency_ms(double spec_batch_latency_ms_) {
+  assert(decoding_mode == RequestManager::SPECULATIVE_DECODING and
+         "Chunked prefill is only supported in SPECULATIVE_DECODING mode");
+  assert(chunked_prefill == true and
+         "Chunked prefill must be enabled to set spec_batch_latency");
+  assert(spec_batch_latency_ms_ > 0 and "Invalid spec_batch_latency");
+  spec_batch_latency_ms = spec_batch_latency_ms_;
+}
+
+double RequestManager::get_spec_batch_latency_ms() {
+  return spec_batch_latency_ms;
+}
+
+void RequestManager::set_batch_size_2_latency_ms_map(
+    std::map<int, double> &batch_size_2_latency_ms_map_) {
+  assert(decoding_mode == RequestManager::SPECULATIVE_DECODING and
+         "Chunked prefill is only supported in SPECULATIVE_DECODING mode");
+  assert(chunked_prefill == true and
+         "Chunked prefill must be enabled to set spec_batch_latency");
+  assert(batch_size_2_latency_ms_map.size() > 0 and
+         "Invalid spec_batch_latency");
+  batch_size_2_latency_ms_map = batch_size_2_latency_ms_map_;
+}
+
+std::map<int, double> &RequestManager::get_batch_size_2_latency_ms_map() {
+  return batch_size_2_latency_ms_map;
+}
+
 bool RequestManager::get_spec_infer_old_version() {
   return spec_infer_old_version;
 }
