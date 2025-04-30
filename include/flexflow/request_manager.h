@@ -64,16 +64,12 @@ public:
   double log_accumulated_prob;
   int parent_pos;
   bool included = false;
-  bool gumbel = false;
-  float gumbel_logit = 0.0f;
 
   TokenTreeNode(BatchConfig::TokenId id,
                 double log_accumulated_prob,
-                int parent_pos,
-                bool gumbel = false,
-                float gumbel_logit = 0.0f)
+                int parent_pos)
       : id(id), log_accumulated_prob(log_accumulated_prob),
-        parent_pos(parent_pos), gumbel(gumbel), gumbel_logit(gumbel_logit) {}
+        parent_pos(parent_pos) {}
 };
 
 bool operator<(std::shared_ptr<TokenTreeNode> const &lhs,
@@ -87,10 +83,6 @@ bool operator<=(std::shared_ptr<TokenTreeNode> const &lhs,
 struct SharedTokenTreeNodePtrLess {
   bool operator()(std::shared_ptr<TokenTreeNode> const &lhs,
                   std::shared_ptr<TokenTreeNode> const &rhs) const {
-    if (lhs->gumbel) {
-      assert(rhs->gumbel);
-      return lhs->gumbel_logit < rhs->gumbel_logit;
-    }
     return lhs->log_accumulated_prob < rhs->log_accumulated_prob;
   }
 };
@@ -562,7 +554,6 @@ private:
 
   // LLM result verification
   void get_verify_results_greedy(InferenceResult const &llm_verify_result);
-  void get_verify_results_sample(InferenceResult const &llm_verify_result);
 
   // Bitmask related
   void init_bitmask_prompt(RequestGuid guid, int prompt_length);
@@ -590,17 +581,6 @@ private:
   void add_tokens_toward_goodput(int budget);
   void add_tokens_toward_goodput_per_request(int budget, int request_index);
   void update_token_tree_depth();
-
-  /* ---------- Spec Decoding Helper Functions ---------- */
-  void renormalize(std::vector<std::pair<TokenId, float>> &D,
-                   std::unordered_map<TokenId, float> &R,
-                   TokenId token_id);
-  std::tuple<int, BatchConfig::TokenId, bool>
-      reject_sampling(std::vector<std::pair<TokenId, float>> &D,
-                      std::unordered_map<TokenId, float> &R,
-                      int k);
-  void gumbel_conditioned_on_max(double target_max,
-                                 std::vector<std::pair<double, int>> &logits);
 
   // Profiling related functions
   void reset_profiling_statistics();

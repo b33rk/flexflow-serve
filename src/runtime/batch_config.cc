@@ -233,7 +233,6 @@ std::ostream &operator<<(std::ostream &os, BatchConfig const &bc) {
 std::ostream &operator<<(std::ostream &os, InferenceResult const &ir) {
   os << "InferenceResult {\n"
      << "  num_token_ids: " << ir.num_token_ids << "\n"
-     << "  num_gumbel_logits: " << ir.num_gumbel_logits << "\n"
      << "  token_ids: [";
   for (int i = 0; i < ir.num_token_ids; i++) {
     os << ir.token_ids[i];
@@ -246,14 +245,6 @@ std::ostream &operator<<(std::ostream &os, InferenceResult const &ir) {
   for (int i = 0; i < ir.num_token_ids; i++) {
     os << ir.probs[i];
     if (i < ir.num_token_ids - 1) {
-      os << ", ";
-    }
-  }
-  os << "]\n"
-     << "  gumbel_logits: [";
-  for (int i = 0; i < ir.num_gumbel_logits; i++) {
-    os << ir.gumbel_logits[i];
-    if (i < ir.num_gumbel_logits - 1) {
       os << ", ";
     }
   }
