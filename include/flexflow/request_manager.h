@@ -131,6 +131,7 @@ struct Request {
   double decode_latency_ms = 0.0;
   int ssm_prefill_len = 0;
   int llm_prefill_len = 0;
+  int prompt_len = 0;
   bool attained = true;
   bool add_special_tokens = true;
 
@@ -553,6 +554,7 @@ private:
   /* ---------- Incremental Decoding Helper Functions ---------- */
 
   /* ---------- Spec Decoding Helper Functions ---------- */
+  std::pair<int, int> get_num_tokens_in_batch();
   [[deprecated("Should not be used in chunked branch.")]]
   BatchConfig prepare_ssm_prefilling_batch();
   bool update_llm_verify_results(InferenceResult const &llm_verify_result);
