@@ -314,14 +314,6 @@ double RequestManager::get_correction_factor() {
   return correction_factor;
 }
 
-void RequestManager::set_streaming_cache(bool streaming_cache_) {
-  streaming_cache = streaming_cache_;
-}
-
-bool RequestManager::get_streaming_cache() {
-  return streaming_cache;
-}
-
 bool RequestManager::get_memory_occupancy() {
   return memory_occupancy;
 }
@@ -554,11 +546,6 @@ RequestManager::RequestGuid
     assert(get_num_ssms() == 1 && "Only one SSM is supported now.");
     init_token_tree(request.guid);
   }
-
-  request.streaming_cache_info = StreamingCacheInfo(
-      BatchConfig::SINK_SIZE,
-      BatchConfig::MAX_STREAMING_POS - BatchConfig::SINK_SIZE -
-          BatchConfig::get_max_tree_depth());
 
   GenerationResult gr;
   gr.guid = request.guid;
@@ -1083,13 +1070,7 @@ bool RequestManager::update_llm_prefill_results(InferenceResult const &result) {
   incomplete_requests.reserve(prefilling_requests.size());
   for (Request *request : prefilling_requests) {
     if (request->num_tokens_in_batch > 0) {
-      if (decoding_mode == INCREMENTAL_DECODING && streaming_cache) {
-        request->streaming_cache_info.commit_cache(
-            request->num_tokens_in_batch);
-        request->llm_cache_size = request->streaming_cache_info.commit_len;
-      } else {
-        request->llm_cache_size += request->num_tokens_in_batch;
-      }
+      request->llm_cache_size += request->num_tokens_in_batch;
       request->llm_prefill_len += request->num_tokens_in_batch;
 
       if (request->llm_prefill_len == request->tokens.size()) {
@@ -1145,12 +1126,7 @@ bool RequestManager::update_llm_decode_results(InferenceResult const &result) {
     int guid = guid_of_requests[request_index];
     Request &request = all_requests[guid];
     assert(request.status == Request::RUNNING);
-    if (streaming_cache) {
-      request.streaming_cache_info.commit_cache(1);
-      request.llm_cache_size = request.streaming_cache_info.commit_len;
-    } else {
-      request.llm_cache_size++;
-    }
+    request.llm_cache_size++;
     request.tokens.push_back(
         result.token_ids[request.first_token_offset_in_batch]);
 
@@ -1202,13 +1178,7 @@ void RequestManager::update_ssm_prefill_results(
   // There's no results to update, but we should update ssm_cache_size.
   for (Request *request : prefilling_requests) {
     if (request->num_tokens_in_batch > 0) {
-      if (streaming_cache) {
-        request->streaming_cache_info.commit_cache(
-            request->num_tokens_in_batch);
-        request->ssm_cache_size = request->streaming_cache_info.commit_len;
-      } else {
-        request->ssm_cache_size += request->num_tokens_in_batch;
-      }
+      request->ssm_cache_size += request->num_tokens_in_batch;
       request->ssm_prefill_len += request->num_tokens_in_batch;
 
       profiling_requests[request->guid].ssm_prefilling_steps++;
@@ -1310,9 +1280,6 @@ BatchConfig RequestManager::prepare_llm_prefilling_batch() {
     num_tokens_in_batch = std::max(num_tokens_in_batch, 0);
     bc.requestsInfo[request_index].num_tokens_in_batch = num_tokens_in_batch;
 
-    // Copy the streaming cache info
-    bc.streamingCacheInfo[request_index] = request->streaming_cache_info;
-
     request->first_token_offset_in_batch = num_tokens;
     request->num_tokens_in_batch = num_tokens_in_batch;
 
@@ -1391,9 +1358,6 @@ BatchConfig RequestManager::prepare_ssm_prefilling_batch() {
     num_tokens_in_batch = std::max(num_tokens_in_batch, 0);
     bc.requestsInfo[request_index].num_tokens_in_batch = num_tokens_in_batch;
 
-    // Copy the streaming cache info
-    bc.streamingCacheInfo[request_index] = request->streaming_cache_info;
-
     request->first_token_offset_in_batch = num_tokens;
     request->num_tokens_in_batch = num_tokens_in_batch;
 
@@ -1462,9 +1426,6 @@ BatchConfig RequestManager::prepare_decoding_batch() {
         request.llm_cache_size;
     bc.requestsInfo[request_index].first_token_offset_in_batch = bc.num_tokens;
     bc.requestsInfo[request_index].num_tokens_in_batch = 1;
-
-    // Copy the streaming cache info
-    bc.streamingCacheInfo[request_index] = request.streaming_cache_info;
 
     request.first_token_offset_in_batch = bc.num_tokens;
     request.num_tokens_in_batch = 1;
@@ -1566,9 +1527,6 @@ BatchConfig RequestManager::prepare_decoding_batch_fcfs_slo() {
         request.llm_cache_size;
     bc.requestsInfo[request_index].first_token_offset_in_batch = bc.num_tokens;
     bc.requestsInfo[request_index].num_tokens_in_batch = 1;
-
-    // Copy the streaming cache info
-    bc.streamingCacheInfo[request_index] = request.streaming_cache_info;
 
     request.first_token_offset_in_batch = bc.num_tokens;
     request.num_tokens_in_batch = 1;
@@ -1674,9 +1632,6 @@ BatchConfig RequestManager::prepare_decoding_batch_stta() {
     bc.requestsInfo[request_index].first_token_offset_in_batch = bc.num_tokens;
     bc.requestsInfo[request_index].num_tokens_in_batch = 1;
 
-    // Copy the streaming cache info
-    bc.streamingCacheInfo[request_index] = request.streaming_cache_info;
-
     request.first_token_offset_in_batch = bc.num_tokens;
     request.num_tokens_in_batch = 1;
 
@@ -1753,17 +1708,10 @@ BatchConfig RequestManager::prepare_first_spec_batch_config() {
       // token's kv cache is already there, the we need to decode the last
       // token because it's the root of the token tree.
       new_bc.tokensInfo[new_bc.num_tokens].request_index = request_index;
-      if (streaming_cache) {
-        new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
-            request.ssm_cache_size;
-        new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
-            request.ssm_cache_size;
-      } else {
-        new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
-            committed_tokens[0].to_index;
-        new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
-            committed_tokens[0].to_index;
-      }
+      new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
+          committed_tokens[0].to_index;
+      new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
+          committed_tokens[0].to_index;
       new_bc.tokensInfo[new_bc.num_tokens].token_id =
           committed_tokens[0].token_id;
       new_bc.num_tokens++;
@@ -1772,17 +1720,10 @@ BatchConfig RequestManager::prepare_first_spec_batch_config() {
            committed_token_index < committed_tokens.size();
            committed_token_index++) {
         new_bc.tokensInfo[new_bc.num_tokens].request_index = request_index;
-        if (streaming_cache) {
-          new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
-              request.ssm_cache_size + committed_token_index - 1;
-          new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
-              request.ssm_cache_size + committed_token_index - 1;
-        } else {
-          new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
-              committed_tokens[committed_token_index].to_index;
-          new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
-              committed_tokens[committed_token_index].to_index;
-        }
+        new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
+            committed_tokens[committed_token_index].to_index;
+        new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
+            committed_tokens[committed_token_index].to_index;
         new_bc.tokensInfo[new_bc.num_tokens].token_id =
             committed_tokens[committed_token_index].token_id;
         new_bc.num_tokens++;
@@ -1799,13 +1740,6 @@ BatchConfig RequestManager::prepare_first_spec_batch_config() {
     // Copy the causal mask, it should already been updated in
     // update_llm_verify_results
     new_bc.causalMask[request_index] = request.causal_mask;
-    if (streaming_cache) {
-      new_bc.causalMask[request_index].non_tree_cache_size =
-          request.ssm_cache_size - 1;
-    }
-
-    // Copy the streaming cache info
-    new_bc.streamingCacheInfo[request_index] = request.streaming_cache_info;
 
     if (profiling_requests[guid].ssm_decoding_steps == 0) {
       profiling_requests[guid].start_decoding_time =
@@ -1902,13 +1836,6 @@ BatchConfig RequestManager::prepare_next_spec_batch_config() {
     // Copy the causal mask, it should already been updated by
     // update_ssm_inference_results
     new_bc.causalMask[request_index] = request.causal_mask;
-    if (streaming_cache) {
-      new_bc.causalMask[request_index].non_tree_cache_size =
-          request.ssm_cache_size - 1;
-    }
-
-    // Copy the streaming cache info
-    new_bc.streamingCacheInfo[request_index] = request.streaming_cache_info;
   }
 
   if (verbose) {
@@ -2016,9 +1943,6 @@ BatchConfig RequestManager::prepare_verify_batch_config() {
     // Create the causal mask for the large model based on the small model
     // causal mask.
     new_bc.causalMask[request_index] = create_llm_bitmask(guid);
-
-    // Copy the streaming cache info
-    new_bc.streamingCacheInfo[request_index] = request.streaming_cache_info;
   }
 
   if (verbose) {
@@ -2190,12 +2114,7 @@ bool RequestManager::update_ssm_inference_results(
     assert(request.status == Request::RUNNING);
 
     if (current_ssm_step == 1) {
-      if (streaming_cache) {
-        request.streaming_cache_info.commit_cache(request.num_tokens_in_batch);
-        request.ssm_cache_size = request.streaming_cache_info.commit_len;
-      } else {
-        request.ssm_cache_size = request.tokens.size();
-      }
+      request.ssm_cache_size = request.tokens.size();
     }
 
     if (current_ssm_step == 1) {

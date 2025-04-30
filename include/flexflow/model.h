@@ -726,7 +726,6 @@ public:
       float scaling_factor = 1.0f,
       bool qk_prod_scaling = true,
       bool position_bias = false,
-      bool streaming_cache = false,
       char const *name = NULL);
   Tensor spec_inc_multihead_self_attention(
       Tensor const input,
@@ -745,7 +744,6 @@ public:
       float scaling_factor = 1.0f,
       bool qk_prod_scaling = true,
       bool position_bias = false,
-      bool streaming_cache = false,
       char const *name = NULL);
   Tensor inc_multihead_self_attention_verify(
       Tensor const input,
@@ -783,7 +781,6 @@ public:
       float scaling_factor = 1.0f,
       bool qk_prod_scaling = true,
       bool position_bias = false,
-      bool streaming_cache = false,
       char const *name = NULL);
   Tensor spec_inc_multiquery_self_attention(
       Tensor const input,
@@ -803,7 +800,6 @@ public:
       float scaling_factor = 1.0f,
       bool qk_prod_scaling = true,
       bool position_bias = false,
-      bool streaming_cache = false,
       char const *name = NULL);
   Tensor inc_multiquery_self_attention_verify(
       Tensor const input,

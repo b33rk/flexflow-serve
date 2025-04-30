@@ -48,7 +48,6 @@ public:
                             bool allocate_weights,
                             DataType _quantization_type,
                             bool _offload,
-                            bool _streaming_cache,
                             int _tensor_parallelism_degree,
                             char const *name);
   IncMultiHeadSelfAttention(FFModel &model,
@@ -71,7 +70,6 @@ public:
                             bool allocate_weights,
                             DataType _quantization_type,
                             bool _offload,
-                            bool _streaming_cache,
                             int _tensor_parallelism_degree,
                             char const *name);
   IncMultiHeadSelfAttention(FFModel &model,
@@ -134,7 +132,7 @@ public:
   int hidden_size, qk_dim, v_dim, o_dim;
   int qoSeqLength, kvSeqLength;
   DataType quantization_type;
-  bool offload, streaming_cache;
+  bool offload;
 };
 
 class IncMultiHeadSelfAttentionMeta : public OpMeta {
@@ -168,8 +166,7 @@ public:
                                 int _num_q_heads,
                                 int _num_kv_heads,
                                 DataType _quantization_type,
-                                bool _offload,
-                                bool _streaming_cache);
+                                bool _offload);
   ~IncMultiHeadSelfAttentionMeta(void);
 
 public:
@@ -191,17 +188,11 @@ public:
   void *devQKVProjArray, *queryTmp;
   half *outputTmp;
   void *kvCache;
-  bool streaming_cache;
-  // When enable Streaming cache, we alter relative position each iteration, so
-  // we need below memory buffer for storing the pre-pos-encoding key value in
-  // sink and window.
-  void *streamingPrePosEncBuf;
   void *attn_heads;
   char *quantized_weight_ptr;
   BatchConfig::PerTokenInfo *token_infos;
   BatchConfig::PerRequestInfo *request_infos;
   bool *request_available;
-  StreamingCacheInfo *streaming_cache_infos;
   DataType quantization_type;
   bool offload;
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)

@@ -456,7 +456,6 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_tree_width(max_tree_width);
   rm->set_expansion_degree(expansion_degree);
   rm->set_verbose(verbose);
-  rm->set_streaming_cache(false);
   rm->register_tokenizer(model_metadata.llm_model_type,
                          model_metadata.bos_token_id,
                          model_metadata.eos_token_ids,

@@ -15,7 +15,6 @@ struct SpecIncMultiHeadSelfAttentionParams {
   bool qkv_bias, final_bias, add_zero_attn, scaling_query, qk_prod_scaling,
       position_bias;
   RotaryEmbeddingMeta rotary_embedding_meta;
-  bool streaming_cache;
   char name[MAX_OPNAME];
   bool is_valid(ParallelTensorShape const &) const;
 };

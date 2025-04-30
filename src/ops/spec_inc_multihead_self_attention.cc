@@ -69,7 +69,6 @@ Tensor FFModel::spec_inc_multihead_self_attention(
     float scaling_factor,
     bool qk_prod_scaling,
     bool position_bias,
-    bool streaming_cache,
     char const *name) {
   return spec_inc_multiquery_self_attention(input,
                                             embed_dim,
@@ -88,7 +87,6 @@ Tensor FFModel::spec_inc_multihead_self_attention(
                                             scaling_factor,
                                             qk_prod_scaling,
                                             position_bias,
-                                            streaming_cache,
                                             name);
 }
 
@@ -110,7 +108,6 @@ Tensor FFModel::spec_inc_multiquery_self_attention(
     float scaling_factor,
     bool qk_prod_scaling,
     bool position_bias,
-    bool streaming_cache,
     char const *name) {
   if (data_type == DT_NONE) {
     data_type = input->data_type;
@@ -203,7 +200,6 @@ Tensor FFModel::spec_inc_multiquery_self_attention(
   li->add_float_property("scaling_factor", scaling_factor);
   li->add_int_property("qk_prod_scaling", qk_prod_scaling);
   li->add_int_property("position_bias", position_bias);
-  li->add_int_property("streaming_cache", streaming_cache);
   li->add_int_property("tensor_parallelism_degree",
                        config.tensor_parallelism_degree);
   layers.push_back(li);
@@ -255,8 +251,6 @@ Op *SpecIncMultiHeadSelfAttention::create_operator_from_layer(
   bool qk_prod_scaling = (bool)value;
   layer->get_int_property("position_bias", value);
   bool position_bias = (bool)value;
-  layer->get_int_property("streaming_cache", value);
-  bool streaming_cache = (bool)value;
   layer->get_int_property("tensor_parallelism_degree", value);
   int tensor_parallelism_degree = (int)value;
 
@@ -278,7 +272,6 @@ Op *SpecIncMultiHeadSelfAttention::create_operator_from_layer(
                                            qk_prod_scaling,
                                            position_bias,
                                            false /*allocate_weights*/,
-                                           streaming_cache,
                                            tensor_parallelism_degree,
                                            layer->name);
 }
@@ -302,7 +295,6 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
     bool _qk_prod_scaling,
     bool _position_bias,
     bool allocate_weights,
-    bool _streaming_cache,
     int _tensor_parallelism_degree,
     char const *name)
     // Initializer* _bias_initializer)
@@ -322,7 +314,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
       o_dim(_embed_dim), qoSeqLength(_input->dims[1].size),
       kvSeqLength(_input->dims[1].size), scaling_query(_scaling_query),
       scaling_factor(_scaling_factor), qk_prod_scaling(_qk_prod_scaling),
-      position_bias(_position_bias), streaming_cache(_streaming_cache),
+      position_bias(_position_bias),
       tensor_parallelism_degree(_tensor_parallelism_degree) {
   // overwrite layer_guid
   layer_guid = _layer_guid;
@@ -406,7 +398,6 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
     bool _qk_prod_scaling,
     bool _position_bias,
     bool allocate_weights,
-    bool _streaming_cache,
     int _tensor_parallelism_degree,
     char const *name)
     // Initializer* _bias_initializer)
@@ -427,7 +418,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
       o_dim(_embed_dim), qoSeqLength(_input->dims[1].size),
       kvSeqLength(_input->dims[1].size), scaling_query(_scaling_query),
       scaling_factor(_scaling_factor), qk_prod_scaling(_qk_prod_scaling),
-      position_bias(_position_bias), streaming_cache(_streaming_cache),
+      position_bias(_position_bias),
       tensor_parallelism_degree(_tensor_parallelism_degree)
 // bias_initializer(_bias_initializer)
 {
@@ -518,7 +509,6 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
                                     other.qk_prod_scaling,
                                     other.position_bias,
                                     allocate_weights,
-                                    other.streaming_cache,
                                     other.tensor_parallelism_degree,
                                     other.name) {}
 
@@ -546,7 +536,6 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
                                     params.qk_prod_scaling,
                                     params.position_bias,
                                     allocate_weights,
-                                    params.streaming_cache,
                                     params.tensor_parallelism_degree,
                                     params.name) {}
 
@@ -883,8 +872,7 @@ bool operator==(SpecIncMultiHeadSelfAttentionParams const &lhs,
          lhs.scaling_query == rhs.scaling_query &&
          lhs.scaling_factor == rhs.scaling_factor &&
          lhs.qk_prod_scaling == rhs.qk_prod_scaling &&
-         lhs.position_bias == rhs.position_bias &&
-         lhs.streaming_cache == rhs.streaming_cache;
+         lhs.position_bias == rhs.position_bias;
 }
 
 SpecIncMultiHeadSelfAttentionParams
@@ -905,7 +893,6 @@ SpecIncMultiHeadSelfAttentionParams
   params.scaling_factor = this->scaling_factor;
   params.qk_prod_scaling = this->qk_prod_scaling;
   params.position_bias = this->position_bias;
-  params.streaming_cache = this->streaming_cache;
   params.tensor_parallelism_degree = this->tensor_parallelism_degree;
   if (this->name != nullptr) {
     strcpy(params.name, this->name);
@@ -942,7 +929,6 @@ size_t hash<FlexFlow::SpecIncMultiHeadSelfAttentionParams>::operator()(
   hash_combine(key, params.scaling_factor);
   hash_combine(key, params.qk_prod_scaling);
   hash_combine(key, params.position_bias);
-  hash_combine(key, params.streaming_cache);
   hash_combine(key, params.tensor_parallelism_degree);
   return key;
 }

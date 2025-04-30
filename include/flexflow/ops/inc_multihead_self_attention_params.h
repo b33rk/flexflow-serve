@@ -17,7 +17,7 @@ struct IncMultiHeadSelfAttentionParams {
       position_bias;
   RotaryEmbeddingMeta rotary_embedding_meta;
   DataType quantization_type;
-  bool offload, streaming_cache;
+  bool offload;
   char name[MAX_OPNAME];
   bool is_valid(ParallelTensorShape const &) const;
 };

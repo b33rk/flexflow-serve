@@ -252,19 +252,6 @@ void inference_kernel(SpecIncMultiHeadSelfAttentionMeta *m,
               bias_ptr,
               stream);
 
-  // phase 2: First maintain the streaming cache, because it need
-  // pre-pos-encoding values
-  if (m->streaming_cache) {
-    // Move pre-pos-encoding cache to where took by attention
-    update_kv_in_streaming_cache<DT>(m, bc, stream);
-    // Apply pos-encoding to those k values
-    apply_pos_encoding_to_streaming_proj<DT>(m, bc, stream);
-    // Commit to the streaming cache
-    if (bc->prompt_phase) {
-      commit_kv<DT>(m, bc, stream);
-    }
-  }
-
   // phase 3: Take care of the batch
   {
     // Apply pos-encoding to the batch
@@ -404,8 +391,7 @@ SpecIncMultiHeadSelfAttentionMeta::SpecIncMultiHeadSelfAttentionMeta(
                                     _num_q_heads,
                                     _num_kv_heads,
                                     DT_NONE,
-                                    false,
-                                    attn->streaming_cache) {
+                                    false) {
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
   checkCUDNN(cudnnSetStream(handler.dnn, stream));

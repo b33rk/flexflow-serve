@@ -78,7 +78,6 @@ void parse_input_args(char **argv,
                       bool &spec_sampling,
                       bool &do_sample,
                       int &sampling_seed,
-                      bool &streaming_cache,
                       bool &slo_attainment_early_termination,
                       double &baseline_latency_ms,
                       double &ssm_spec_latency_ms,
@@ -188,10 +187,6 @@ void parse_input_args(char **argv,
     }
     if (!strcmp(argv[i], "--do-sample")) {
       do_sample = true;
-      continue;
-    }
-    if (!strcmp(argv[i], "--enable-streaming-cache")) {
-      streaming_cache = true;
       continue;
     }
     if (!strcmp(argv[i], "--slo-attainment-early-termination")) {
@@ -421,7 +416,6 @@ void FlexFlow::top_level_task(Task const *task,
   bool spec_sampling = false;
   bool do_sample = false;
   int sampling_seed = 0;
-  bool streaming_cache = false;
   bool slo_attainment_early_termination = false;
   double baseline_latency_ms = 50;
   double ssm_spec_latency_ms = 20;
@@ -456,7 +450,6 @@ void FlexFlow::top_level_task(Task const *task,
                    spec_sampling,
                    do_sample,
                    sampling_seed,
-                   streaming_cache,
                    slo_attainment_early_termination,
                    baseline_latency_ms,
                    ssm_spec_latency_ms,
@@ -505,7 +498,6 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_tree_depth(max_tree_depth);
   rm->set_max_tree_width(max_tree_width);
   rm->set_verbose(verbose);
-  rm->set_streaming_cache(streaming_cache);
   rm->register_tokenizer(model_metadata.llm_model_type,
                          model_metadata.bos_token_id,
                          model_metadata.eos_token_ids,
@@ -529,7 +521,6 @@ void FlexFlow::top_level_task(Task const *task,
                               model_metadata.llm_weights_path,
                               TREE_VERIFY_MODE,
                               generationConfig,
-                              false,
                               use_full_precision,
                               /*qkv_bias*/ model_metadata.qkv_bias);
   } else if (model_metadata.llm_model_type == ModelType::OPT) {
@@ -579,7 +570,6 @@ void FlexFlow::top_level_task(Task const *task,
                                 model_metadata.ssm_model_weights_paths[ssm_id],
                                 TREE_SEARCH_MODE,
                                 generationConfig,
-                                streaming_cache,
                                 use_full_precision,
                                 /*qkv_bias*/ model_metadata.qkv_bias);
     } else if (model_metadata.ssm_model_types[ssm_id] == ModelType::OPT) {

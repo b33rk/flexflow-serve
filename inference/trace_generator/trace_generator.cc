@@ -341,7 +341,6 @@ void FlexFlow::top_level_task(Task const *task,
   bool spec_sampling = false;
   bool do_sample = false;
   int sampling_seed = 0;
-  bool streaming_cache = false;
   bool slo_attainment_early_termination = false;
   double baseline_latency_ms = 50;
   double ssm_spec_latency_ms = 20;
@@ -406,7 +405,6 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_tree_depth(2);
   rm->set_max_tree_width(2);
   rm->set_verbose(verbose);
-  rm->set_streaming_cache(streaming_cache);
   rm->register_tokenizer(model_metadata.llm_model_type,
                          model_metadata.bos_token_id,
                          model_metadata.eos_token_ids,

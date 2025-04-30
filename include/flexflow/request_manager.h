@@ -193,20 +193,6 @@ struct Request {
   };
   std::vector<CommittedToken> committed_tokens;
 
-  // Enabling Streaming KVCache means we doesn't store the whole KV sequence of
-  // the tokens in a request. Instead, we only store the sink cache (a few
-  // foremost tokens) and the window cache (rolling-updated backmost tokens
-  // through decoding). Currently, we only use streaming cache in the *draft
-  // model* calculation.
-  // - Maintain the streaming cache: During inference, we
-  // first fill up the sink cache then the window cache. After the window cache
-  // is full, we move back to the beginning of the window cache and commit the
-  // tokens in replace there.
-  // - When to update the streaming cache:
-  // 1. Prefilling phase
-  // 2. Committing phase after the target model verification
-  StreamingCacheInfo streaming_cache_info;
-
   std::priority_queue<
       std::pair<std::shared_ptr<TokenTreeNode>, double>,
       std::vector<std::pair<std::shared_ptr<TokenTreeNode>, double>>,
@@ -340,8 +326,6 @@ public:
   double get_llm_verify_latency();
   void set_correction_factor(double correction_factor);
   double get_correction_factor();
-  void set_streaming_cache(bool streaming_cache);
-  bool get_streaming_cache();
   bool get_memory_occupancy();
   void set_memory_occupancy(bool memory_occupancy);
   void
@@ -468,8 +452,6 @@ private:
   DecodingMode decoding_mode;
   PrefillModel prefill_model;
   bool speculative_sampling = false;
-  // specify if enable streaming cache for incremental decoding or draft model
-  bool streaming_cache = false;
   bool memory_occupancy = false;
   bool slo_violation_early_termination = false;
   bool spec_infer_old_version = false;

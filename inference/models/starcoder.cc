@@ -125,7 +125,6 @@ void STARCODER::create_starcoder_model(
             1.0f,                                    /*scaling factor*/
             true,                                    /*qk_prod_scaling*/
             false,                                   /*position_bias*/
-            false,                                   /*streaming_cache*/
             std::string("layers." + std::to_string(i) + ".attn.c_attn")
                 .c_str() /*name*/
         );

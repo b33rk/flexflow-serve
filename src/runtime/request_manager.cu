@@ -139,29 +139,13 @@ __global__ void
 #define test_bit_orig(bit_mask, idx, pos)                                      \
   (((bit_mask)[idx].bits[(pos) / 64] & (1ULL << ((pos) % 64))) != 0)
 
-// cache = (global-sink) % window + sink
-#define cache_2_global_index(cache_info, cache_index)                          \
-  do {                                                                         \
-    if (cache_index >= (cache_info).sink_cache_size) {                         \
-      cache_index -= (cache_info).sink_cache_size;                             \
-      int num_window =                                                         \
-          ((cache_info).total_len - (cache_info).sink_cache_size) /            \
-              (cache_info).window_cache_size -                                 \
-          ((cache_info).window_back <= cache_index);                           \
-      cache_index += (cache_info).sink_cache_size +                            \
-                     num_window * (cache_info).window_cache_size;              \
-    }                                                                          \
-  } while (0)
-
 __global__ void
     update_custom_mask_kernel(uint8_t *custom_mask,
                               int32_t const *qk_indptr,
                               BatchConfig::BitMask *causalMask,
                               BatchConfig::PerRequestInfo *request_infos,
                               bool *request_available,
-                              uint32_t const num_requests,
-                              StreamingCacheInfo *streaming_cache_infos,
-                              bool streaming_cache) {
+                              uint32_t const num_requests) {
   int byte_idx = blockIdx.x * blockDim.x + threadIdx.x;
   int request_idx = 0;
   while (request_idx < num_requests) {
@@ -200,15 +184,6 @@ __global__ void
   for (int bit_idx = 0; bit_idx < 8; bit_idx++) {
     int const bit_offset = byte_idx * 8 + bit_idx, q_idx = bit_offset / kv_len;
     int kv_idx = bit_offset % kv_len;
-    if (streaming_cache) { // recover to the original index
-      if (kv_idx < streaming_cache_infos[requext_idx_in_batch].commit_len) {
-        cache_2_global_index(streaming_cache_infos[requext_idx_in_batch],
-                             kv_idx);
-      } else {
-        kv_idx += streaming_cache_infos[requext_idx_in_batch].total_len -
-                  streaming_cache_infos[requext_idx_in_batch].commit_len;
-      }
-    }
     if (kv_idx < non_tree_cache_size || q_idx >= q_length) {
       packed_bits |= 1 << bit_idx;
     } else {
@@ -227,19 +202,15 @@ __global__ void
 // Layout of causalMask: [num_requests][tree_size][tree_size]
 // Layout of custom_mask: [num_requests][q_length][kv_length] (bit-packed)
 // Note that for spec-decoding, q_length == last_layer_length != tree_size
-// Also we should consider the influence of StreamingCache
 void update_custom_mask(BatchConfig const *batch_config,
                         AttentionMetaData *metadata,
                         BatchConfig::BitMask *causalMask,
                         BatchConfig::PerRequestInfo *request_infos,
                         bool *request_available,
                         int batch_size,
-                        StreamingCacheInfo *streaming_cache_infos,
                         cudaStream_t stream) {
   InferenceMode mode = batch_config->get_mode();
   assert(mode == TREE_SEARCH_MODE || mode == TREE_VERIFY_MODE);
-  bool streaming_cache =
-      mode == TREE_SEARCH_MODE && batch_config->streaming_cache();
   int parallelism = 0;
   for (int req_idx = 0; req_idx < batch_config->max_requests_per_batch();
        req_idx++) {
@@ -259,9 +230,7 @@ void update_custom_mask(BatchConfig const *batch_config,
                                         causalMask,
                                         request_infos,
                                         request_available,
-                                        batch_size,
-                                        streaming_cache_infos,
-                                        streaming_cache);
+                                        batch_size);
 }
 
 void RequestManager::load_batch_config_task(
@@ -326,14 +295,6 @@ void RequestManager::load_batch_config_task(
     }
   }
   total_copy_size += sizeof(BatchConfig::causalMask);
-
-  checkCUDA(cudaMemcpyAsync(static_cast<char *>(handle.batch_config_metadata) +
-                                total_copy_size,
-                            &(batch_config->streamingCacheInfo),
-                            sizeof(BatchConfig::streamingCacheInfo),
-                            cudaMemcpyHostToDevice,
-                            stream));
-  total_copy_size += sizeof(BatchConfig::streamingCacheInfo);
 
   if (batch_config->num_tokens_to_commit > 0) {
     checkCUDA(cudaMemcpyAsync(
@@ -497,13 +458,6 @@ void RequestManager::load_batch_config_task(
                 sizeof(BatchConfig::tokensInfo) +
                 sizeof(BatchConfig::requestsInfo) +
                 sizeof(BatchConfig::request_available));
-        StreamingCacheInfo *streaming_cache_infos =
-            reinterpret_cast<StreamingCacheInfo *>(
-                static_cast<char *>(handle.batch_config_metadata) +
-                sizeof(BatchConfig::tokensInfo) +
-                sizeof(BatchConfig::requestsInfo) +
-                sizeof(BatchConfig::request_available) +
-                sizeof(BatchConfig::causalMask));
         int batch_size = batch_config->num_active_requests();
         uint32_t const max_num_pages =
             round_up_pages(BatchConfig::max_sequence_length() +
@@ -532,7 +486,6 @@ void RequestManager::load_batch_config_task(
                              request_infos,
                              request_available,
                              batch_size,
-                             streaming_cache_infos,
                              stream);
         }
       }
@@ -619,13 +572,6 @@ void RequestManager::load_batch_config_task(
                 sizeof(BatchConfig::tokensInfo) +
                 sizeof(BatchConfig::requestsInfo) +
                 sizeof(BatchConfig::request_available));
-        StreamingCacheInfo *streaming_cache_infos =
-            reinterpret_cast<StreamingCacheInfo *>(
-                static_cast<char *>(handle.batch_config_metadata) +
-                sizeof(BatchConfig::tokensInfo) +
-                sizeof(BatchConfig::requestsInfo) +
-                sizeof(BatchConfig::request_available) +
-                sizeof(BatchConfig::causalMask));
         int batch_size = batch_config->num_active_requests();
         uint32_t const max_num_pages =
             round_up_pages(BatchConfig::max_sequence_length() +
@@ -654,7 +600,6 @@ void RequestManager::load_batch_config_task(
                              request_infos,
                              request_available,
                              batch_size,
-                             streaming_cache_infos,
                              stream);
         }
       }

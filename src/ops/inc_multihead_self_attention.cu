@@ -260,17 +260,6 @@ void inference_kernel(IncMultiHeadSelfAttentionMeta *m,
               bias_ptr,
               stream);
 
-  // phase 2: First maintain the streaming cache, because it need
-  // pre-pos-encoding values
-  if (m->streaming_cache) {
-    // Move pre-pos-encoding cache to where took by attention
-    update_kv_in_streaming_cache<DT>(m, bc, stream);
-    // Apply pos-encoding to those k values
-    apply_pos_encoding_to_streaming_proj<DT>(m, bc, stream);
-    // Commit to the streaming cache
-    commit_kv<DT>(m, bc, stream);
-  }
-
   // phase 3: Take care of the batch
   {
     // Apply pos-encoding to the batch
@@ -392,8 +381,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
                                     _num_q_heads,
                                     _num_kv_heads,
                                     attn->quantization_type,
-                                    attn->offload,
-                                    attn->streaming_cache) {}
+                                    attn->offload) {}
 
 IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     FFHandler handler,
@@ -418,8 +406,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     int _num_q_heads,
     int _num_kv_heads,
     DataType _quantization_type,
-    bool _offload,
-    bool _streaming_cache)
+    bool _offload)
     : OpMeta(handler, attn), weight_ptr(nullptr), bias_ptr(nullptr) {
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
@@ -434,7 +421,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
   size_t size_of_dt = data_type_size(attn->data_type);
   quantization_type = _quantization_type;
   offload = _offload;
-  streaming_cache = _streaming_cache;
 
   global_num_q_heads = _global_num_q_heads;
   global_num_kv_heads = _global_num_kv_heads;
@@ -493,7 +479,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
         max_tokens_per_batch *
         (qk_dim * num_q_heads + qk_dim * num_kv_heads + v_dim * num_kv_heads);
     size_t query_tmp_size = 0, key_cache_size = 0, value_cache_size = 0;
-    size_t streaming_pre_pos_enc_size = 0;
     // assert((BatchConfig::max_sequence_length() +
     //         BatchConfig::max_spec_tree_token_num()) %
     //            kPagesize ==
@@ -513,25 +498,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
         value_cache_size = num_kv_heads * v_dim *
                            BatchConfig::max_requests_per_batch() *
                            max_num_pages * kPagesize;
-        if (streaming_cache) {
-          size_t max_post_pos_enc_pages =
-              round_up_pages(BatchConfig::MAX_STREAMING_POS -
-                             BatchConfig::get_max_tree_depth() +
-                             max(max_tokens_per_batch,
-                                 BatchConfig::max_spec_tree_token_num()));
-          key_cache_size = num_kv_heads * qk_dim *
-                           BatchConfig::max_requests_per_batch() *
-                           max_post_pos_enc_pages * kPagesize;
-          value_cache_size = num_kv_heads * v_dim *
-                             BatchConfig::max_requests_per_batch() *
-                             max_post_pos_enc_pages * kPagesize;
-          streaming_pre_pos_enc_size =
-              num_kv_heads * (qk_dim + v_dim) *
-              BatchConfig::max_requests_per_batch() *
-              round_up_pages(BatchConfig::MAX_STREAMING_POS -
-                             BatchConfig::get_max_tree_depth()) *
-              kPagesize;
-        }
         break;
       }
       default:
@@ -544,7 +510,7 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
         2;
     size_t totalSize =
         (qkv_max_proj_size + query_tmp_size + key_cache_size +
-         value_cache_size + streaming_pre_pos_enc_size + attn_heads_size) *
+         value_cache_size + attn_heads_size) *
             size_of_dt +
         output_tmp_size * data_type_size(DT_HALF) +
         complex_size * sizeof(cuFloatComplex); // more components will
@@ -553,21 +519,19 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
       // assert that we have enough reserved work space left
       size_t totalSharedSize =
           infer_mode == TREE_VERIFY_MODE
-              ? totalSize -
-                    (query_tmp_size + key_cache_size + value_cache_size +
-                     streaming_pre_pos_enc_size + qkv_max_proj_size) *
-                        size_of_dt
-              : totalSize - (query_tmp_size + key_cache_size +
-                             value_cache_size + streaming_pre_pos_enc_size) *
-                                size_of_dt;
+              ? totalSize - (query_tmp_size + key_cache_size +
+                             value_cache_size + qkv_max_proj_size) *
+                                size_of_dt
+              : totalSize -
+                    (query_tmp_size + key_cache_size + value_cache_size) *
+                        size_of_dt;
 
       size_t instance_size =
           size_of_dt *
           (infer_mode == TREE_VERIFY_MODE
                ? query_tmp_size + key_cache_size + value_cache_size +
-                     streaming_pre_pos_enc_size + qkv_max_proj_size
-               : query_tmp_size + key_cache_size + value_cache_size +
-                     streaming_pre_pos_enc_size);
+                     qkv_max_proj_size
+               : query_tmp_size + key_cache_size + value_cache_size);
 
       if (quantization_type != DT_NONE) {
         totalSharedSize += quantized_weightSize;
@@ -598,10 +562,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     }
     kvCache = gpu_mem_allocator.allocate_instance_untyped(
         (key_cache_size + value_cache_size) * size_of_dt);
-    if (streaming_pre_pos_enc_size > 0) {
-      streamingPrePosEncBuf = gpu_mem_allocator.allocate_instance_untyped(
-          streaming_pre_pos_enc_size * size_of_dt);
-    }
     outputTmp = gpu_mem_allocator.allocate_instance<half>(output_tmp_size);
 
     token_infos =
@@ -612,11 +572,6 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     request_available = reinterpret_cast<bool *>(
         reinterpret_cast<char *>(handler.batch_config_metadata) +
         sizeof(BatchConfig::tokensInfo) + sizeof(BatchConfig::requestsInfo));
-    streaming_cache_infos = reinterpret_cast<StreamingCacheInfo *>(
-        reinterpret_cast<char *>(handler.batch_config_metadata) +
-        sizeof(BatchConfig::tokensInfo) + sizeof(BatchConfig::requestsInfo) +
-        sizeof(BatchConfig::request_available) +
-        sizeof(BatchConfig::causalMask));
 
     if (offload) {
       // token_infos =

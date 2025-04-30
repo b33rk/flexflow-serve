@@ -91,7 +91,6 @@ struct FFHandler {
       sizeof(BatchConfig::tokensInfo) + sizeof(BatchConfig::requestsInfo) +
           sizeof(BatchConfig::request_available) +
           sizeof(BatchConfig::causalMask) +
-          sizeof(BatchConfig::streamingCacheInfo) +
           sizeof(BatchConfig::committed_tokens) + sizeof(int),
       16);
 

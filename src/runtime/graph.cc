@@ -1605,17 +1605,15 @@ T SearchHelper::graph_cost(Graph const *graph,
                            bool include_sink_compute_time) const {
   TAG_ENTER(this->logger);
   this->logger->debug() << "PCG::SearchHelper::graph_cost: sink("
-                        << sink.node.guid << ") "
-                        << "sink.view(" << sink.view.ndims << " "
-                        << sink.view.start_device_id << " " << sink.view.dim[0]
-                        << ") "
-                        << "source(" << source.node.guid << ") "
-                        << "source.view(" << source.view.ndims << " "
+                        << sink.node.guid << ") " << "sink.view("
+                        << sink.view.ndims << " " << sink.view.start_device_id
+                        << " " << sink.view.dim[0] << ") " << "source("
+                        << source.node.guid << ") " << "source.view("
+                        << source.view.ndims << " "
                         << source.view.start_device_id << " "
-                        << source.view.dim[0] << ") "
-                        << "resources(" << resources.num_nodes << " "
-                        << resources.start_gpu_id << " "
-                        << resources.available_gpus_per_node << ")";
+                        << source.view.dim[0] << ") " << "resources("
+                        << resources.num_nodes << " " << resources.start_gpu_id
+                        << " " << resources.available_gpus_per_node << ")";
   if (this->model->config.profiling) {
     graph->print_dot();
   }
@@ -1738,11 +1736,11 @@ T SearchHelper::graph_cost(Graph const *graph,
     this->logger->spew() << "  op_total_mem: " << metrics.op_total_mem;
     float op_total_mem_mb = (float)((metrics.op_total_mem) / 1e4) / 1e2;
     this->logger->debug() << "[PCG::SearchHelper::graph_cost] Sink node cost ["
-                          << sink.node.to_string() << "]: "
-                          << "forward(" << metrics.forward_time << ") "
-                          << "backward(" << metrics.backward_time << ") "
-                          << "sync(" << metrics.sync_time << ") "
-                          << "memory(" << op_total_mem_mb << " MB)";
+                          << sink.node.to_string() << "]: " << "forward("
+                          << metrics.forward_time << ") " << "backward("
+                          << metrics.backward_time << ") " << "sync("
+                          << metrics.sync_time << ") " << "memory("
+                          << op_total_mem_mb << " MB)";
     this->add_sink_node_costs<T>(sink, metrics, &result);
   }
 
@@ -2351,7 +2349,6 @@ GraphOptimalViewSerialized
         sez.serialize(attn->position_bias);
         sez.serialize(attn->quantization_type);
         sez.serialize(attn->offload);
-        sez.serialize(attn->streaming_cache);
         sez.serialize(attn->num_kv_heads);
         sez.serialize(attn->tensor_parallelism_degree);
         sez.serialize(strlen(attn->name));
@@ -2386,7 +2383,6 @@ GraphOptimalViewSerialized
         sez.serialize(attn->scaling_factor);
         sez.serialize(attn->qk_prod_scaling);
         sez.serialize(attn->position_bias);
-        sez.serialize(attn->streaming_cache);
         sez.serialize(attn->num_kv_heads);
         sez.serialize(attn->tensor_parallelism_degree);
         sez.serialize(strlen(attn->name));
@@ -2837,7 +2833,7 @@ void FFModel::deserialize_graph_optimal_view(
             tensor_parallelism_degree;
         float dropout, scaling_factor;
         bool qkv_bias, final_bias, add_zero_attn, scaling_query,
-            qk_prod_scaling, offload, streaming_cache, position_bias;
+            qk_prod_scaling, offload, position_bias;
         RotaryEmbeddingMeta rotary_embedding_meta;
         DataType quantization_type;
         size_t id, transformer_layer_id, deserialized_model_id;
@@ -2870,7 +2866,6 @@ void FFModel::deserialize_graph_optimal_view(
         dez.deserialize(position_bias);
         dez.deserialize(quantization_type);
         dez.deserialize(offload);
-        dez.deserialize(streaming_cache);
         dez.deserialize(num_kv_heads);
         dez.deserialize(tensor_parallelism_degree);
         size_t name_len;
@@ -2895,7 +2890,6 @@ void FFModel::deserialize_graph_optimal_view(
         params.position_bias = position_bias;
         params.quantization_type = quantization_type;
         params.offload = offload;
-        params.streaming_cache = streaming_cache;
         params.num_kv_heads = num_kv_heads;
         params.tensor_parallelism_degree = tensor_parallelism_degree;
         strcpy(params.name, name);
@@ -2908,7 +2902,7 @@ void FFModel::deserialize_graph_optimal_view(
             tensor_parallelism_degree;
         float dropout, scaling_factor;
         bool qkv_bias, final_bias, add_zero_attn, apply_rotary_embedding,
-            scaling_query, qk_prod_scaling, position_bias, streaming_cache;
+            scaling_query, qk_prod_scaling, position_bias;
         RotaryEmbeddingMeta rotary_embedding_meta;
         size_t id, transformer_layer_id, deserialized_model_id;
         dez.deserialize(id);
@@ -2938,7 +2932,6 @@ void FFModel::deserialize_graph_optimal_view(
         dez.deserialize(scaling_factor);
         dez.deserialize(qk_prod_scaling);
         dez.deserialize(position_bias);
-        dez.deserialize(streaming_cache);
         dez.deserialize(num_kv_heads);
         dez.deserialize(tensor_parallelism_degree);
         size_t name_len;
@@ -2961,7 +2954,6 @@ void FFModel::deserialize_graph_optimal_view(
         params.scaling_factor = scaling_factor;
         params.qk_prod_scaling = qk_prod_scaling;
         params.position_bias = position_bias;
-        params.streaming_cache = streaming_cache;
         params.num_kv_heads = num_kv_heads;
         params.tensor_parallelism_degree = tensor_parallelism_degree;
         strcpy(params.name, name);

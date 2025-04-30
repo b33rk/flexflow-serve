@@ -52,7 +52,6 @@ void parse_input_args(char **argv,
                       int &max_sequence_length,
                       int &max_output_length,
                       int &sampling_seed,
-                      bool &streaming_cache,
                       bool &slo_attainment_early_termination,
                       double &baseline_latency_ms,
                       double &ssm_spec_latency_ms,
@@ -142,10 +141,6 @@ void parse_input_args(char **argv,
       sampling_seed = std::stoi(argv[++i]);
       continue;
     }
-    if (!strcmp(argv[i], "--enable-streaming-cache")) {
-      streaming_cache = true;
-      continue;
-    }
     if (!strcmp(argv[i], "--slo-attainment-early-termination")) {
       slo_attainment_early_termination = true;
       continue;
@@ -227,7 +222,6 @@ void FlexFlow::top_level_task(Task const *task,
   RequestManager::DecodingMode decoding_mode =
       RequestManager::INCREMENTAL_DECODING;
   int sampling_seed = 0;
-  bool streaming_cache = false;
   bool slo_attainment_early_termination = false;
   double baseline_latency_ms = 50;
   double ssm_spec_latency_ms = 20;
@@ -259,7 +253,6 @@ void FlexFlow::top_level_task(Task const *task,
                    max_sequence_length,
                    max_output_length,
                    sampling_seed,
-                   streaming_cache,
                    slo_attainment_early_termination,
                    baseline_latency_ms,
                    ssm_spec_latency_ms,
@@ -368,7 +361,6 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_tree_depth(2);
   rm->set_max_tree_width(2);
   rm->set_verbose(verbose);
-  rm->set_streaming_cache(streaming_cache);
   rm->set_fcfs_slo(fcfs_slo);
   rm->set_stta(stta);
   rm->register_tokenizer(
@@ -382,7 +374,6 @@ void FlexFlow::top_level_task(Task const *task,
                               weights_filepath,
                               INC_DECODING_MODE,
                               generationConfig,
-                              streaming_cache,
                               use_full_precision,
                               /*qkv_bias*/ qwen);
   } else if (model_type == ModelType::OPT) {

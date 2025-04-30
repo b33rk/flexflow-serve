@@ -25,7 +25,6 @@ void LLAMA::create_llama_model(FFModel &ff,
                                std::string const &weight_file_path,
                                InferenceMode mode,
                                GenerationConfig generation_config,
-                               bool streaming_cache,
                                bool use_full_precision,
                                bool qkv_bias) {
   // do not apply cpu offload in beam search model.
@@ -104,18 +103,17 @@ void LLAMA::create_llama_model(FFModel &ff,
             llama_config.num_key_value_heads,
             llama_config.hidden_size / llama_config.num_attention_heads,
             llama_config.hidden_size / llama_config.num_attention_heads,
-            0.0f,    /*dropout*/
+            0.0f,     /*dropout*/
             qkv_bias, /*qkv_bias*/
-            false,   /*final_bias*/
-            false,   /*add_zero_attn*/
-            DT_NONE, /*data_type*/
-            NULL,    /*kernel_initializer*/
+            false,    /*final_bias*/
+            false,    /*add_zero_attn*/
+            DT_NONE,  /*data_type*/
+            NULL,     /*kernel_initializer*/
             llama_config.rotary_embedding_meta,
             false, /*scaling query*/
             1.0f,  /*scaling factor*/
             true,  /*qk_prod_scaling*/
             false, /*position_bias*/
-            streaming_cache,
             std::string("layers." + std::to_string(i) + ".self_attn")
                 .c_str() /*name*/
         );
@@ -129,12 +127,12 @@ void LLAMA::create_llama_model(FFModel &ff,
             llama_config.num_key_value_heads,
             llama_config.hidden_size / llama_config.num_attention_heads,
             llama_config.hidden_size / llama_config.num_attention_heads,
-            0.0f,    /*dropout*/
+            0.0f,     /*dropout*/
             qkv_bias, /*qkv_bias*/
-            false,   /*final_bias*/
-            false,   /*add_zero_attn*/
-            DT_NONE, /*data_type*/
-            nullptr, /*kernel_initializer*/
+            false,    /*final_bias*/
+            false,    /*add_zero_attn*/
+            DT_NONE,  /*data_type*/
+            nullptr,  /*kernel_initializer*/
             llama_config.rotary_embedding_meta,
             false, /*scaling query*/
             1.0f,  /*scaling factor*/
@@ -153,18 +151,17 @@ void LLAMA::create_llama_model(FFModel &ff,
             llama_config.num_key_value_heads,
             llama_config.hidden_size / llama_config.num_attention_heads,
             llama_config.hidden_size / llama_config.num_attention_heads,
-            0.0f,    /*dropout*/
+            0.0f,     /*dropout*/
             qkv_bias, /*qkv_bias*/
-            false,   /*final_bias*/
-            false,   /*add_zero_attn*/
-            DT_NONE, /*data_type*/
-            nullptr, /*kernel_initializer*/
+            false,    /*final_bias*/
+            false,    /*add_zero_attn*/
+            DT_NONE,  /*data_type*/
+            nullptr,  /*kernel_initializer*/
             llama_config.rotary_embedding_meta,
-            false,           /*scaling query*/
-            1.0f,            /*scaling factor*/
-            true,            /*qk_prod_scaling*/
-            false,           /*position_bias*/
-            streaming_cache, /*streaming_cache*/
+            false, /*scaling query*/
+            1.0f,  /*scaling factor*/
+            true,  /*qk_prod_scaling*/
+            false, /*position_bias*/
             std::string("layers." + std::to_string(i) + ".self_attn")
                 .c_str() /*name*/
         );

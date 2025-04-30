@@ -1242,6 +1242,7 @@ class Parameter(Tensor):
         assert ret_val == True
         return np_array
 
+
 # -----------------------------------------------------------------------
 # RotaryEmbeddingMeta
 # -----------------------------------------------------------------------
@@ -1963,7 +1964,7 @@ class FFModel(object):
         use_bias=True,
         name=None,
     ):
-        """Add a fused LayerNorm + Residual layer. This operator uses a single kernel, resulting in 
+        """Add a fused LayerNorm + Residual layer. This operator uses a single kernel, resulting in
         better efficiency compared to using separate element-wise add and LayerNorm operators.
 
         :param input: The input tensor
@@ -2023,8 +2024,8 @@ class FFModel(object):
         use_bias=True,
         name=None,
     ):
-        """Add a Attention Bias + Residual + LayerNorm layer. This operator uses a single kernel, 
-        resulting in better efficiency compared to using separate attention bias addition + 
+        """Add a Attention Bias + Residual + LayerNorm layer. This operator uses a single kernel,
+        resulting in better efficiency compared to using separate attention bias addition +
         element-wise residual addition + LayerNorm operators.
 
         :param input: The input tensor
@@ -2806,7 +2807,6 @@ class FFModel(object):
         scaling_factor=1.0,
         qk_prod_scaling=True,
         position_bias=False,
-        streaming_cache=False,
         name=None,
     ):
         """Defines the MultiHead Attention operation as described in Attention Is All You Need
@@ -2893,7 +2893,6 @@ class FFModel(object):
             scaling_factor,
             qk_prod_scaling,
             position_bias,
-            streaming_cache,
             c_name,
         )
         self.add_layer(OpType.SPEC_INC_MULTIHEAD_SELF_ATTENTION, name)
@@ -3027,7 +3026,6 @@ class FFModel(object):
         scaling_factor=1.0,
         qk_prod_scaling=True,
         position_bias=False,
-        streaming_cache=False,
         name=None,
     ):
         """Defines the multi-query head attention, which allows a different number of Q and KV heads,
@@ -3118,7 +3116,6 @@ class FFModel(object):
             scaling_factor,
             qk_prod_scaling,
             position_bias,
-            streaming_cache,
             c_name,
         )
         self.add_layer(OpType.INC_MULTIHEAD_ATTENTION, name)
@@ -3873,7 +3870,9 @@ class FFModel(object):
         c_input_texts = [get_c_name(prompt) for prompt in prompt_list]
         max_num_chars = 5 * (max_sequence_length + 100)
         c_output_texts = [ffi.new("char[]", max_num_chars) for prompt in prompt_list]
-        c_output_length_and_tokens = [ffi.new("int[]", max_sequence_length + 100) for prompt in prompt_list]
+        c_output_length_and_tokens = [
+            ffi.new("int[]", max_sequence_length + 100) for prompt in prompt_list
+        ]
         ffc().flexflow_model_generate(
             self.handle,
             len(prompt_list),
@@ -3883,13 +3882,16 @@ class FFModel(object):
             max_sequence_length,
             c_output_length_and_tokens,
         )
-        #output_length = c_output_length_and_tokens[0]
-        #output_tokens = []
-        #for i in range(output_length):
+        # output_length = c_output_length_and_tokens[0]
+        # output_tokens = []
+        # for i in range(output_length):
         #    output_tokens.append(c_output_length_and_tokens[i + 1])
         from flexflow.serve import GenerationResult
 
-        return [GenerationResult(ffi.string(c_output_text), []) for c_output_text in c_output_texts]
+        return [
+            GenerationResult(ffi.string(c_output_text), [])
+            for c_output_text in c_output_texts
+        ]
 
     def set_position_offset(self, offset):
         ffc().flexflow_model_set_position_offset(self.handle, offset)
@@ -4250,23 +4252,28 @@ class RequestManager(object):
 
     def set_max_requests_per_batch(self, max_requests):
         return ffc().flexflow_request_manager_set_max_requests_per_batch(
-            self.handle, max_requests)
-    
+            self.handle, max_requests
+        )
+
     def set_max_tokens_per_batch(self, max_tokens):
         return ffc().flexflow_request_manager_set_max_tokens_per_batch(
-            self.handle, max_tokens)
-    
+            self.handle, max_tokens
+        )
+
     def set_max_spec_tree_token_num(self, max_tokens):
         return ffc().flexflow_request_manager_set_max_spec_tree_token_num(
-            self.handle, max_tokens)
-    
+            self.handle, max_tokens
+        )
+
     def set_max_sequence_length(self, max_length):
         return ffc().flexflow_request_manager_set_max_sequence_length(
-            self.handle, max_length)
+            self.handle, max_length
+        )
 
     def set_max_output_length(self, max_length):
         return ffc().flexflow_request_manager_set_max_output_length(
-            self.handle, max_length)
+            self.handle, max_length
+        )
 
     def start_server(self, model):
         return ffc().flexflow_request_manager_start_background_server(
@@ -4274,8 +4281,9 @@ class RequestManager(object):
         )
 
     def stop_server(self):
-        return ffc().flexflow_request_manager_terminate_background_server(
-            self.handle)
+        return ffc().flexflow_request_manager_terminate_background_server(self.handle)
+
+
 # -----------------------------------------------------------------------
 # InferenceManager
 # -----------------------------------------------------------------------
@@ -4303,6 +4311,7 @@ class InferenceManager(object):
             self.handle, model.handle, fileloader.handle
         )
 
+
 # -----------------------------------------------------------------------
 # FileDataLoader
 # -----------------------------------------------------------------------
@@ -4319,7 +4328,7 @@ class FileDataLoader(object):
         hidden_dim,
         head_dim,
         tensor_parallelism_degree,
-        use_full_precision
+        use_full_precision,
     ):
         c_weight_file_path = get_c_name(weight_file_path)
         self.handle = ffc().flexflow_file_data_loader_create(
@@ -4329,14 +4338,12 @@ class FileDataLoader(object):
             hidden_dim,
             head_dim,
             tensor_parallelism_degree,
-            use_full_precision
+            use_full_precision,
         )
         self._handle = ffi.gc(self.handle, ffc().flexflow_file_data_loader_destroy)
 
     def load_weights(self, model):
         # Check data type and create use_full_precision boolean
-        #assert data_type == DataType.DT_FLOAT or data_type == DataType.DT_HALF
-        #use_full_precision = data_type == DataType.DT_FLOAT
-        ffc().flexflow_file_data_loader_load_weights(
-            self.handle, model.handle
-        )
+        # assert data_type == DataType.DT_FLOAT or data_type == DataType.DT_HALF
+        # use_full_precision = data_type == DataType.DT_FLOAT
+        ffc().flexflow_file_data_loader_load_weights(self.handle, model.handle)

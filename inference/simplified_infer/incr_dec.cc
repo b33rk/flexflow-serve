@@ -308,7 +308,6 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_tree_depth(8);
   rm->set_max_tree_width(16);
   rm->set_verbose(verbose);
-  rm->set_streaming_cache(false);
   rm->register_tokenizer(
       model_type, bos_token_id, eos_token_ids, tokenizer_filepath);
   rm->register_output_filepath(file_paths.log_file_path);

@@ -42,7 +42,6 @@ public:
                                 bool _qk_prod_scaling,
                                 bool _position_bias,
                                 bool allocate_weights,
-                                bool _streaming_cache,
                                 int _tensor_parallelism_degree,
                                 char const *name);
   SpecIncMultiHeadSelfAttention(FFModel &model,
@@ -63,7 +62,6 @@ public:
                                 bool _qk_prod_scaling,
                                 bool _position_bias,
                                 bool allocate_weights,
-                                bool _streaming_cache,
                                 int _tensor_parallelism_degree,
                                 char const *name);
   SpecIncMultiHeadSelfAttention(FFModel &model,
@@ -128,7 +126,6 @@ public:
   RotaryEmbeddingMeta rotary_embedding_meta;
   int hidden_size, qk_dim, v_dim, o_dim;
   int qoSeqLength, kvSeqLength;
-  bool streaming_cache;
 };
 
 class SpecIncMultiHeadSelfAttentionMeta : public IncMultiHeadSelfAttentionMeta {

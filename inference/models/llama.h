@@ -108,7 +108,6 @@ public:
                                  std::string const &weight_file_path,
                                  InferenceMode mode,
                                  GenerationConfig generation_config,
-                                 bool streaming_cache,
                                  bool use_full_precision = false,
                                  bool qkv_bias = false);
 };
