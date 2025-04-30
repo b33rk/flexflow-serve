@@ -465,7 +465,9 @@ private:
   State request_manager_status;
   BackgroundServerStatus background_server_status;
   DecodingMode decoding_mode;
+  [[deprecated("Should not be used in chunked branch.")]]
   PrefillModel prefill_model;
+  [[deprecated("Should not be used in chunked branch.")]]
   bool speculative_sampling = false;
   bool memory_occupancy = false;
   bool slo_violation_early_termination = false;
@@ -515,6 +517,8 @@ private:
   int num_running_requests = 0;
   // Available requests in the batch config
   bool request_available[BatchConfig::MAX_NUM_REQUESTS];
+  // Requests in prompt phase
+  bool request_in_prompt_phase[BatchConfig::MAX_NUM_REQUESTS];
   int num_available_requests = 0;
   int ssm_completed = true;
   int ssm_tree_depth = 0;
@@ -536,6 +540,7 @@ private:
   bool load_pending_request_to_batch();
   void request_update_attainment(int index, bool attained);
   void request_complete_clean_up(int batch_index);
+  [[deprecated("Should not be used in chunked branch.")]]
   void request_offload_from_batch(int batch_index);
   void request_load_onto_batch(int batch_index);
   /* ---------- Incremental Decoding Helper Functions ---------- */

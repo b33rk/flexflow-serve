@@ -101,8 +101,8 @@ int Request::decode_length() const {
 RequestManager::RequestManager()
     : background_server_status(INITIALIZED), verbose(false),
       next_available_guid(1000000), num_processed_requests(0),
-      total_request_run_time(0.0f), request_manager_status(PREFILLING),
-      decoding_mode(INCREMENTAL_DECODING), prefill_model(SSM) {
+      total_request_run_time(0.0f), request_manager_status(LLM_VERIFY),
+      decoding_mode(SPECULATIVE_DECODING) {
   // The following config parameters are set
   // during ffmodel.compile()
   // Initialize them to -1 to make sure no one
@@ -121,6 +121,9 @@ RequestManager::RequestManager()
   std::fill(std::begin(request_available), std::end(request_available), false);
   std::fill(
       std::begin(guid_of_requests), std::end(guid_of_requests), INVALID_GUID);
+  std::fill(std::begin(request_in_prompt_phase),
+            std::end(request_in_prompt_phase),
+            false);
 }
 
 void RequestManager::set_max_requests_per_batch(int max_num_requests) {
@@ -756,26 +759,29 @@ BatchConfigFuture RequestManager::get_next_batch_config(
   return runtime->execute_task(ctx, launcher);
 }
 
-// BatchConfig RequestManager::get_next_batch_config_task(
-//     Task const *task,
-//     std::vector<PhysicalRegion> const &regions,
-//     Context ctx,
-//     Runtime *runtime) {
-//   RequestManager *rm = *((RequestManager **)task->args);
-//   if (rm->request_manager_status == PREFILLING and rm->prefill_model == SSM
-//   and
-//       rm->current_ssm_step != 0) {
-//     // Return an empty batch config, because we only need on step for SSM
-//     // prefilling, and the rest is placeholder for scheduling
-//     return rm->get_next_batch_config(InferenceResult());
-//   } else if (rm->request_manager_status == SSM_SPEC and rm->ssm_completed) {
-//     return rm->get_next_batch_config(InferenceResult());
-//   }
+/* Old version. */
+/*
+BatchConfig RequestManager::get_next_batch_config_task(
+    Task const *task,
+    std::vector<PhysicalRegion> const &regions,
+    Context ctx,
+    Runtime *runtime) {
+  RequestManager *rm = *((RequestManager **)task->args);
+  if (rm->request_manager_status == PREFILLING and rm->prefill_model == SSM
+  and
+      rm->current_ssm_step != 0) {
+    // Return an empty batch config, because we only need on step for SSM
+    // prefilling, and the rest is placeholder for scheduling
+    return rm->get_next_batch_config(InferenceResult());
+  } else if (rm->request_manager_status == SSM_SPEC and rm->ssm_completed) {
+    return rm->get_next_batch_config(InferenceResult());
+  }
 
-//   InferenceResult const &result =
-//       Future(task->futures[0]).get_result<InferenceResult>();
-//   return rm->get_next_batch_config(result);
-// }
+  InferenceResult const &result =
+      Future(task->futures[0]).get_result<InferenceResult>();
+  return rm->get_next_batch_config(result);
+}
+*/
 
 /* New for chunked prefill */
 BatchConfig RequestManager::get_next_batch_config_task(
@@ -1092,6 +1098,8 @@ void RequestManager::request_complete_clean_up(int batch_index) {
   }
 }
 
+/* Deprecated */
+/*
 void RequestManager::request_offload_from_batch(int batch_index) {
   RequestGuid guid = guid_of_requests[batch_index];
   Request &request = all_requests[guid];
@@ -1099,6 +1107,7 @@ void RequestManager::request_offload_from_batch(int batch_index) {
   request_available[batch_index] = false;
   num_available_requests--;
 }
+*/
 
 void RequestManager::request_load_onto_batch(int batch_index) {
   RequestGuid guid = guid_of_requests[batch_index];
@@ -1234,8 +1243,7 @@ void RequestManager::update_inference_results(InferenceResult const &result) {
     // Update nothing
     // Load the pending request to the batch
     load_pending_request_to_batch();
-    request_manager_status = SSM_SPEC;
-    current_ssm_step = 0;
+    request_manager_status = LLM_VERIFY;
     return;
   }
 
