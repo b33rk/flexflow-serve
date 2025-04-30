@@ -838,7 +838,7 @@ bool RequestManager::load_pending_request_to_batch() {
   if (get_eval_overhead_breakdown()) {
     load_request_start = Realm::Clock::current_time_in_microseconds();
   }
-  if (num_running_requests >= get_max_requests_per_batch()) {
+  if (num_available_requests >= get_max_requests_per_batch()) {
     if (get_eval_overhead_breakdown()) {
       eval_other_latency_us +=
           Realm::Clock::current_time_in_microseconds() - load_request_start;
@@ -847,7 +847,7 @@ bool RequestManager::load_pending_request_to_batch() {
   }
   std::unique_lock<std::mutex> lock(request_queue_mutex);
   if (pending_request_queue.empty()) {
-    if (num_running_requests > 0) {
+    if (num_available_requests > 0) {
       // No pending request to process, but there are running requests in the
       // batch. Do nothing and return
       if (get_eval_overhead_breakdown()) {
@@ -875,7 +875,7 @@ bool RequestManager::load_pending_request_to_batch() {
   if (profiling.server_start_time == 0) {
     reset_profiling_statistics();
   }
-  while (num_running_requests < get_max_requests_per_batch() &&
+  while (num_available_requests < get_max_requests_per_batch() &&
          !pending_request_queue.empty()) {
     RequestGuid guid = pending_request_queue.front().guid;
     pending_request_queue.pop();
@@ -896,7 +896,6 @@ bool RequestManager::load_pending_request_to_batch() {
     request->batch_index = request_index;
     request->prompt_len = request->tokens.size();
     guid_of_requests[request_index] = guid;
-    num_running_requests++;
     request_available[request_index] = true;
     num_available_requests++;
     // Initialize the bitmask for the new request with its prompt length
@@ -987,7 +986,6 @@ void RequestManager::request_complete_clean_up(int batch_index) {
       Realm::Clock::current_time_in_microseconds();
   Request &request = all_requests[guid];
   guid_of_requests[batch_index] = INVALID_GUID;
-  num_running_requests--;
   request_available[batch_index] = false;
   num_available_requests--;
   request.status = Request::COMPLETED;
@@ -1239,7 +1237,7 @@ void RequestManager::update_inference_results(InferenceResult const &result) {
 /* New for chunked prefill */
 void RequestManager::update_inference_results(InferenceResult const &result) {
   // Update the inference results
-  if (num_running_requests == 0) {
+  if (num_available_requests == 0) {
     // Update nothing
     // Load the pending request to the batch
     load_pending_request_to_batch();
@@ -2072,6 +2070,9 @@ BatchConfig RequestManager::prepare_verify_batch_config() {
   std::copy(std::begin(request_available),
             std::end(request_available),
             std::begin(new_bc.request_available));
+  std::copy(std::begin(request_in_prompt_phase),
+            std::end(request_in_prompt_phase),
+            std::begin(new_bc.request_in_prompt_phase));
   new_bc.num_available_requests = num_available_requests;
 
   for (int request_index = 0; request_index < get_max_requests_per_batch();
@@ -2332,17 +2333,17 @@ bool RequestManager::update_ssm_inference_results(
   // Stop conditions
   if (current_ssm_step == ssm_tree_depth) {
     // Prune the token tree at the last step
-    if (!spec_infer_old_version) {
-      static double schedule_start = 0.0;
-      if (get_eval_overhead_breakdown()) {
-        schedule_start = Realm::Clock::current_time_in_microseconds();
-      }
-      prune_token_tree();
-      if (get_eval_overhead_breakdown()) {
-        eval_schedule_latency_us +=
-            Realm::Clock::current_time_in_microseconds() - schedule_start;
-      }
+    // TODO: move this pruning to prepare_verify_batch_config
+    static double schedule_start = 0.0;
+    if (get_eval_overhead_breakdown()) {
+      schedule_start = Realm::Clock::current_time_in_microseconds();
     }
+    prune_token_tree();
+    if (get_eval_overhead_breakdown()) {
+      eval_schedule_latency_us +=
+          Realm::Clock::current_time_in_microseconds() - schedule_start;
+    }
+
     // Update profiling statistics before returning
     profiling.ssm_step_times.push_back(
         (Realm::Clock::current_time_in_microseconds() -

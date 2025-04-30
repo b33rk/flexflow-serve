@@ -323,6 +323,7 @@ public:
   void set_memory_occupancy(bool memory_occupancy);
   void
       set_slo_violation_early_termination(bool slo_violation_early_termination);
+  [[deprecated("Should not be used in chunked branch.")]]
   void set_spec_infer_old_version(bool spec_infer_old_version);
   void set_greedy_schedule(bool greedy_schedule);
   void set_equal_schedule(bool equal_schedule);
@@ -332,6 +333,7 @@ public:
   void set_chunk_size(int chunk_size);
   void set_spec_batch_size(int spec_batch_size);
   void set_chunked_prefill_buffer_size(int chunked_prefill_buffer_size);
+  [[deprecated("Should not be used in chunked branch.")]]
   bool get_spec_infer_old_version();
   bool get_greedy_schedule();
   bool get_equal_schedule();
@@ -471,6 +473,7 @@ private:
   bool speculative_sampling = false;
   bool memory_occupancy = false;
   bool slo_violation_early_termination = false;
+  [[deprecated("Should not be used in chunked branch.")]]
   bool spec_infer_old_version = false;
   bool greedy_schedule = false;
   bool equal_schedule = false;
@@ -514,7 +517,6 @@ private:
   // Note that we may have some prefilled requests not in the batch config,
   // but should be re-considered in the decoding phase.
   int guid_of_requests[BatchConfig::MAX_NUM_REQUESTS];
-  int num_running_requests = 0;
   // Available requests in the batch config
   bool request_available[BatchConfig::MAX_NUM_REQUESTS];
   // Requests in prompt phase
@@ -594,6 +596,7 @@ private:
                                    BatchConfig::TokenId token_id);
   void add_tokens_to_spec_token_tree(
       InferenceResult const &ssm_inference_result);
+  [[deprecated("Should not be used in chunked branch.")]]
   void add_tokens_to_spec_token_tree_old_version(
       InferenceResult const &ssm_inference_result);
   void prune_token_tree();
