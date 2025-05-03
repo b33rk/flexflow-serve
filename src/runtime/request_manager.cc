@@ -897,9 +897,9 @@ bool RequestManager::load_pending_request_to_batch() {
     request->prompt_len = request->tokens.size();
     guid_of_requests[request_index] = guid;
     request_available[request_index] = true;
+    request_in_prompt_phase[request_index] = true;
     num_available_requests++;
     // Initialize the bitmask for the new request with its prompt length
-    init_bitmask_prompt(guid, request->tokens.size());
 
     prefilling_requests.push_back(request);
 
@@ -916,7 +916,12 @@ bool RequestManager::load_pending_request_to_batch() {
 
 /* This function decides how many tokens should be used to do speculation and
  * how many tokens should be used to do prefilling */
-std::pair<int, int> RequestManager::get_num_tokens_in_batch() {
+/* The first return value is the number of tokens used for speculation
+ * The second return value is the number of tokens used for prefill
+ * The third return value is the total number of tokens waiting to be prefilled
+ */
+std::tuple<int, int, int>
+    RequestManager::get_num_spec_prefill_tokens_in_batch() {
   // Only called before LLM verification
   assert(decoding_mode == SPECULATIVE_DECODING and
          request_manager_status == LLM_VERIFY);
@@ -930,31 +935,35 @@ std::pair<int, int> RequestManager::get_num_tokens_in_batch() {
 
   // No prefilling tokens in the batch, only do speculation
   if (total_num_prefill_tokens == 0) {
-    return std::make_pair(spec_batch_size, 0);
+    return std::make_tuple(spec_batch_size, 0, 0);
   }
 
   // If the number of tokens in the batch is larger than the maximum number of
   // tokens we allow for prefill, we form a batch of chunk_size, in which
   // spec_batch_size tokens are used for speculation and the rest for prefill
   if (total_num_prefill_tokens > chunk_size - spec_batch_size) {
-    return std::make_pair(spec_batch_size, chunk_size - spec_batch_size);
+    return std::make_tuple(spec_batch_size,
+                           chunk_size - spec_batch_size,
+                           total_num_prefill_tokens);
   }
 
   // If the number of tokens in the batch is smaller than the maximum, we round
-  // the total number of tokens to chunked_prefill_buffer_size (a power of 2)
-  // that is greater than spec_batch_size + total_num_prefill_tokens The number
-  // of tokens used for speculation is spec_batch_size +
+  // the total number of tokens to the minimal multiple of
+  // chunked_prefill_buffer_size (a power of 2) that is greater than
+  // spec_batch_size + total_num_prefill_tokens
+  // The number of tokens used for speculation is spec_batch_size +
   // (chunked_prefill_buffer_size - total_num_prefill_tokens %
   // chunked_prefill_buffer_size)
   // The number of tokens used for prefill is total_num_prefill_tokens
 
-  if (total_num_prefill_tokens <= chunked_prefill_buffer_size) {
+  if (total_num_prefill_tokens <= chunk_size - spec_batch_size) {
     // If the number of tokens in the batch is smaller than the batch size, we
     // need to do prefill
-    return std::make_pair(spec_batch_size + (chunked_prefill_buffer_size -
-                                             (total_num_prefill_tokens %
-                                              chunked_prefill_buffer_size)),
-                          total_num_prefill_tokens);
+    return std::make_tuple(spec_batch_size + (chunked_prefill_buffer_size -
+                                              (total_num_prefill_tokens %
+                                               chunked_prefill_buffer_size)),
+                           total_num_prefill_tokens,
+                           total_num_prefill_tokens);
   }
 }
 
@@ -1107,12 +1116,15 @@ void RequestManager::request_offload_from_batch(int batch_index) {
 }
 */
 
+/* Deprecated */
+/*
 void RequestManager::request_load_onto_batch(int batch_index) {
   RequestGuid guid = guid_of_requests[batch_index];
   Request &request = all_requests[guid];
   request_available[batch_index] = true;
   num_available_requests++;
 }
+*/
 
 void RequestManager::update_token_tree_depth() {
   ssm_tree_depth = min(int(std::ceil((double)get_max_tokens_per_batch() /
@@ -1247,7 +1259,7 @@ void RequestManager::update_inference_results(InferenceResult const &result) {
 
   switch (request_manager_status) {
     case LLM_VERIFY: {
-      bool request_completed = update_llm_verify_results(result);
+      update_llm_verify_results(result);
       load_pending_request_to_batch();
       request_manager_status = SSM_SPEC;
       current_ssm_step = 0;
@@ -1303,7 +1315,7 @@ bool RequestManager::update_llm_prefill_results(InferenceResult const &result) {
                 -1, (int)request->tokens.size() - 1, request->tokens.back()});
             init_token_tree(request->guid);
             add_root_to_spec_token_tree(request->guid, request->tokens.back());
-            update_bitmask_prompt(request->guid, 1);
+            update_bitmask_ssm_commit(request->guid, 1);
           }
         }
       } else {
@@ -1875,15 +1887,22 @@ BatchConfig RequestManager::prepare_first_spec_batch_config() {
   BatchConfig new_bc;
   new_bc.inference_mode = InferenceMode::TREE_SEARCH_MODE;
   // Assume that only one small model is in use now
-  new_bc.prompt_phase = true;
   std::copy(std::begin(request_available),
             std::end(request_available),
             std::begin(new_bc.request_available));
+  // All requests are treated as if they are in the prefill phase
+  std::copy(std::begin(request_available),
+            std::end(request_available),
+            std::begin(new_bc.request_prompt_phase));
   new_bc.num_available_requests = num_available_requests;
 
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
+      continue;
+    }
+    if (request_in_prompt_phase[request_index]) {
+      // This request is in the prompt phase, handle it later
       continue;
     }
     RequestGuid guid = guid_of_requests[request_index];
@@ -1901,6 +1920,7 @@ BatchConfig RequestManager::prepare_first_spec_batch_config() {
 
     // Store committed tokens to tokensInfo
     int num_committed_tokens = committed_tokens.size();
+    /*
     if (num_committed_tokens == 1) {
       new_bc.requestsInfo[request_index].num_tokens_in_batch = 1;
       // The case where the prefilling is just finished. Although the last
@@ -1915,21 +1935,25 @@ BatchConfig RequestManager::prepare_first_spec_batch_config() {
           committed_tokens[0].token_id;
       new_bc.num_tokens++;
     } else {
-      for (int committed_token_index = 1;
-           committed_token_index < committed_tokens.size();
-           committed_token_index++) {
-        new_bc.tokensInfo[new_bc.num_tokens].request_index = request_index;
-        new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
-            committed_tokens[committed_token_index].to_index;
-        new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
-            committed_tokens[committed_token_index].to_index;
-        new_bc.tokensInfo[new_bc.num_tokens].token_id =
-            committed_tokens[committed_token_index].token_id;
-        new_bc.num_tokens++;
-      }
-      new_bc.requestsInfo[request_index].num_tokens_in_batch =
-          num_committed_tokens - 1;
     }
+    */
+
+    // At least include a root token and a correction token
+    assert(num_committed_tokens >= 2);
+    for (int committed_token_index = 1;
+         committed_token_index < committed_tokens.size();
+         committed_token_index++) {
+      new_bc.tokensInfo[new_bc.num_tokens].request_index = request_index;
+      new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
+          committed_tokens[committed_token_index].to_index;
+      new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
+          committed_tokens[committed_token_index].to_index;
+      new_bc.tokensInfo[new_bc.num_tokens].token_id =
+          committed_tokens[committed_token_index].token_id;
+      new_bc.num_tokens++;
+    }
+    new_bc.requestsInfo[request_index].num_tokens_in_batch =
+        num_committed_tokens - 1;
 
     request.first_token_offset_in_batch =
         new_bc.requestsInfo[request_index].first_token_offset_in_batch;
@@ -1944,13 +1968,65 @@ BatchConfig RequestManager::prepare_first_spec_batch_config() {
       profiling_requests[guid].start_decoding_time =
           Realm::Clock::current_time_in_microseconds();
     }
-    profiling.ssm_step_start = Realm::Clock::current_time_in_microseconds();
   }
 
-  if (!spec_infer_old_version) {
-    // Only dynamically update the tree depth in the new version
-    update_token_tree_depth();
+  // Handle the requests in the prompt phase
+  for (auto const request_ptr : prefilling_requests) {
+    int request_index = request_ptr->batch_index;
+    assert(request_available[request_index]);
+    assert(request_in_prompt_phase[request_index]);
+    Request &request = all_requests[guid_of_requests[request_index]];
+    assert(request.status == Request::RUNNING);
+
+    if (request.ssm_prefill_len == request.llm_prefill_len) {
+      // This request is not prefilled in the last LLM step
+      break;
+    }
+
+    new_bc.requestsInfo[request_index].first_token_offset_in_batch =
+        new_bc.num_tokens;
+    new_bc.requestsInfo[request_index].first_token_index_in_request =
+        request.ssm_prefill_len;
+
+    assert(request.ssm_prefill_len == request.ssm_cache_size);
+    assert(request.first_token_offset_in_batch == request.ssm_prefill_len);
+
+    // Store the tokens in the prompt phase
+    for (int idx = 0; idx < request.num_tokens_in_batch; idx++) {
+      new_bc.tokensInfo[new_bc.num_tokens].request_index = request_index;
+      new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
+          request.ssm_prefill_len + idx;
+      new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
+          request.ssm_prefill_len + idx;
+      new_bc.tokensInfo[new_bc.num_tokens].token_id =
+          request.tokens[request.ssm_prefill_len + idx];
+      new_bc.num_tokens++;
+    }
+    new_bc.requestsInfo[request_index].num_tokens_in_batch =
+        request.num_tokens_in_batch;
+    request.first_token_offset_in_batch =
+        new_bc.requestsInfo[request_index].first_token_offset_in_batch;
+
+    if (request.llm_prefill_len == request.prompt_len) {
+      // This request has finished LLM prefilling
+      // We need to commit one more token
+      new_bc.tokensInfo[new_bc.num_tokens].request_index = request_index;
+      new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
+          request.ssm_prefill_len + request.num_tokens_in_batch;
+      new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
+          request.ssm_prefill_len + request.num_tokens_in_batch;
+      new_bc.tokensInfo[new_bc.num_tokens].token_id = request.tokens.back();
+      new_bc.num_tokens++;
+      new_bc.requestsInfo[request_index].num_tokens_in_batch++;
+      request.num_tokens_in_batch++;
+    }
+
+    // Causal mask is already updated in update_llm_verify_results
+    new_bc.causalMask[request_index] = request.causal_mask;
   }
+
+  profiling.ssm_step_start = Realm::Clock::current_time_in_microseconds();
+
   if (verbose) {
     std::cout << "prepare_first_spec_batch_config NEW batchconfig:"
               << std::endl;
@@ -2072,12 +2148,40 @@ BatchConfig RequestManager::prepare_verify_batch_config() {
             std::begin(new_bc.request_available));
   std::copy(std::begin(request_in_prompt_phase),
             std::end(request_in_prompt_phase),
-            std::begin(new_bc.request_in_prompt_phase));
+            std::begin(new_bc.request_prompt_phase));
   new_bc.num_available_requests = num_available_requests;
+
+  // Decide the number of tokens in the batch
+  auto [spec_token_num, prefill_token_num, total_prefill_token_num] =
+      get_num_spec_prefill_tokens_in_batch();
+
+  // Debug outputs
+  std::cout << "[Debug] << spec_token_num: " << spec_token_num
+            << ", prefill_token_num: " << prefill_token_num
+            << ", total_prefill_token_num: " << total_prefill_token_num
+            << std::endl;
+
+  // Prune the token trees
+  // spec_token_num is the number of tokens in the batch that are
+  // assigned to the speculative token trees. However, the token trees in may
+  // not need such many tokens.
+  // remaining_spec_budget is the number of tokens assigned but not used.
+  int remaining_spec_budget = prune_token_tree(spec_token_num);
+  prefill_token_num = std::min(remaining_spec_budget + prefill_token_num,
+                               total_prefill_token_num);
+
+  // Debug outputs
+  std::cout << "[Debug] << remaining_spec_budget: " << remaining_spec_budget
+            << ", prefill_token_num: " << prefill_token_num << std::endl;
 
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
+      continue;
+    }
+    if (request_in_prompt_phase[request_index]) {
+      // This request is in the prompt phase, we should do the prefill based on
+      // the arrivial order so we do it later
       continue;
     }
     int guid = guid_of_requests[request_index];
@@ -2086,7 +2190,8 @@ BatchConfig RequestManager::prepare_verify_batch_config() {
 
     // 1. Maintain requestsInfo
     new_bc.requestsInfo[request_index].first_token_index_in_request =
-        request.tokens.size() - 1; // Exclude the last token
+        request.tokens.size() - 1; // The last token is the root of the token
+                                   // tree. It's index is length - 1
     new_bc.requestsInfo[request_index].first_token_offset_in_batch =
         new_bc.num_tokens;
     new_bc.requestsInfo[request_index].num_tokens_in_batch = 0;
@@ -2147,6 +2252,57 @@ BatchConfig RequestManager::prepare_verify_batch_config() {
     new_bc.causalMask[request_index] = create_llm_bitmask(guid);
   }
 
+  assert(new_bc.num_tokens == spec_token_num - remaining_spec_budget);
+
+  // Do the prefill in the arrivial order with best effort
+  for (auto const request_ptr : prefilling_requests) {
+    int request_index = request_ptr->batch_index;
+    assert(request_available[request_index]);
+    assert(request_in_prompt_phase[request_index]);
+    Request &request = all_requests[guid_of_requests[request_index]];
+    assert(request.status == Request::RUNNING);
+
+    int num_tokens_in_batch = std::min(
+        prefill_token_num, request.prompt_len - request.ssm_prefill_len);
+    assert(num_tokens_in_batch > 0);
+
+    new_bc.requestsInfo[request_index].first_token_offset_in_batch =
+        new_bc.num_tokens;
+    new_bc.requestsInfo[request_index].first_token_index_in_request =
+        request.llm_prefill_len;
+    new_bc.requestsInfo[request_index].num_tokens_in_batch =
+        num_tokens_in_batch;
+
+    // Load the tokens to BatchConfig.tokensInfo
+    for (int idx = 0; idx < num_tokens_in_batch; idx++) {
+      new_bc.tokensInfo[new_bc.num_tokens].request_index = request_index;
+      new_bc.tokensInfo[new_bc.num_tokens].abs_index_in_request =
+          new_bc.requestsInfo[request_index].first_token_index_in_request + idx;
+      new_bc.tokensInfo[new_bc.num_tokens].abs_depth_in_request =
+          new_bc.requestsInfo[request_index].first_token_index_in_request + idx;
+      new_bc.tokensInfo[new_bc.num_tokens].token_id =
+          request.tokens[request.llm_prefill_len + idx];
+      new_bc.num_tokens++;
+    }
+
+    request.first_token_offset_in_batch =
+        new_bc.requestsInfo[request_index].first_token_offset_in_batch;
+    request.num_tokens_in_batch =
+        new_bc.requestsInfo[request_index].num_tokens_in_batch;
+
+    // TODO: What about mask?
+    // Seems previous implementation doesn't have a prompt mask
+    make_bitmask_prompt(guid_of_requests[request_index],
+                        request.num_tokens_in_batch);
+    new_bc.causalMask[request_index] = request.causal_mask;
+
+    prefill_token_num -= num_tokens_in_batch;
+    if (prefill_token_num == 0) {
+      // No more tokens to prefill
+      break;
+    }
+  }
+
   if (verbose) {
     std::cout << "prepare_verify_batch_config NEW batchconfig:" << std::endl;
     new_bc.print();
@@ -2173,28 +2329,26 @@ bool RequestManager::is_eos_token(TokenId token_id) {
   return false;
 }
 
-bool RequestManager::update_llm_verify_results(
+void RequestManager::update_llm_verify_results(
     InferenceResult const &llm_verify_result) {
-  // We may have two types of InferenceResults, one is the results from
-  // sampling the large model, the other is the top-p / top-k logits of the
-  // large model, we can first implement the former one. For the latter one,
-  // we have to add a CPU based verify function.
-
   // Compare the results returned from the LLM and compare them with the
   // SSM's speculative token tree. For the greedy construction of the
   // speculative token tree, we can simply compare LLM's sample result at each
   // token, this is implemented in get_verify_results_greedy(). This function
   // stores the commmitted tokens into the corresponding fields in the
-  // Request. For the sampling construction of the speculative token tree, we
-  // need to implement a CPU based verify function.
+  // Request.
 
   // Update llm_cache_size with the last committed_tokens, and clear
   // committed_tokens
-  int nb_requests_decoded = 0;
+  int num_requests_decoded = 0;
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
       // Request in this slot is unavailable
+      continue;
+    }
+    if (request_in_prompt_phase[request_index]) {
+      // This request is in the prompt phase, no token to commit
       continue;
     }
     int guid = guid_of_requests[request_index];
@@ -2204,7 +2358,7 @@ bool RequestManager::update_llm_verify_results(
     request.committed_tokens.clear();
 
     profiling_requests[guid].llm_decoding_steps++;
-    nb_requests_decoded++;
+    num_requests_decoded++;
   }
 
   // Process the LLM results greedily
@@ -2213,15 +2367,19 @@ bool RequestManager::update_llm_verify_results(
   long long int current_time = Realm::Clock::current_time_in_microseconds();
   profiling.llm_step_times.push_back((current_time - profiling.llm_step_start) *
                                      1e-3);
-  profiling.requests_per_step.push_back(nb_requests_decoded);
-
-  bool request_completed = false;
+  // TODO: may need to add another variable to record the number of prefilling
+  // requests
+  profiling.requests_per_step.push_back(num_requests_decoded);
 
   // Iterate over the requests
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
       // Request in this slot is unavailable
+      continue;
+    }
+    if (request_in_prompt_phase[request_index]) {
+      // This request is in the prompt phase, handle it later
       continue;
     }
     int guid = guid_of_requests[request_index];
@@ -2236,9 +2394,6 @@ bool RequestManager::update_llm_verify_results(
         (current_time - profiling_requests[guid].start_decoding_time) * 1e-3;
     bool attained =
         request.decode_latency_ms <= get_request_expected_latency(request);
-    bool current_attained =
-        request.decode_latency_ms <=
-        get_request_expected_latency(request) + get_slo_constraint(request) * 6;
 
     // Initialize the token tree for the request
     init_token_tree(guid);
@@ -2260,21 +2415,55 @@ bool RequestManager::update_llm_verify_results(
         request.tokens.size() >= get_max_sequence_length()) {
       // Request is completed
       request_update_attainment(request_index, attained);
-      request_completed = true;
-      request_complete_clean_up(request_index);
-    } else if (!current_attained and slo_violation_early_termination) {
-      // Early drop that request
-      request_update_attainment(request_index, attained);
-      request_completed = true;
       request_complete_clean_up(request_index);
     } else {
-      update_bitmask_prompt(guid, request.committed_tokens.size() - 1);
+      update_bitmask_ssm_commit(guid, request.committed_tokens.size() - 1);
     }
   }
 
-  // Some requests may be completed after appending the verified tokens.
-  // If there is a request completed, return true.
-  return request_completed;
+  // Handle the prefilling requests
+  for (auto const request_ptr : prefilling_requests) {
+    int request_index = request_ptr->batch_index;
+    assert(request_available[request_index]);
+    assert(request_in_prompt_phase[request_index]);
+    Request &request = all_requests[guid_of_requests[request_index]];
+    assert(request.status == Request::RUNNING);
+
+    if (request.num_tokens_in_batch == 0) {
+      // No prefill tokens
+      break;
+    }
+
+    request.llm_cache_size += request.num_tokens_in_batch;
+    request.llm_prefill_len += request.num_tokens_in_batch;
+
+    profiling_requests[request.guid].llm_prefilling_steps++;
+
+    if (request.llm_prefill_len == request.prompt_len) {
+      // This request's prefilling completed
+
+      // Find the index of its last prefilled token
+      int index_last_token_in_batch =
+          request.first_token_offset_in_batch + request.num_tokens_in_batch - 1;
+      request.tokens.push_back(
+          llm_verify_result.token_ids[index_last_token_in_batch]);
+
+      if (is_eos_token(request.tokens.back())) {
+        request_update_attainment(request_index, true);
+        request_complete_clean_up(request.batch_index);
+      } else {
+        // Add the last token to the token tree
+        assert(request.committed_tokens.empty() &&
+               "The committed tokens should be empty.");
+        request.committed_tokens.push_back(Request::CommittedToken{
+            -1, (int)request.tokens.size() - 1, request.tokens.back()});
+        init_token_tree(request.guid);
+        add_root_to_spec_token_tree(request.guid, request.tokens.back());
+        // In the following SSM prefill, we have to include the new token
+        request.causal_mask.tree_or_prompt_size += 1;
+      }
+    }
+  }
 }
 
 bool RequestManager::update_ssm_inference_results(
@@ -2284,27 +2473,53 @@ bool RequestManager::update_ssm_inference_results(
   assert(current_ssm_step >= 1 &&
          "The current speculation step should be no less than 1");
 
-  // Here we assume that the order of the tokens in the last
-  // BatchConfig and hence the last InferenceResult is equal to
-  // the order of the request in the last BatchConfig
-  if (!spec_infer_old_version) {
-    static double schedule_start = 0.0;
-    if (get_eval_overhead_breakdown()) {
-      schedule_start = Realm::Clock::current_time_in_microseconds();
+  // Handle the prefilling requests first because those requests finishing their
+  // prefill will join speculation in later sections of the code
+  if (current_ssm_step == 1) {
+    for (auto const request_ptr : prefilling_requests) {
+      int request_index = request_ptr->batch_index;
+      assert(request_available[request_index]);
+      assert(request_in_prompt_phase[request_index]);
+      Request &request = all_requests[guid_of_requests[request_index]];
+      assert(request.status == Request::RUNNING);
+
+      if (request.num_tokens_in_batch == 0) {
+        // No prefill tokens
+        break;
+      }
+
+      if (request.ssm_prefill_len == request.prompt_len) {
+        request.ssm_prefill_len += request.num_tokens_in_batch - 1;
+        request.ssm_cache_size += request.num_tokens_in_batch;
+        // This request's prefilling completed
+        request_in_prompt_phase[request_index] = false;
+        prefilling_requests.pop_front();
+      } else {
+        request.ssm_prefill_len += request.num_tokens_in_batch;
+        request.ssm_cache_size += request.num_tokens_in_batch;
+      }
+      assert(request.ssm_prefill_len == request.llm_prefill_len);
     }
-    add_tokens_to_spec_token_tree(ssm_inference_result);
-    if (get_eval_overhead_breakdown()) {
-      eval_schedule_latency_us +=
-          Realm::Clock::current_time_in_microseconds() - schedule_start;
-    }
-  } else {
-    add_tokens_to_spec_token_tree_old_version(ssm_inference_result);
+  }
+
+  static double schedule_start = 0.0;
+  if (get_eval_overhead_breakdown()) {
+    schedule_start = Realm::Clock::current_time_in_microseconds();
+  }
+  add_tokens_to_spec_token_tree(ssm_inference_result);
+  if (get_eval_overhead_breakdown()) {
+    eval_schedule_latency_us +=
+        Realm::Clock::current_time_in_microseconds() - schedule_start;
   }
 
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
       // Request in this slot is unavailable
+      continue;
+    }
+    if (request_in_prompt_phase[request_index]) {
+      // Request in prompt phase, handle it later
       continue;
     }
     RequestGuid guid = guid_of_requests[request_index];
@@ -2330,19 +2545,30 @@ bool RequestManager::update_ssm_inference_results(
     }
   }
 
+  bool stop_condition = false;
+  // Check if all available requests are in the prompt phase, if so, we can
+  // complete ssm running in the current speculation iteration
+  bool all_prompt_stop =
+      (current_ssm_step == 1) &&
+      (std::equal(request_available,
+                  request_available + get_max_requests_per_batch(),
+                  request_in_prompt_phase));
+  bool reach_tree_depth_stop = current_ssm_step == ssm_tree_depth;
+  if (all_prompt_stop || reach_tree_depth_stop) {
+    stop_condition = true;
+  }
+
   // Stop conditions
-  if (current_ssm_step == ssm_tree_depth) {
-    // Prune the token tree at the last step
-    // TODO: move this pruning to prepare_verify_batch_config
-    static double schedule_start = 0.0;
-    if (get_eval_overhead_breakdown()) {
-      schedule_start = Realm::Clock::current_time_in_microseconds();
-    }
-    prune_token_tree();
-    if (get_eval_overhead_breakdown()) {
-      eval_schedule_latency_us +=
-          Realm::Clock::current_time_in_microseconds() - schedule_start;
-    }
+  if (stop_condition) {
+    // TODO: move these overhead breakdown lines
+    // static double schedule_start = 0.0;
+    // if (get_eval_overhead_breakdown()) {
+    //   schedule_start = Realm::Clock::current_time_in_microseconds();
+    // }
+    // if (get_eval_overhead_breakdown()) {
+    //   eval_schedule_latency_us +=
+    //       Realm::Clock::current_time_in_microseconds() - schedule_start;
+    // }
 
     // Update profiling statistics before returning
     profiling.ssm_step_times.push_back(
@@ -2357,7 +2583,7 @@ bool RequestManager::update_ssm_inference_results(
 
 /* --------- Bitmask Related Functions --------- */
 
-void RequestManager::init_bitmask_prompt(RequestGuid guid, int prompt_length) {
+void RequestManager::make_bitmask_prompt(RequestGuid guid, int prompt_length) {
   // This method is called by load_pending_request_to_batch when there is a
   // new request to load into the batch
   Request &request = all_requests[guid];
@@ -2367,12 +2593,12 @@ void RequestManager::init_bitmask_prompt(RequestGuid guid, int prompt_length) {
   bitmask.clear_bitmask();
   // Set the info for the mask which is used to store the KV cache
   bitmask.tree_or_prompt_size = prompt_length;
-  bitmask.current_layer_size = prompt_length;
-  bitmask.non_tree_cache_size = 0;
+  bitmask.current_layer_size = 0;
+  bitmask.non_tree_cache_size = request.llm_prefill_len;
 }
 
-void RequestManager::update_bitmask_prompt(RequestGuid guid,
-                                           int num_committed_tokens) {
+void RequestManager::update_bitmask_ssm_commit(RequestGuid guid,
+                                               int num_committed_tokens) {
   // This method modifies the bitmask in place
   // This method is called by update_llm_verify_results
   // 1. Clear the causal mask because the first SSM inference uses the prompt
@@ -2502,6 +2728,10 @@ void RequestManager::get_verify_results_greedy(
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
+      continue;
+    }
+    if (request_in_prompt_phase[request_index]) {
+      // Prompt phase, not involved in speculative decoding
       continue;
     }
     RequestGuid guid = guid_of_requests[request_index];
@@ -3479,6 +3709,11 @@ void RequestManager::add_tokens_to_spec_token_tree(
       // Request in this slot is unavailable
       continue;
     }
+    if (request_in_prompt_phase[request_index]) {
+      // Request in prompt phase does not participate in speculative
+      // decoding
+      continue;
+    }
     RequestGuid guid = guid_of_requests[request_index];
     Request &request = all_requests[guid];
     assert(request.status == Request::RUNNING);
@@ -3639,15 +3874,9 @@ void RequestManager::add_tokens_to_spec_token_tree_old_version(
   }
 }
 
-void RequestManager::prune_token_tree() {
-  if (get_greedy_schedule()) {
-    return prune_token_tree_greedy();
-  } else if (get_equal_schedule()) {
-    return prune_token_tree_equal();
-  }
-
+int RequestManager::prune_token_tree(int budget) {
   // Each reqeust has at least one token
-  int budget = get_max_tokens_per_batch() - num_available_requests;
+  budget -= num_available_requests;
   assert(budget >= 0);
 
   std::vector<std::pair<double, int>> num_tokens_to_decode_2_request_index;
@@ -3659,12 +3888,16 @@ void RequestManager::prune_token_tree() {
     if (!request_available[request_index]) {
       continue;
     }
+    if (request_in_prompt_phase[request_index]) {
+      continue;
+    }
     RequestGuid guid = guid_of_requests[request_index];
     Request &request = all_requests[guid];
     assert(request.status == Request::RUNNING);
     if (request.get_slo_ratio() > 999) { // infinity
       continue;
     }
+    // TODO: use latency from the map
     // double num_tokens_to_decode_per_step =
     //     (ssm_spec_latency_ms + llm_verify_latency_ms) * correction_factor /
     //     get_slo_constraint(request);
@@ -3697,9 +3930,6 @@ void RequestManager::prune_token_tree() {
        num_tokens_to_decode_2_request_index) {
     int request_index = num_tokens_to_decode_request_index_pair.second;
     RequestGuid guid = guid_of_requests[request_index];
-    // if (all_requests[guid].get_slo_ratio() < 0) {
-    //   continue;
-    // }
     add_tokens_toward_slo(guid,
                           budget,
                           num_tokens_to_decode_request_index_pair.first,
@@ -3708,16 +3938,16 @@ void RequestManager::prune_token_tree() {
 
   assert(budget >= 0);
   if (budget > 0) {
-    if (memory_occupancy) {
-      add_tokens_toward_memory_occupancy(budget);
-    } else {
-      add_tokens_toward_goodput(budget);
-    }
+    add_tokens_toward_goodput(budget);
   }
+
   // Clear the priority queue in each requests
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
+      continue;
+    }
+    if (request_in_prompt_phase[request_index]) {
       continue;
     }
     RequestGuid guid = guid_of_requests[request_index];
@@ -3732,8 +3962,12 @@ void RequestManager::prune_token_tree() {
         SharedTokenTreeNodePtrDoubleLess>(SharedTokenTreeNodePtrDoubleLess(),
                                           std::move(_prealloc_vector));
   }
+
+  return budget;
 }
 
+/* Deprecated */
+/*
 void RequestManager::prune_token_tree_equal() {
   // Each reqeust has at least one token
   int const equal_budget =
@@ -3763,7 +3997,10 @@ void RequestManager::prune_token_tree_equal() {
                                           std::move(_prealloc_vector));
   }
 }
+*/
 
+/* Deprecated */
+/*
 void RequestManager::prune_token_tree_greedy() {
   // Each reqeust has at least one token
   int budget = get_max_tokens_per_batch();
@@ -3800,24 +4037,13 @@ void RequestManager::prune_token_tree_greedy() {
                                           std::move(_prealloc_vector));
   }
 }
+*/
 
 void RequestManager::add_tokens_toward_slo(RequestGuid guid,
                                            int &budget,
                                            double num_tokens_to_decode,
                                            int num_req_with_slo) {
   Request &request = all_requests[guid];
-  //   double num_tokens_to_decode_per_step =
-  //       (ssm_spec_latency_ms + llm_verify_latency_ms) * correction_factor /
-  //       get_slo_constraint(request);
-  //   double expected_num_tokens_decoded =
-  //       request.decode_latency_ms / get_slo_constraint(request);
-
-  //   double num_tokens_to_decode =
-  //       max(1.0,
-  //           num_tokens_to_decode_per_step + expected_num_tokens_decoded -
-  //               request.decode_length());
-  //   num_tokens_to_decode = min(num_tokens_to_decode, (double)ssm_tree_depth +
-  //   1);
 
   // The root is already included
   // In function add_root_to_spec_token_tree
@@ -3830,7 +4056,8 @@ void RequestManager::add_tokens_toward_slo(RequestGuid guid,
   // The max token that can be added to the token tree when fulfilling the
   // SLO
   int max_token_toward_slo =
-      int(get_max_tokens_per_batch() * 1.2 / num_available_requests);
+      int(get_max_tokens_per_batch() * 1.2 /
+          (num_available_requests - prefilling_requests.size()));
 
   while (budget > 0 and max_token_toward_slo > 0 and
          current_added < num_tokens_to_decode) {
@@ -3853,6 +4080,8 @@ void RequestManager::add_tokens_toward_slo(RequestGuid guid,
   }
 }
 
+/* Deprecated */
+/*
 void RequestManager::add_tokens_toward_memory_occupancy(int budget) {
   // This is a helper data structure to store help the pruning of the token
   // trees across different requests.
@@ -3903,8 +4132,9 @@ void RequestManager::add_tokens_toward_memory_occupancy(int budget) {
     budget--;
   }
 }
+*/
 
-void RequestManager::add_tokens_toward_goodput(int budget) {
+void RequestManager::add_tokens_toward_goodput(int &budget) {
   // This is a helper data structure to store help the pruning of the token
   // trees across different requests.
   std::vector<std::tuple<std::shared_ptr<TokenTreeNode>, double, RequestGuid>>
@@ -3923,6 +4153,11 @@ void RequestManager::add_tokens_toward_goodput(int budget) {
   for (int request_index = 0; request_index < get_max_requests_per_batch();
        ++request_index) {
     if (!request_available[request_index]) {
+      continue;
+    }
+    if (request_in_prompt_phase[request_index]) {
+      // Request in prompt phase does not participate in speculative
+      // decoding
       continue;
     }
     RequestGuid guid = guid_of_requests[request_index];
@@ -3970,6 +4205,8 @@ void RequestManager::add_tokens_toward_goodput(int budget) {
   }
 }
 
+/* Deprecated */
+/*
 void RequestManager::add_tokens_toward_goodput_per_request(int budget,
                                                            int request_index) {
   RequestGuid guid = guid_of_requests[request_index];
@@ -3989,6 +4226,7 @@ void RequestManager::add_tokens_toward_goodput_per_request(int budget,
     budget--;
   }
 }
+*/
 
 std::ostream &operator<<(std::ostream &os, TokenTree const &token_tree) {
   os << "Token tree: " << std::endl;

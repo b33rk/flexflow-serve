@@ -60,14 +60,15 @@ public:
   inline static int const MAX_NUM_REQUESTS = 96;
   inline static int const MAX_NUM_TOKENS = 1024;
   inline static int const MAX_SPECULATIVE_TREE_BRANCHES = 8;
-  inline static int const MAX_TREE_DEPTH = 10;
-  inline static int const MAX_TREE_WIDTH = 12;
+  inline static int const MAX_TREE_DEPTH = 16;
+  inline static int const MAX_TREE_WIDTH = 8;
   inline static int const MAX_SPEC_TREE_TOKEN_NUM =
       MAX_TREE_DEPTH * MAX_TREE_WIDTH;
   inline static int const MAX_K_LOGITS = 16;
 
   int num_tokens = 0;
   int num_available_requests = 0;
+  [[deprecated("Should not mark prompt phase in chunked branch.")]]
   bool prompt_phase = false;
   int num_tokens_to_commit = 0;
   int model_id;
@@ -132,9 +133,9 @@ public:
     // the number of generated tokens before the speculation tree (excluding the
     // prompt tokens)
     int non_tree_cache_size = 0;
-    // Tree size or prompt size. Because the prefilling phase and the decoding
-    // phase are separated, we only need one field to store the size of the tree
-    // or the prompt.
+    // Tree size or prompt size. Because a request can only be in one of the
+    // prefilling phase or the decoding phase we only need one field to store
+    // the size of the tree or the prompt.
     int tree_or_prompt_size = 0;
     int current_layer_size = 0;
 
@@ -162,6 +163,7 @@ public:
   PerTokenInfo tokensInfo[MAX_NUM_TOKENS];
   CommittedTokensInfo committed_tokens[MAX_NUM_TOKENS];
   bool request_available[MAX_NUM_REQUESTS];
+  bool request_prompt_phase[MAX_NUM_REQUESTS];
 };
 
 struct InferenceResult {

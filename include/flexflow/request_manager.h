@@ -20,6 +20,7 @@
 #include "flexflow/model.h"
 #include "flexflow/utils/file_loader.h"
 #include <condition_variable>
+#include <deque>
 #include <future>
 #include <mutex>
 #include <tokenizers_cpp.h>
@@ -505,8 +506,9 @@ private:
   std::unordered_map<RequestGuid, std::promise<void> *> request_to_promise;
   std::mutex request_to_promise_mutex;
   RequestGuid next_available_guid;
+  [[deprecated("Should not be used in chunked branch.")]]
   std::queue<Request *> prefilled_requests;
-  std::vector<Request *> prefilling_requests;
+  std::deque<Request *> prefilling_requests;
 
   // Added to make the request manager stateful. During the processing of the
   // first small model inference results, the step equals to 1. That is, every
@@ -544,6 +546,7 @@ private:
   void request_complete_clean_up(int batch_index);
   [[deprecated("Should not be used in chunked branch.")]]
   void request_offload_from_batch(int batch_index);
+  [[deprecated("Should not be used in chunked branch.")]]
   void request_load_onto_batch(int batch_index);
   /* ---------- Incremental Decoding Helper Functions ---------- */
   [[deprecated("Should not be used in chunked branch.")]]
@@ -561,10 +564,10 @@ private:
   /* ---------- Incremental Decoding Helper Functions ---------- */
 
   /* ---------- Spec Decoding Helper Functions ---------- */
-  std::pair<int, int> get_num_tokens_in_batch();
+  std::tuple<int, int, int> get_num_spec_prefill_tokens_in_batch();
   [[deprecated("Should not be used in chunked branch.")]]
   BatchConfig prepare_ssm_prefilling_batch();
-  bool update_llm_verify_results(InferenceResult const &llm_verify_result);
+  void update_llm_verify_results(InferenceResult const &llm_verify_result);
   bool
       update_ssm_inference_results(InferenceResult const &ssm_inference_result);
   [[deprecated("Should not be used in chunked branch.")]]
@@ -584,9 +587,9 @@ private:
   void get_verify_results_greedy(InferenceResult const &llm_verify_result);
 
   // Bitmask related
-  void init_bitmask_prompt(RequestGuid guid, int prompt_length);
+  void make_bitmask_prompt(RequestGuid guid, int prompt_length);
   void append_bitmask(RequestGuid guid);
-  void update_bitmask_prompt(RequestGuid guid, int num_committed_tokens);
+  void update_bitmask_ssm_commit(RequestGuid guid, int num_committed_tokens);
   void init_bitmask_spec(RequestGuid guid);
   BatchConfig::BitMask create_llm_bitmask(RequestGuid guid);
 
@@ -599,15 +602,19 @@ private:
   [[deprecated("Should not be used in chunked branch.")]]
   void add_tokens_to_spec_token_tree_old_version(
       InferenceResult const &ssm_inference_result);
-  void prune_token_tree();
+  int prune_token_tree(int budget);
+  [[deprecated("Should not be used in chunked branch.")]]
   void prune_token_tree_equal();
+  [[deprecated("Should not be used in chunked branch.")]]
   void prune_token_tree_greedy();
   void add_tokens_toward_slo(RequestGuid guid,
                              int &budget,
                              double num_tokens_to_decode,
                              int num_req_with_slo);
+  [[deprecated("Should not be used in chunked branch.")]]
   void add_tokens_toward_memory_occupancy(int budget);
-  void add_tokens_toward_goodput(int budget);
+  void add_tokens_toward_goodput(int &budget);
+  [[deprecated("Should not be used in chunked branch.")]]
   void add_tokens_toward_goodput_per_request(int budget, int request_index);
   void update_token_tree_depth();
 
