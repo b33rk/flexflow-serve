@@ -342,7 +342,7 @@ void inference_kernel(SoftmaxMeta const *m,
   // fprintf(stderr, "Error in cudnnSetTensor4dDescriptor: %s\n", e.what());
   // printf("num_active_tokens: %d, num_classes: %d\n",
   //         bc->num_active_tokens(), num_classes);
-  // printf("input_ptr: %p, output_ptr: %p\n", input_ptr, output_ptr);
+  // printf("input_ptr: %p, output_ptr: %p, m->outputTensor: %p\n", input_ptr, output_ptr, m->outputTensor);
   // std::cerr << "bc: " << *bc << std::endl;
   // try {
     checkCUDNN(cudnnSetTensor4dDescriptor(m->outputTensor,

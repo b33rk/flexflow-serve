@@ -215,6 +215,9 @@ public:
   int get_num_transformer_layers();
   void set_num_layers_per_finetuning_step(int num_layers_per_finetuning_step);
   int get_num_layers_per_finetuning_step();
+  void set_temporal_sharing_frequency(int temporal_sharing_frequency);
+  int get_temporal_sharing_frequency();
+
   void initBitMask(BatchConfig::BitMask &bitmask, int initLength);
   void appendPendingRequest(BatchConfig::BitMask &bitmask, int initLength);
   void appendBitMask(BatchConfig::BitMask &bitmask,
@@ -424,6 +427,7 @@ private:
   bool inference_finished = false;
   int num_transformer_layers = 0;
   int num_layers_per_finetuning_step = 0;
+  int temporal_sharing_frequency = 10;
 
   // tree width in each speculative step, if not specified 1
   std::vector<int> spec_infer_tree_width;

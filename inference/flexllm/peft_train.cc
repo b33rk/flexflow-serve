@@ -58,6 +58,7 @@ void parse_input_args(char **argv,
                       int &gradient_accumulation_steps,
                       int &num_logging_steps,
                       int &num_layers_per_finetuning_step,
+                      int &temporal_sharing_frequency,
                       bool &run_warmup) {
   for (int i = 1; i < argc; i++) {
     // llm model type
@@ -187,6 +188,10 @@ void parse_input_args(char **argv,
         std::cerr << "Unknown peft support mode: " << mode << std::endl;
         assert(false && "Invalid peft support mode");
       }
+      continue;
+    }
+    if (!strcmp(argv[i], "--temporal-sharing-frequency")) {
+      temporal_sharing_frequency = std::stoi(argv[++i]);
       continue;
     }
   }
@@ -329,6 +334,7 @@ void FlexFlow::top_level_task(Task const *task,
   int gradient_accumulation_steps = 8;
   int num_logging_steps = 10;
   int num_layers_per_finetuning_step = -1;
+  int temporal_sharing_frequency = 10;
   bool run_warmup = false;
   int num_kv_cache_slots = -1;
   int rank = 16;
@@ -356,6 +362,7 @@ void FlexFlow::top_level_task(Task const *task,
                    gradient_accumulation_steps,
                    num_logging_steps,
                    num_layers_per_finetuning_step,
+                   temporal_sharing_frequency,
                    run_warmup);
   assert(peft_finetuning_enabled(ffconfig.peft_support_mode) &&
          "Cannot train LORA adapter if finetuning is not enabled");
@@ -461,6 +468,7 @@ void FlexFlow::top_level_task(Task const *task,
       model_type, bos_token_id, eos_token_ids, tokenizer_filepath);
   rm->register_output_filepath(file_paths.output_file_path);
   rm->set_peft_support_mode(ffconfig.peft_support_mode);
+  rm->set_temporal_sharing_frequency(temporal_sharing_frequency);
   rm->set_max_lora_rank(rank);
 
   FFModel model(ffconfig, ffconfig.cpu_offload);

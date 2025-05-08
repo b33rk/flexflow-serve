@@ -555,6 +555,15 @@ int RequestManager::get_num_layers_per_finetuning_step() {
   return num_layers_per_finetuning_step;
 }
 
+void RequestManager::set_temporal_sharing_frequency(
+    int temporal_sharing_frequency_) {
+  temporal_sharing_frequency = temporal_sharing_frequency_;
+}
+
+int RequestManager::get_temporal_sharing_frequency() {
+  return temporal_sharing_frequency;
+}
+
 PEFTModelID *
     FFModel::register_peft_adapter(LoraLinearConfig const &peft_config) {
   assert(peft_enabled(config.peft_support_mode) &&
@@ -831,15 +840,19 @@ BatchConfig RequestManager::prepare_next_batch_task(
   BatchConfig new_bc = rm->prepare_next_fwd_batch(*old_bc, result);
   new_bc = rm->prepare_next_bwd_batch(new_bc);
   rm->check_new_bc(new_bc);
+  // if (rm->inference_finished) {
+  //   printf("prepare_next_batch_task finished, returning new batch\n");
+  // }
   return new_bc;
 }
 
 void RequestManager::update_peft_temporal_sharing_state(void) {
+  // int old_state = peft_temporal_sharing_state;
   assert(peft_support_mode == TEMPORAL_SHARING || 
          peft_support_mode == TEMPORAL_SHARING_LIMITED);
   if (peft_temporal_sharing_state == INFERENCE) {
     peft_temporal_sharing_inf_step++;
-    if (peft_temporal_sharing_inf_step >= 10 || peft_support_mode == TEMPORAL_SHARING) {
+    if (peft_temporal_sharing_inf_step >= get_temporal_sharing_frequency()) {
       peft_temporal_sharing_inf_step = 0;
       peft_temporal_sharing_state = FINETUNING_FWD;
     }
@@ -851,6 +864,9 @@ void RequestManager::update_peft_temporal_sharing_state(void) {
   } else {
     assert(false && "Invalid temporal sharing state");
   }
+  // if (inference_finished) {
+  //   printf("PEFT temporal sharing state changed from %d to %d with inference_finished=true\n", old_state, peft_temporal_sharing_state);
+  // }
 }
 
 bool RequestManager::is_eos_token(int token_id) {
@@ -1002,6 +1018,10 @@ void RequestManager::record_decoding_req_profiling_info(
 void RequestManager::process_inf_req_progress(BatchConfig const &old_fwd_bc,
                                               InferenceResult const &result) {
   // printf("Entering process_inf_req_progress\n");
+  if (inference_finished) {
+    assert(old_fwd_bc.num_inference_tokens() == 0);
+    return;
+  }
   for (int i = 0; i < old_fwd_bc.num_active_tokens(); i++) {
     size_t guid =
         old_fwd_bc.requestsInfo[old_fwd_bc.tokensInfo[i].request_index]
@@ -1364,20 +1384,20 @@ void RequestManager::handle_completed_finetuning_req(
     BatchConfig const &old_finetuning_bc) {
   // printf("Entering handle_completed_finetuning_req\n");
   if (!inference_finished) {
-    assert(
-        old_finetuning_bc.num_finetuning_bwd_requests() == 1 &&
-        "Number of active peft bwd requests in a finetuning batch should be 1");
-  } else {
-    assert(old_finetuning_bc.num_finetuning_fwd_requests() +
-                   old_finetuning_bc.num_finetuning_bwd_requests() ==
-               1 &&
-           "Number of active peft requests should be 1");
-  }
-
-  int inference_batch_size =
+    assert(old_finetuning_bc.num_finetuning_bwd_requests() == 1 && "Finetuning request can only be finalized after a bwd pass");
+    assert(old_finetuning_bc.num_finetuning_fwd_requests() == 0 && "Finetuning request can only be finalized after a bwd pass");
+    int inference_batch_size =
       BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
-  assert(!old_finetuning_bc.request_completed[inference_batch_size] &&
-         "Finetuning request not found in new batch");
+    assert(!old_finetuning_bc.request_completed[inference_batch_size] &&
+          "Finetuning request not found in new batch");
+    assert(pending_peft_request_queue.size() == 1 &&
+           "Finetuning request queue should only have one request");
+  } else {
+    if (pending_peft_request_queue.empty()) {
+      assert(old_finetuning_bc.num_finetuning_bwd_requests() == 0 && old_finetuning_bc.num_finetuning_fwd_requests() == 0);
+      return;
+    } 
+  }
 
   // sync metadata with all_requests
   Request &pq_request = pending_peft_request_queue.front();
@@ -1385,9 +1405,9 @@ void RequestManager::handle_completed_finetuning_req(
   assert(request.req_type == RequestType::REQ_FINETUNING &&
          "Found misplaced inference request");
   assert(request.guid == pq_request.guid && "Request GUID mismatch");
-  assert(old_finetuning_bc.requestsInfo[inference_batch_size].request_guid ==
-             pq_request.guid &&
-         "Request GUID mismatch");
+  // assert(old_finetuning_bc.requestsInfo[inference_batch_size].request_guid ==
+  //            pq_request.guid &&
+  //        "Request GUID mismatch");
   request.status = Request::COMPLETED;
   request.peft_finetuning_info = pq_request.peft_finetuning_info;
   // remove from pending peft queue
@@ -1610,7 +1630,15 @@ void RequestManager::process_finetuning_req_fwd_progress(
                  old_bc.num_finetuning_bwd_requests() <=
              1 &&
          "More than 1 finetuning request in the batch");
+  // if (inference_finished) {
+  //   printf("Running process_finetuning_req_fwd_progress with inference_finished=true. Num finetuning fwd tokens: %i\n",
+  //        old_bc.num_finetuning_fwd_tokens());
+  // }
   if (old_bc.num_finetuning_fwd_requests() == 0) {
+    if (inference_finished) {
+      // complete finetuning request if there is one in the pending queue
+      handle_completed_finetuning_req(old_bc);
+    }
     return;
   }
   int inference_batch_size =
@@ -1672,6 +1700,10 @@ void RequestManager::process_finetuning_req_bwd_progress(
                  old_bc.num_finetuning_bwd_requests() <=
              1 &&
          "More than 1 finetuning request in the batch");
+  // if (inference_finished) {
+  //   printf("Running process_finetuning_req_bwd_progress with inference_finished=true. Num finetuning bwd tokens: %i\n",
+  //        old_bc.num_finetuning_bwd_tokens());
+  // }
   if (old_bc.num_finetuning_bwd_requests() == 0) {
     return;
   }
@@ -1804,6 +1836,8 @@ BatchConfig RequestManager::prepare_next_bwd_batch(BatchConfig &new_bc) {
   const std::lock_guard<std::mutex> lock(request_queue_mutex);
 
   if (finetuning_bwd_work_available()) {
+    assert(!inference_finished &&
+           "Trying to add finetuning bwd request to next batch when inference_finished=true");
     add_finetuning_req_bwd_batch(new_bc);
   }
 
@@ -1825,6 +1859,14 @@ void RequestManager::add_inference_work_if_needed(BatchConfig &new_bc,
   int inference_batch_size =
       BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
   int num_concurrent_inf_adapters = 0;
+
+  if (inference_finished) {
+    assert(old_bc.num_inference_tokens() == 0 &&
+           "Old batch should not have inference tokens when inference_finished=true");
+    assert(pending_infr_request_queue.empty() &&
+           "Pending inference request queue should be empty when inference_finished=true");
+    return;
+  }
 
   // Step 2: evict any requests that will not fit in the kv cache
   evict_requests_if_needed(old_bc, inference_batch_size);
@@ -1890,8 +1932,14 @@ BatchConfig
     // }
     if (peft_temporal_sharing_state == INFERENCE) {
       if (peft_temporal_sharing_inf_step == 0) {
+        // if (inference_finished) {
+        //   printf("Add inference work if needed from saved old batch with inference_finished=true\n");
+        // }
         add_inference_work_if_needed(new_bc, ts_saved_old_batch);
       } else {
+        // if (inference_finished) {
+        //   printf("Add inference work if needed from immediately previous batch with inference_finished=true\n");
+        // }
         add_inference_work_if_needed(new_bc, old_bc);
       }
     } else if (peft_temporal_sharing_state == FINETUNING_FWD) {
@@ -1912,6 +1960,7 @@ BatchConfig
       get_max_fwd_finetuning_tokens_per_batch() > 0 &&
       (peft_support_mode != TEMPORAL_SHARING || peft_temporal_sharing_state == FINETUNING_FWD) &&
       slots_available_for_peft_fwd > 0) {
+    assert(!inference_finished && "Attempting to add finetuning work to new batch when inference is finished");
     add_finetuning_req_fwd_batch(new_bc);
   }
 
@@ -3948,13 +3997,16 @@ std::vector<GenerationResult>
     results.push_back(rm->get_generation_result(inf_guids[i]));
   }
   if (inf_guids.size() > 0) {
+    // printf("Inference workload finished. Stopping finetuning\n");
     rm->set_inference_finished();
   }
   // block until all PEFT requests have been processed (or get interrupted at
   // the end of the inference workload)
+  // printf("Waiting for PEFT workload to finish\n");
   for (int i = 0; i < peft_guids.size(); i++) {
     results.push_back(rm->get_generation_result(peft_guids[i]));
   }
+  // printf("PEFT workload finished\n");
   rm->save_output_to_json();
   return results;
 }
