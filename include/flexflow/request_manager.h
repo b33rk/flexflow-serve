@@ -240,8 +240,14 @@ struct ProfileInfo {
   long long llm_step_start = 0, ssm_step_start = 0;
   // Times for each LLM verification phase (in ms)
   std::vector<double> llm_step_times;
-  // Number of requests in batch at each step
-  std::vector<int> requests_per_step;
+  // Number of total number of perfilling requests including waits
+  std::vector<int> total_prefilling_requests_per_step;
+  // Number of decoding requests in batch at each step
+  std::vector<int> decoding_requests_per_step;
+  // Number of prefilling requests in batch at each step
+  std::vector<int> prefilling_requests_per_step;
+  // Number of all requests in batch at each step
+  std::vector<int> total_requests_per_step;
   // Times for each SSM speculation phase (in ms)
   std::vector<double> ssm_step_times;
   // Number of requests getting decoded at each step
@@ -251,6 +257,8 @@ struct ProfileInfo {
   std::vector<int> generated_tokens_per_step;
   // Number of proposed tokens at each step
   std::vector<int> tokens_in_verification_per_step;
+  // Number of spec tokens in each step
+  std::vector<int> spec_batch_size_per_step;
   // To calculate the E2E time of serving
   long long server_start_time = 0;
   long long server_end_time = 0;
@@ -264,6 +272,7 @@ public:
     DECODING = 1002,
     SSM_SPEC = 1003,
     LLM_VERIFY = 1004,
+    CAPTURING = 1005
   };
   enum BackgroundServerStatus {
     INITIALIZED = 2001,
@@ -334,6 +343,8 @@ public:
   void set_chunk_size(int chunk_size);
   void set_spec_batch_size(int spec_batch_size);
   void set_chunked_prefill_buffer_size(int chunked_prefill_buffer_size);
+  void set_max_tokens_per_ssm_spec_batch(int max_ssm_spec_batch_size);
+  int get_max_tokens_per_ssm_spec_batch();
   [[deprecated("Should not be used in chunked branch.")]]
   bool get_spec_infer_old_version();
   bool get_greedy_schedule();
@@ -350,10 +361,9 @@ public:
   void set_chunked_prefill_batch_latency_ms(
       double chunked_prefill_batch_latency);
   double get_chunked_prefill_batch_latency_ms();
-  void set_spec_batch_latency_ms(double spec_batch_latency);
-  double get_spec_batch_latency_ms();
+  bool get_capture_finished();
   void set_batch_size_2_latency_ms_map(
-      std::map<int, double> &spec_batch_latency_ms_map);
+      std::map<int, double> const &spec_batch_latency_ms_map);
   std::map<int, double> &get_batch_size_2_latency_ms_map();
   double get_request_expected_latency(Request &request);
   Request &get_request_with_guid(RequestGuid guid);
@@ -424,6 +434,8 @@ public:
   ProfileInfo get_profiling_info();
   std::vector<NewProfileInfo> get_new_profiling_info();
 
+  BatchConfig get_next_capture_batch_config();
+
   // Comparters
   struct SharedTokenTreeNodePtrRequestGuidWeightedLess {
     bool operator()(
@@ -456,6 +468,7 @@ private:
   int chunk_size = 512;
   int spec_batch_size = 256;
   int chunked_prefill_buffer_size = 128;
+  int max_tokens_per_ssm_spec_batch = 256;
   // Profile based latency
   double baseline_latency_ms = 30;
   double ssm_spec_latency_ms = 70;
@@ -463,7 +476,7 @@ private:
   double chunked_prefill_batch_latency_ms = 120.0;
   double spec_batch_latency_ms = 80;
   std::map<int, double> batch_size_2_latency_ms_map;
-  double correction_factor = 1.05;
+  double correction_factor = 1.1;
 
   State request_manager_status;
   BackgroundServerStatus background_server_status;
@@ -537,6 +550,9 @@ private:
   // TODO: maintain this field
   size_t num_processed_requests;
 
+  int ssm_batch_size_captured = 0;
+  bool capture_finished = false;
+
   ProfileInfo profiling;
   std::unordered_map<RequestGuid, RequestProfileInfo> profiling_requests;
   std::vector<NewProfileInfo> new_profiling_info;
@@ -602,7 +618,7 @@ private:
   [[deprecated("Should not be used in chunked branch.")]]
   void add_tokens_to_spec_token_tree_old_version(
       InferenceResult const &ssm_inference_result);
-  int prune_token_tree(int budget);
+  int prune_token_tree(int budget, int batch_size);
   [[deprecated("Should not be used in chunked branch.")]]
   void prune_token_tree_equal();
   [[deprecated("Should not be used in chunked branch.")]]

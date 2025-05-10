@@ -88,7 +88,13 @@ void parse_input_args(char **argv,
                       bool &equal_schedule,
                       std::string &emission_file_path,
                       bool &add_special_tokens,
-                      bool &eval_overhead_breakdown) {
+                      bool &eval_overhead_breakdown,
+                      bool &chunked_prefill,
+                      int &chunk_size,
+                      int &spec_batch_size,
+                      int &chunked_prefill_buffer_size,
+                      std::map<int, double> &batch_size_2_latency_ms_map,
+                      int &max_tokens_per_ssm_spec_batch) {
   for (int i = 1; i < argc; i++) {
     // llm model name
     if (!strcmp(argv[i], "-llm-model")) {
@@ -231,6 +237,35 @@ void parse_input_args(char **argv,
     }
     if (!strcmp(argv[i], "--eval-overhead-breakdown")) {
       eval_overhead_breakdown = true;
+      continue;
+    }
+    if (!strcmp(argv[i], "--chunked-prefill")) {
+      chunked_prefill = true;
+      continue;
+    }
+    if (!strcmp(argv[i], "--chunk-size")) {
+      chunk_size = std::stoi(argv[++i]);
+      continue;
+    }
+    if (!strcmp(argv[i], "--spec-batch-size")) {
+      spec_batch_size = std::stoi(argv[++i]);
+      continue;
+    }
+    if (!strcmp(argv[i], "--chunked-prefill-buffer-size")) {
+      chunked_prefill_buffer_size = std::stoi(argv[++i]);
+      continue;
+    }
+    if (!strcmp(argv[i], "--batch-size-2-latency-ms")) {
+      int num_elements = std::stoi(argv[++i]);
+      for (int j = 0; j < num_elements; j++) {
+        int batch_size = std::stoi(argv[++i]);
+        double latency_ms = std::stod(argv[++i]);
+        batch_size_2_latency_ms_map[batch_size] = latency_ms;
+      }
+      continue;
+    }
+    if (!strcmp(argv[i], "--max-tokens-per-ssm-spec-batch")) {
+      max_tokens_per_ssm_spec_batch = std::stoi(argv[++i]);
       continue;
     }
   }
@@ -426,6 +461,12 @@ void FlexFlow::top_level_task(Task const *task,
   bool equal_schedule = false;
   bool add_special_tokens = true;
   bool eval_overhead_breakdown = false;
+  bool chunked_prefill = false;
+  int chunk_size = 512;
+  int spec_batch_size = 256;
+  int chunked_prefill_buffer_size = 128;
+  int max_tokens_per_ssm_spec_batch = 256;
+  std::map<int, double> batch_size_2_latency_ms_map;
   std::string emission_file_path;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
@@ -460,7 +501,13 @@ void FlexFlow::top_level_task(Task const *task,
                    equal_schedule,
                    emission_file_path,
                    add_special_tokens,
-                   eval_overhead_breakdown);
+                   eval_overhead_breakdown,
+                   chunked_prefill,
+                   chunk_size,
+                   spec_batch_size,
+                   chunked_prefill_buffer_size,
+                   batch_size_2_latency_ms_map,
+                   max_tokens_per_ssm_spec_batch);
   if (max_tokens_per_ssm_batch == -1) {
     max_tokens_per_ssm_batch = max_tokens_per_batch;
   }
@@ -512,6 +559,12 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_equal_schedule(equal_schedule);
   rm->register_output_filepath(file_paths.output_file_path);
   rm->set_eval_overhead_breakdown(eval_overhead_breakdown);
+  rm->set_chunked_prefill(chunked_prefill);
+  rm->set_chunk_size(chunk_size);
+  rm->set_spec_batch_size(spec_batch_size);
+  rm->set_chunked_prefill_buffer_size(chunked_prefill_buffer_size);
+  rm->set_max_tokens_per_ssm_spec_batch(max_tokens_per_ssm_spec_batch);
+  rm->set_batch_size_2_latency_ms_map(batch_size_2_latency_ms_map);
 
   // Create LLM model
   FFModel tree_model(ffconfig, ffconfig.cpu_offload);
@@ -659,6 +712,11 @@ void FlexFlow::top_level_task(Task const *task,
       }
       timestamps.erase(timestamps.begin());
       timestamps.push_back(timestamps.back() + 1000.0);
+
+      while (!rm->get_capture_finished()) {
+        sleep(1);
+      }
+
       TraceEmissionMachine emission_machine(timestamps, ratios);
       results = tree_model.generate(requests, emission_machine);
     } else {

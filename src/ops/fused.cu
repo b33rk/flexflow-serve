@@ -608,14 +608,17 @@ __host__ void
   // create new cuda graph
   cudaGraphExec_t instance;
 
-  GraphParams graph_params = {
-      bc->num_active_requests(), bc->num_active_tokens(), bc->prompt_phase};
+  GraphParams graph_params = {bc->num_active_requests(),
+                              bc->num_active_tokens()};
   // int shard_id = task->index_point.point_data[0];
 
   // bool use_cuda_graph = (bc->get_mode() == TREE_SEARCH_MODE or bc->get_mode()
   // == TREE_VERIFY_MODE);
   bool use_cuda_graph =
-      (bc->get_mode() == TREE_SEARCH_MODE && bc->prompt_phase == 0);
+      (bc->get_mode() == TREE_SEARCH_MODE &&
+       !(std::equal(bc->request_available,
+                    bc->request_available + bc->max_requests_per_batch(),
+                    bc->request_in_prompt_phase)));
   // bool use_cuda_graph = (bc->get_mode() == TREE_VERIFY_MODE);
   // bool use_cuda_graph = false;
   bool captured = false;
@@ -1174,6 +1177,9 @@ __host__ void
       }
     }
     if (use_cuda_graph) {
+      std::cout << "Captured CUDA graph for "
+                << graph_params.num_active_requests << " requests and "
+                << graph_params.num_active_tokens << " tokens" << std::endl;
       cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
       metas->graph_collections[graph_params] = instance;
       cudaGraphDestroy(graph);

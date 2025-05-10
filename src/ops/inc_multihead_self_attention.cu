@@ -52,181 +52,181 @@ void incr_attention(IncMultiHeadSelfAttentionMeta *m,
                     BatchConfig const *bc,
                     DT *output_ptr,
                     cudaStream_t stream) {
-  //   int device;
-  //   checkCUDA(cudaGetDevice(&device));
-  //   cudaEvent_t t_start, t_end;
-  //   cudaEventCreate(&t_start);
-  //   cudaEventCreate(&t_end);
-  //   cudaEventRecord(t_start, stream);
+  // //   int device;
+  // //   checkCUDA(cudaGetDevice(&device));
+  // //   cudaEvent_t t_start, t_end;
+  // //   cudaEventCreate(&t_start);
+  // //   cudaEventCreate(&t_end);
+  // //   cudaEventRecord(t_start, stream);
 
-  // global constant parameters
-  uint32_t const num_q_heads = m->num_q_heads;
-  uint32_t const num_kv_heads = m->num_kv_heads;
-  uint32_t const head_dim = m->qk_dim;
-  uint32_t const batch_size = bc->num_active_requests();
-  if (batch_size == 0) {
-    return;
-  }
-  float const sm_scale = (*m->qk_prod_scaling) ? 1.0f / sqrt(m->qk_dim) : 1.0f;
+  // // global constant parameters
+  // uint32_t const num_q_heads = m->num_q_heads;
+  // uint32_t const num_kv_heads = m->num_kv_heads;
+  // uint32_t const head_dim = m->qk_dim;
+  // uint32_t const batch_size = bc->num_active_requests();
+  // if (batch_size == 0) {
+  //   return;
+  // }
+  // float const sm_scale = (*m->qk_prod_scaling) ? 1.0f / sqrt(m->qk_dim) : 1.0f;
 
-  //   cudaEventCreate(&t_start);
-  //   cudaEventCreate(&t_end);
-  //   cudaEventRecord(t_start, stream);
+  // //   cudaEventCreate(&t_start);
+  // //   cudaEventCreate(&t_end);
+  // //   cudaEventRecord(t_start, stream);
 
-  //   cudaEventRecord(t_end, stream);
-  //   checkCUDA(cudaEventSynchronize(t_end));
-  //   elapsed = 0;
-  //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
-  //   cudaEventDestroy(t_start);
-  //   cudaEventDestroy(t_end);
-  //   if (device == 0) {
-  //     std::cout << "Update custom mask time: " << elapsed << " ms\n";
+  // //   cudaEventRecord(t_end, stream);
+  // //   checkCUDA(cudaEventSynchronize(t_end));
+  // //   elapsed = 0;
+  // //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
+  // //   cudaEventDestroy(t_start);
+  // //   cudaEventDestroy(t_end);
+  // //   if (device == 0) {
+  // //     std::cout << "Update custom mask time: " << elapsed << " ms\n";
+  // //   }
+
+  // half *q = static_cast<half *>(m->queryTmp),
+  //      *kv = static_cast<half *>(m->kvCache),
+  //      *o = static_cast<half *>(m->outputTmp);
+  // paged_kv_t<PageStorage::kIndices, half, int32_t> paged_kv(
+  //     num_kv_heads,
+  //     kPagesize,
+  //     head_dim,
+  //     batch_size,
+  //     QKVLayout::kNHD,
+  //     kv,
+  //     m->handle.incr_attention_metadata->kv_indices,
+  //     m->handle.incr_attention_metadata->kv_indptr,
+  //     m->handle.incr_attention_metadata->kv_last_page_len);
+
+  // //   cudaEventRecord(t_end, stream);
+  // //   checkCUDA(cudaEventSynchronize(t_end));
+  // //   float elapsed = 0;
+  // //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
+  // //   if (device == 0) {
+  // //     printf("    attn prep time: %.4f ms\n", elapsed);
+  // //   }
+  // //   cudaEventDestroy(t_start);
+  // //   cudaEventDestroy(t_end);
+
+  // //   cudaEventCreate(&t_start);
+  // //   cudaEventCreate(&t_end);
+  // //   cudaEventRecord(t_start, stream);
+
+  // void *handler = nullptr;
+
+  // if (!bc->prompt_phase) {
+  //   assert(m->handle.incr_attention_metadata->decode_handler_collections.count(
+  //              batch_size) != 0 &&
+  //          "Handler is not initialized");
+  //   handler = m->handle.incr_attention_metadata
+  //                 ->decode_handler_collections[batch_size];
+  // } else {
+  //   assert(m->handle.incr_attention_metadata->prompt_handler_collections.count(
+  //              batch_size) != 0 &&
+  //          "Handler is not initialized");
+  //   handler = m->handle.incr_attention_metadata
+  //                 ->prompt_handler_collections[batch_size];
+  // }
+
+  // //   cudaEventRecord(t_end, stream);
+  // //   checkCUDA(cudaEventSynchronize(t_end));
+  // //   elapsed = 0;
+  // //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
+  // //   if (device == 0) {
+  // //     printf("    BeginForward time: %.4f ms\n", elapsed);
+  // //   }
+  // //   cudaEventDestroy(t_start);
+  // //   cudaEventDestroy(t_end);
+
+  // //   cudaEventCreate(&t_start);
+  // //   cudaEventCreate(&t_end);
+  // //   cudaEventRecord(t_start, stream);
+
+  // DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
+  //   cudaError_t result;
+  //   if (bc->prompt_phase) {
+  //     result =
+  //         BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
+  //                                                       HEAD_DIM,
+  //                                                       LogitsPostHook::kNone,
+  //                                                       PosEncodingMode::kNone,
+  //                                                       false,
+  //                                                       MaskMode::kCausal,
+  //                                                       half,
+  //                                                       half,
+  //                                                       half,
+  //                                                       int32_t>(
+  //             static_cast<BatchPrefillHandler *>(handler),
+  //             q,
+  //             m->handle.incr_attention_metadata->q_indptr,
+  //             /*q_offset=*/nullptr,
+  //             paged_kv,
+  //             /*custom_mask=*/nullptr,
+  //             /*qk_indptr=*/nullptr,
+  //             o,
+  //             /*lse=*/nullptr,
+  //             num_q_heads,
+  //             /*window_left=*/-1,
+  //             /*logits_soft_cap=*/0.f,
+  //             sm_scale,
+  //             /*rope_scale=*/1.f,
+  //             /*rope_theta=*/static_cast<float>(1e4),
+  //             stream);
+  //   } else {
+  //     result =
+  //         BatchDecodeWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
+  //                                                      HEAD_DIM,
+  //                                                      LogitsPostHook::kNone,
+  //                                                      PosEncodingMode::kNone,
+  //                                                      half,
+  //                                                      half,
+  //                                                      half,
+  //                                                      int32_t>(
+  //             static_cast<BatchDecodeHandler *>(handler),
+  //             q,
+  //             /*q_offset=*/nullptr,
+  //             paged_kv,
+  //             o,
+  //             /*lse=*/nullptr,
+  //             num_q_heads,
+  //             /*window_left=*/-1,
+  //             /*logits_soft_cap=*/0.f,
+  //             sm_scale,
+  //             /*rope_scale=*/1.f,
+  //             /*rope_theta=*/static_cast<float>(1e4),
+  //             stream);
   //   }
-
-  half *q = static_cast<half *>(m->queryTmp),
-       *kv = static_cast<half *>(m->kvCache),
-       *o = static_cast<half *>(m->outputTmp);
-  paged_kv_t<PageStorage::kIndices, half, int32_t> paged_kv(
-      num_kv_heads,
-      kPagesize,
-      head_dim,
-      batch_size,
-      QKVLayout::kNHD,
-      kv,
-      m->handle.incr_attention_metadata->kv_indices,
-      m->handle.incr_attention_metadata->kv_indptr,
-      m->handle.incr_attention_metadata->kv_last_page_len);
-
-  //   cudaEventRecord(t_end, stream);
-  //   checkCUDA(cudaEventSynchronize(t_end));
-  //   float elapsed = 0;
-  //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
-  //   if (device == 0) {
-  //     printf("    attn prep time: %.4f ms\n", elapsed);
+  //   if (result != cudaSuccess) {
+  //     throw std::runtime_error("Failed to run "
+  //                              "IncrementalDecodingAttentionForwardKernel: " +
+  //                              std::string(cudaGetErrorString(result)));
   //   }
-  //   cudaEventDestroy(t_start);
-  //   cudaEventDestroy(t_end);
+  // });
 
-  //   cudaEventCreate(&t_start);
-  //   cudaEventCreate(&t_end);
-  //   cudaEventRecord(t_start, stream);
+  // //   cudaEventRecord(t_end, stream);
+  // //   checkCUDA(cudaEventSynchronize(t_end));
+  // //   elapsed = 0;
+  // //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
+  // //   if (device == 0) {
+  // //     printf("    actual attn time: %.4f ms\n", elapsed);
+  // //   }
+  // //   cudaEventDestroy(t_start);
+  // //   cudaEventDestroy(t_end);
 
-  void *handler = nullptr;
+  // //   cudaEventCreate(&t_start);
+  // //   cudaEventCreate(&t_end);
+  // //   cudaEventRecord(t_start, stream);
 
-  if (!bc->prompt_phase) {
-    assert(m->handle.incr_attention_metadata->decode_handler_collections.count(
-               batch_size) != 0 &&
-           "Handler is not initialized");
-    handler = m->handle.incr_attention_metadata
-                  ->decode_handler_collections[batch_size];
-  } else {
-    assert(m->handle.incr_attention_metadata->prompt_handler_collections.count(
-               batch_size) != 0 &&
-           "Handler is not initialized");
-    handler = m->handle.incr_attention_metadata
-                  ->prompt_handler_collections[batch_size];
-  }
+  // produce_output(m, bc, output_ptr, stream);
 
-  //   cudaEventRecord(t_end, stream);
-  //   checkCUDA(cudaEventSynchronize(t_end));
-  //   elapsed = 0;
-  //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
-  //   if (device == 0) {
-  //     printf("    BeginForward time: %.4f ms\n", elapsed);
-  //   }
-  //   cudaEventDestroy(t_start);
-  //   cudaEventDestroy(t_end);
-
-  //   cudaEventCreate(&t_start);
-  //   cudaEventCreate(&t_end);
-  //   cudaEventRecord(t_start, stream);
-
-  DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
-    cudaError_t result;
-    if (bc->prompt_phase) {
-      result =
-          BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
-                                                        HEAD_DIM,
-                                                        LogitsPostHook::kNone,
-                                                        PosEncodingMode::kNone,
-                                                        false,
-                                                        MaskMode::kCausal,
-                                                        half,
-                                                        half,
-                                                        half,
-                                                        int32_t>(
-              static_cast<BatchPrefillHandler *>(handler),
-              q,
-              m->handle.incr_attention_metadata->q_indptr,
-              /*q_offset=*/nullptr,
-              paged_kv,
-              /*custom_mask=*/nullptr,
-              /*qk_indptr=*/nullptr,
-              o,
-              /*lse=*/nullptr,
-              num_q_heads,
-              /*window_left=*/-1,
-              /*logits_soft_cap=*/0.f,
-              sm_scale,
-              /*rope_scale=*/1.f,
-              /*rope_theta=*/static_cast<float>(1e4),
-              stream);
-    } else {
-      result =
-          BatchDecodeWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
-                                                       HEAD_DIM,
-                                                       LogitsPostHook::kNone,
-                                                       PosEncodingMode::kNone,
-                                                       half,
-                                                       half,
-                                                       half,
-                                                       int32_t>(
-              static_cast<BatchDecodeHandler *>(handler),
-              q,
-              /*q_offset=*/nullptr,
-              paged_kv,
-              o,
-              /*lse=*/nullptr,
-              num_q_heads,
-              /*window_left=*/-1,
-              /*logits_soft_cap=*/0.f,
-              sm_scale,
-              /*rope_scale=*/1.f,
-              /*rope_theta=*/static_cast<float>(1e4),
-              stream);
-    }
-    if (result != cudaSuccess) {
-      throw std::runtime_error("Failed to run "
-                               "IncrementalDecodingAttentionForwardKernel: " +
-                               std::string(cudaGetErrorString(result)));
-    }
-  });
-
-  //   cudaEventRecord(t_end, stream);
-  //   checkCUDA(cudaEventSynchronize(t_end));
-  //   elapsed = 0;
-  //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
-  //   if (device == 0) {
-  //     printf("    actual attn time: %.4f ms\n", elapsed);
-  //   }
-  //   cudaEventDestroy(t_start);
-  //   cudaEventDestroy(t_end);
-
-  //   cudaEventCreate(&t_start);
-  //   cudaEventCreate(&t_end);
-  //   cudaEventRecord(t_start, stream);
-
-  produce_output(m, bc, output_ptr, stream);
-
-  //   cudaEventRecord(t_end, stream);
-  //   checkCUDA(cudaEventSynchronize(t_end));
-  //   elapsed = 0;
-  //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
-  //   if (device == 0) {
-  //     printf("    produce_output_kernel time: %.4f ms\n", elapsed);
-  //   }
-  //   cudaEventDestroy(t_start);
-  //   cudaEventDestroy(t_end);
+  // //   cudaEventRecord(t_end, stream);
+  // //   checkCUDA(cudaEventSynchronize(t_end));
+  // //   elapsed = 0;
+  // //   checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
+  // //   if (device == 0) {
+  // //     printf("    produce_output_kernel time: %.4f ms\n", elapsed);
+  // //   }
+  // //   cudaEventDestroy(t_start);
+  // //   cudaEventDestroy(t_end);
 }
 
 template <typename DT>
@@ -572,6 +572,10 @@ IncMultiHeadSelfAttentionMeta::IncMultiHeadSelfAttentionMeta(
     request_available = reinterpret_cast<bool *>(
         reinterpret_cast<char *>(handler.batch_config_metadata) +
         sizeof(BatchConfig::tokensInfo) + sizeof(BatchConfig::requestsInfo));
+    request_in_prompt_phase = reinterpret_cast<bool *>(
+        reinterpret_cast<char *>(handler.batch_config_metadata) +
+        sizeof(BatchConfig::tokensInfo) + sizeof(BatchConfig::requestsInfo) +
+        sizeof(BatchConfig::request_available));
 
     if (offload) {
       // token_infos =

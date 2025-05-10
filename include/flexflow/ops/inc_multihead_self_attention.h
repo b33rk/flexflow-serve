@@ -193,6 +193,7 @@ public:
   BatchConfig::PerTokenInfo *token_infos;
   BatchConfig::PerRequestInfo *request_infos;
   bool *request_available;
+  bool *request_in_prompt_phase;
   DataType quantization_type;
   bool offload;
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)

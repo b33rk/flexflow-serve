@@ -90,6 +90,7 @@ struct FFHandler {
   size_t batch_config_metadata_size = alignTo(
       sizeof(BatchConfig::tokensInfo) + sizeof(BatchConfig::requestsInfo) +
           sizeof(BatchConfig::request_available) +
+          sizeof(BatchConfig::request_in_prompt_phase) +
           sizeof(BatchConfig::causalMask) +
           sizeof(BatchConfig::committed_tokens) + sizeof(int),
       16);

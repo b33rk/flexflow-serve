@@ -201,21 +201,12 @@ void tree_verify_attention(TreeIncMultiHeadSelfAttentionMeta *m,
 
   BatchPrefillHandler *handler = nullptr;
 
-  if (!bc->prompt_phase) {
-    assert(m->handle.tree_verify_attention_metadata->decode_handler_collections
-                   .count(batch_size) != 0 &&
-           "Handler is not initialized");
-    handler = static_cast<BatchPrefillHandler *>(
-        m->handle.tree_verify_attention_metadata
-            ->decode_handler_collections[batch_size]);
-  } else {
-    assert(m->handle.tree_verify_attention_metadata->prompt_handler_collections
-                   .count(batch_size) != 0 &&
-           "Handler is not initialized");
-    handler = static_cast<BatchPrefillHandler *>(
-        m->handle.tree_verify_attention_metadata
-            ->prompt_handler_collections[batch_size]);
-  }
+  assert(m->handle.tree_verify_attention_metadata->handler_collections
+                  .count(batch_size) != 0 &&
+          "Handler is not initialized");
+  handler = static_cast<BatchPrefillHandler *>(
+      m->handle.tree_verify_attention_metadata
+          ->handler_collections[batch_size]);
 
   //   cudaEventRecord(t_end, stream);
   //   checkCUDA(cudaEventSynchronize(t_end));
@@ -233,63 +224,33 @@ void tree_verify_attention(TreeIncMultiHeadSelfAttentionMeta *m,
 
   DISPATCH_HEADDIM(head_dim, HEAD_DIM, {
     cudaError_t result;
-    if (bc->prompt_phase) {
-      result =
-          BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
-                                                        HEAD_DIM,
-                                                        LogitsPostHook::kNone,
-                                                        PosEncodingMode::kNone,
-                                                        false,
-                                                        MaskMode::kCausal,
-                                                        half,
-                                                        half,
-                                                        half,
-                                                        int32_t>(
-              handler,
-              q,
-              m->handle.tree_verify_attention_metadata->q_indptr,
-              /*q_offset=*/nullptr,
-              paged_kv,
-              /*custom_mask=*/nullptr,
-              /*qk_indptr=*/nullptr,
-              o,
-              /*lse=*/nullptr,
-              num_q_heads,
-              /*window_left=*/-1,
-              /*logits_soft_cap=*/0.f,
-              sm_scale,
-              /*rope_scale=*/1.f,
-              /*rope_theta=*/static_cast<float>(1e4),
-              stream);
-    } else {
-      result =
-          BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
-                                                        HEAD_DIM,
-                                                        LogitsPostHook::kNone,
-                                                        PosEncodingMode::kNone,
-                                                        false,
-                                                        MaskMode::kCustom,
-                                                        half,
-                                                        half,
-                                                        half,
-                                                        int32_t>(
-              handler,
-              q,
-              m->handle.tree_verify_attention_metadata->q_indptr,
-              /*q_offset=*/nullptr,
-              paged_kv,
-              m->handle.tree_verify_attention_metadata->custom_mask,
-              m->handle.tree_verify_attention_metadata->qk_indptr,
-              o,
-              /*lse=*/nullptr,
-              num_q_heads,
-              /*window_left=*/-1,
-              /*logits_soft_cap=*/0.f,
-              sm_scale,
-              /*rope_scale=*/1.f,
-              /*rope_theta=*/static_cast<float>(1e4),
-              stream);
-    }
+    result =
+        BatchPrefillWithPagedKVCacheWrapperDispatched<PageStorage::kIndices,
+                                                      HEAD_DIM,
+                                                      LogitsPostHook::kNone,
+                                                      PosEncodingMode::kNone,
+                                                      false,
+                                                      MaskMode::kCustom,
+                                                      half,
+                                                      half,
+                                                      half,
+                                                      int32_t>(
+            handler,
+            q,
+            m->handle.tree_verify_attention_metadata->q_indptr,
+            /*q_offset=*/nullptr,
+            paged_kv,
+            m->handle.tree_verify_attention_metadata->custom_mask,
+            m->handle.tree_verify_attention_metadata->qk_indptr,
+            o,
+            /*lse=*/nullptr,
+            num_q_heads,
+            /*window_left=*/-1,
+            /*logits_soft_cap=*/0.f,
+            sm_scale,
+            /*rope_scale=*/1.f,
+            /*rope_theta=*/static_cast<float>(1e4),
+            stream);
     if (result != cudaSuccess) {
       throw std::runtime_error("Failed to run "
                                "TreeVerifyAttentionKernel: " +
@@ -365,9 +326,7 @@ void inference_kernel(TreeIncMultiHeadSelfAttentionMeta *m,
   // std::cout << "tokens to be committed: " << bc->num_tokens_to_commit <<
   // "\n";
 
-  if (!bc->prompt_phase) {
-    commit_tokens(m, bc, stream);
-  }
+  commit_tokens(m, bc, stream);
 
   //   cudaEventRecord(t_end, stream);
   //   checkCUDA(cudaEventSynchronize(t_end));
@@ -638,6 +597,7 @@ TreeIncMultiHeadSelfAttentionMeta::TreeIncMultiHeadSelfAttentionMeta(
             sizeof(BatchConfig::tokensInfo) +
             sizeof(BatchConfig::requestsInfo) +
             sizeof(BatchConfig::request_available) +
+            sizeof(BatchConfig::request_in_prompt_phase) +
             sizeof(BatchConfig::causalMask));
     num_tokens_to_commit = reinterpret_cast<int *>(
         reinterpret_cast<char *>(committed_token_infos) +

@@ -163,7 +163,7 @@ public:
   PerTokenInfo tokensInfo[MAX_NUM_TOKENS];
   CommittedTokensInfo committed_tokens[MAX_NUM_TOKENS];
   bool request_available[MAX_NUM_REQUESTS];
-  bool request_prompt_phase[MAX_NUM_REQUESTS];
+  bool request_in_prompt_phase[MAX_NUM_REQUESTS];
 };
 
 struct InferenceResult {

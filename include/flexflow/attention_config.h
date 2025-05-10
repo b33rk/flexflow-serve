@@ -88,8 +88,7 @@ public:
     int_workspace_size = rhs.int_workspace_size;
     mem_size_ = rhs.mem_size_;
     enabled_ = rhs.enabled_;
-    decode_handler_collections = rhs.decode_handler_collections;
-    prompt_handler_collections = rhs.prompt_handler_collections;
+    handler_collections = rhs.handler_collections;
   }
 
   size_t mem_size() {
@@ -209,8 +208,7 @@ public:
 
   // batchsize -> handler
   bool enabled_;
-  std::unordered_map<int, void *> decode_handler_collections;
-  std::unordered_map<int, void *> prompt_handler_collections;
+  std::unordered_map<int, void *> handler_collections;
 };
 } // namespace FlexFlow
 

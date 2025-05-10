@@ -30,7 +30,7 @@ BatchConfig::BatchConfig(InferenceMode inference_mode_, int model_id_)
     : model_id(model_id_), inference_mode(inference_mode_) {
   std::fill(std::begin(request_available), std::end(request_available), 0);
   std::fill(
-      std::begin(request_prompt_phase), std::end(request_prompt_phase), 0);
+      std::begin(request_in_prompt_phase), std::end(request_in_prompt_phase), 0);
   // Don't need to initialize requestInfo ,tokensInfo, causalMask and
   // committed_tokens here because they initialize themselves.
   // Other fields are already initialized to proper value.
