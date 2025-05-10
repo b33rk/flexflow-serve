@@ -462,6 +462,47 @@ cudnnStatus_t cudnnSetTensorDescriptorFromDomain4SoftMax(
   }
   return CUDNN_STATUS_BAD_PARAM;
 }
+void cudnnGetTensorShapeFromDomain4SoftMax(Domain domain, int& n, int& c) {
+  int dims[MAX_TENSOR_DIM];
+  switch (domain.get_dim()) {
+    case 1: {
+      Rect<1> rect = domain;
+      dims[0] = rect.hi[0] - rect.lo[0] + 1;
+      n = dims[0];
+      c = 1;
+      return;
+    }
+    case 2: {
+      Rect<2> rect = domain;
+      dims[0] = rect.hi[0] - rect.lo[0] + 1;
+      dims[1] = rect.hi[1] - rect.lo[1] + 1;
+      n = dims[1];
+      c = dims[0];
+      return;
+    }
+    case 3: {
+      Rect<3> rect = domain;
+      dims[0] = rect.hi[0] - rect.lo[0] + 1;
+      dims[1] = rect.hi[1] - rect.lo[1] + 1;
+      dims[2] = rect.hi[2] - rect.lo[2] + 1;
+      n = dims[2] * dims[1];
+      c = dims[0];
+      return;
+    }
+    case 4: {
+      Rect<4> rect = domain;
+      dims[0] = rect.hi[0] - rect.lo[0] + 1;
+      dims[1] = rect.hi[1] - rect.lo[1] + 1;
+      dims[2] = rect.hi[2] - rect.lo[2] + 1;
+      dims[3] = rect.hi[3] - rect.lo[3] + 1;
+      n = dims[3] * dims[2] * dims[1];
+      c = dims[0];
+      return;
+    }
+    default:
+      assert(false && "Unsupported dim number");
+  }
+}
 
 cudnnStatus_t cudnnSetTensorDescriptorFromDomain(cudnnTensorDescriptor_t tensor,
                                                  Domain domain,

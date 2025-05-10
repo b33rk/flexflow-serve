@@ -170,6 +170,7 @@ cudnnStatus_t
     cudnnSetTensorDescriptorFromDomain4SoftMax(cudnnTensorDescriptor_t tensor,
                                                Legion::Domain domain,
                                                DataType data_type = DT_FLOAT);
+void cudnnGetTensorShapeFromDomain4SoftMax(Legion::Domain domain, int& n, int& c);
 
 cudaDataType_t ff_to_cuda_datatype(DataType type);
 cudnnDataType_t ff_to_cudnn_datatype(DataType type);

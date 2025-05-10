@@ -5,6 +5,7 @@
 #include "flexflow/fftype.h"
 #include "flexflow/op_meta.h"
 #include "flexflow/ops/softmax.h"
+#include <unordered_map>
 
 namespace FlexFlow {
 
@@ -14,6 +15,7 @@ public:
               Softmax const *softmax,
               Legion::Domain const &input_domain);
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
+  cudnnDataType_t cudnn_data_type;
   cudnnTensorDescriptor_t inputTensor;
   cudnnTensorDescriptor_t outputTensor;
 #else
@@ -22,7 +24,7 @@ public:
 #endif
   bool profiling;
   bool inference_debugging;
-  int dim;
+  int dim, n, c;
   DataType input_type, output_type;
 };
 
@@ -31,7 +33,8 @@ namespace Softmax {
 template <typename DT>
 void forward_kernel_wrapper(SoftmaxMeta const *m,
                             DT const *input_ptr,
-                            DT *output_ptr);
+                            DT *output_ptr,
+                            int batch_size);
 template <typename DT>
 void backward_kernel_wrapper(SoftmaxMeta const *m,
                              DT *input_grad_ptr,
@@ -43,6 +46,7 @@ template <typename DT>
 void forward_kernel(SoftmaxMeta const *m,
                     DT const *input_ptr,
                     DT *output_ptr,
+                    int batch_size,
                     ffStream_t stream);
 
 template <typename DT>

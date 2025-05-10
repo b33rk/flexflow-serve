@@ -425,16 +425,19 @@ __host__ void FusedOp::forward_task(Task const *task,
         assert(my_input_accessor[0].domain.get_volume() ==
                my_output_accessor[0].domain.get_volume());
         SoftmaxMeta *m = (SoftmaxMeta *)metas->meta[op];
+        assert(false && "Not implemented batch size parameter");
         if (m->input_type == DT_HALF) {
           Kernels::Softmax::forward_kernel_wrapper(
               m,
               my_input_accessor[0].get_half_ptr(),
-              my_output_accessor[0].get_half_ptr());
+              my_output_accessor[0].get_half_ptr(),
+              /*batch_size=*/0);
         } else if (m->input_type == DT_FLOAT) {
           Kernels::Softmax::forward_kernel_wrapper(
               m,
               my_input_accessor[0].get_float_ptr(),
-              my_output_accessor[0].get_float_ptr());
+              my_output_accessor[0].get_float_ptr(),
+              /*batch_size=*/0);
         }
         break;
       }
@@ -1102,16 +1105,19 @@ __host__ void
             assert(my_input_accessor[0].domain.get_volume() ==
                    my_output_accessor[0].domain.get_volume());
             SoftmaxMeta *m = (SoftmaxMeta *)metas->meta[op];
+            int batch_size = bc->num_active_tokens();
             if (m->input_type == DT_HALF) {
               Kernels::Softmax::forward_kernel_wrapper(
                   m,
                   my_input_accessor[0].get_half_ptr(),
-                  my_output_accessor[0].get_half_ptr());
+                  my_output_accessor[0].get_half_ptr(),
+                  batch_size);
             } else if (m->input_type == DT_FLOAT) {
               Kernels::Softmax::forward_kernel_wrapper(
                   m,
                   my_input_accessor[0].get_float_ptr(),
-                  my_output_accessor[0].get_float_ptr());
+                  my_output_accessor[0].get_float_ptr(),
+                  batch_size);
             }
             break;
           }

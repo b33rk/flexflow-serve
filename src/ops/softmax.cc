@@ -359,10 +359,11 @@ void Softmax::forward_task(Task const *task,
   GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
       m->output_type, regions[1], task->regions[1], FID_DATA, ctx, runtime);
 
+  assert(false && "Not implemented batch size parameter");
   if (m->output_type == DT_HALF) {
-    forward_kernel_wrapper(m, input.get_half_ptr(), output.get_half_ptr());
+    forward_kernel_wrapper(m, input.get_half_ptr(), output.get_half_ptr(), /*batch_size=*/0);
   } else if (m->output_type == DT_FLOAT) {
-    forward_kernel_wrapper(m, input.get_float_ptr(), output.get_float_ptr());
+    forward_kernel_wrapper(m, input.get_float_ptr(), output.get_float_ptr(), /*batch_size=*/0);
   } else {
     assert(false && "Unsupported data type");
   }
@@ -469,10 +470,12 @@ void Softmax::inference_task(Task const *task,
       m->output_type, regions[0], task->regions[0], FID_DATA, ctx, runtime);
   GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
       m->output_type, regions[1], task->regions[1], FID_DATA, ctx, runtime);
+  
+  int batch_size = bc->num_active_tokens();
   if (m->output_type == DT_HALF) {
-    forward_kernel_wrapper(m, input.get_half_ptr(), output.get_half_ptr());
+    forward_kernel_wrapper(m, input.get_half_ptr(), output.get_half_ptr(), batch_size);
   } else if (m->output_type == DT_FLOAT) {
-    forward_kernel_wrapper(m, input.get_float_ptr(), output.get_float_ptr());
+    forward_kernel_wrapper(m, input.get_float_ptr(), output.get_float_ptr(), batch_size);
   } else {
     assert(false && "Unsupported data type");
   }
@@ -517,7 +520,8 @@ bool Softmax::measure_operator_cost(Simulator *sim,
   cost_metrics.outputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
 
   std::function<void()> forward, backward;
-  forward = [&] { forward_kernel_wrapper(m, input_ptr, output_ptr); };
+  assert(false && "Not implemented batch size parameter");
+  forward = [&] { forward_kernel_wrapper(m, input_ptr, output_ptr, /*batch_size=*/0); };
   if (sim->computationMode == COMP_MODE_TRAINING) {
     float *input_grad_ptr =
         (float *)sim->allocate(sub_input.get_volume(), DT_FLOAT);

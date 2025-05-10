@@ -26,11 +26,13 @@ SoftmaxMeta::SoftmaxMeta(FFHandler handler,
                          Domain const &input_domain)
     : OpMeta(handler) {
   checkCUDNN(cudnnCreateTensorDescriptor(&inputTensor));
-  checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
-      inputTensor, input_domain, softmax->data_type));
+  // checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
+  //     inputTensor, input_domain, softmax->data_type));
   checkCUDNN(cudnnCreateTensorDescriptor(&outputTensor));
-  checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
-      outputTensor, input_domain, softmax->data_type));
+  // checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
+  //     outputTensor, input_domain, softmax->data_type));
+  cudnn_data_type = ff_to_cudnn_datatype(softmax->data_type);
+  cudnnGetTensorShapeFromDomain4SoftMax(input_domain, n, c);
   dim = softmax->dim;
   profiling = softmax->profiling;
   inference_debugging = softmax->inference_debugging;
@@ -43,7 +45,8 @@ namespace Softmax {
 template <typename DT>
 void forward_kernel_wrapper(SoftmaxMeta const *m,
                             DT const *input_ptr,
-                            DT *output_ptr) {
+                            DT *output_ptr,
+                            int batch_size) {
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
   cudaEvent_t t_start, t_end;
@@ -52,7 +55,7 @@ void forward_kernel_wrapper(SoftmaxMeta const *m,
     cudaEventCreate(&t_end);
     cudaEventRecord(t_start, stream);
   }
-  Internal::forward_kernel(m, input_ptr, output_ptr, stream);
+  Internal::forward_kernel(m, input_ptr, output_ptr, batch_size, stream);
   if (m->profiling) {
     cudaEventRecord(t_end, stream);
     checkCUDA(cudaEventSynchronize(t_end));
@@ -101,10 +104,12 @@ void backward_kernel_wrapper(SoftmaxMeta const *m,
 
 template void forward_kernel_wrapper<float>(SoftmaxMeta const *m,
                                             float const *input_ptr,
-                                            float *output_ptr);
+                                            float *output_ptr,
+                                            int batch_size);
 template void forward_kernel_wrapper<half>(SoftmaxMeta const *m,
                                            half const *input_ptr,
-                                           half *output_ptr);
+                                           half *output_ptr,
+                                           int batch_size);
 
 template void backward_kernel_wrapper<float>(SoftmaxMeta const *m,
                                              float *input_grad_ptr,
@@ -119,10 +124,15 @@ template <typename DT>
 void forward_kernel(SoftmaxMeta const *m,
                     DT const *input_ptr,
                     DT *output_ptr,
+                    int batch_size,
                     cudaStream_t stream) {
   checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
 
   float alpha = 1.0f, beta = 0.0f;
+  checkCUDNN(cudnnSetTensor4dDescriptor(
+          m->inputTensor, CUDNN_TENSOR_NCHW, m->cudnn_data_type, batch_size, m->c, 1, 1));
+  checkCUDNN(cudnnSetTensor4dDescriptor(
+          m->outputTensor, CUDNN_TENSOR_NCHW, m->cudnn_data_type, batch_size, m->c, 1, 1));
   checkCUDNN(cudnnSoftmaxForward(m->handle.dnn,
                                  CUDNN_SOFTMAX_ACCURATE,
                                  CUDNN_SOFTMAX_MODE_CHANNEL,
