@@ -42,8 +42,12 @@ RUN MINICONDA_SCRIPT_NAME=Miniconda3-latest-Linux-x86_64.sh; \
         chmod +x ~/${MINICONDA_SCRIPT_NAME} && \
         bash ~/${MINICONDA_SCRIPT_NAME} -b -p /opt/conda && \
         rm ~/${MINICONDA_SCRIPT_NAME} && \
-	/opt/conda/bin/conda config --set solver classic && \
+    /opt/conda/bin/conda config --set solver classic && \
         /opt/conda/bin/conda upgrade --all && \
+        /opt/conda/bin/conda tos accept --override-channels --channel conda && \
+        /opt/conda/bin/conda tos accept --override-channels --channel conda-forge && \
+        /opt/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+        /opt/conda/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
         /opt/conda/bin/conda install conda-build conda-verify && \
         /opt/conda/bin/conda clean -ya && \
     ln -sf /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/conda/lib/libstdc++.so.6
