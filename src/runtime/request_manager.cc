@@ -904,6 +904,8 @@ bool RequestManager::inf_req_completed(BatchConfig const &old_bc, int i) {
 
 bool RequestManager::enough_space_to_add_request(
     BatchConfig const &new_bc, int num_concurrent_inf_adapters) {
+  assert(!pending_infr_request_queue.empty() &&
+         "Pending inference request queue is empty");
   Request new_request = pending_infr_request_queue.front();
   assert(new_request.req_type == RequestType::REQ_INFERENCE);
 
@@ -1400,6 +1402,8 @@ void RequestManager::handle_completed_finetuning_req(
   }
 
   // sync metadata with all_requests
+  assert(!pending_peft_request_queue.empty() &&
+         "Trying to finalize a finetuning request when there are none");
   Request &pq_request = pending_peft_request_queue.front();
   Request &request = all_requests[pq_request.guid];
   assert(request.req_type == RequestType::REQ_FINETUNING &&
@@ -1446,6 +1450,8 @@ void RequestManager::add_finetuning_req_fwd_batch(BatchConfig &new_bc) {
       BatchConfig::max_requests_per_batch() - (int)peft_finetuning_enabled(peft_support_mode);
   assert(new_bc.request_completed[inference_batch_size] &&
          "Finetuning request already present in new batch");
+  
+  assert (pending_peft_request_queue.size() > 0);
   Request &request = pending_peft_request_queue.front();
   assert(request.req_type == RequestType::REQ_FINETUNING &&
          "Found misplaced inference request");
@@ -1647,6 +1653,7 @@ void RequestManager::process_finetuning_req_fwd_progress(
          "Finetuning request not found in new batch");
   assert(old_bc.requestsInfo[inference_batch_size].num_tokens_in_batch > 0 &&
          "Trying to continue an empty finetuning request");
+  assert (pending_peft_request_queue.size() > 0);
   Request &request = pending_peft_request_queue.front();
   assert(request.req_type == RequestType::REQ_FINETUNING &&
          "Found misplaced inference request");
@@ -1704,7 +1711,8 @@ void RequestManager::process_finetuning_req_bwd_progress(
   //   printf("Running process_finetuning_req_bwd_progress with inference_finished=true. Num finetuning bwd tokens: %i\n",
   //        old_bc.num_finetuning_bwd_tokens());
   // }
-  if (old_bc.num_finetuning_bwd_requests() == 0) {
+  if (old_bc.num_finetuning_bwd_requests() == 0 || (inference_finished && pending_peft_request_queue.size()== 0)) {
+    // if inference has finished, and we already completed the finetuning request while processing the finetuning fwd work, the pending_peft_request_queue will be empty, and we can return.
     return;
   }
   int inference_batch_size =
@@ -1713,6 +1721,7 @@ void RequestManager::process_finetuning_req_bwd_progress(
          "Finetuning request not found in new batch");
   // check that request in batch is the same as the first one in the pending
   // queue
+  assert (pending_peft_request_queue.size() > 0);
   Request &request = pending_peft_request_queue.front();
   assert(request.guid ==
              old_bc.requestsInfo[inference_batch_size].request_guid &&
@@ -1734,20 +1743,20 @@ void RequestManager::process_finetuning_req_bwd_progress(
   // print status update after each epoch
   int tot_steps =
       request.peft_finetuning_info.max_training_epochs * request.dataset.size();
-  if (request.peft_finetuning_info.completed_training_steps %
-          ((int)request.dataset.size()) ==
-      0) {
-    log_req_mgr.print("Completed finetuning epoch %i/%i",
-                      request.peft_finetuning_info.completed_training_steps /
-                          ((int)request.dataset.size()),
-                      request.peft_finetuning_info.max_training_epochs);
-  } else if (request.peft_finetuning_info.completed_training_steps %
-                 request.peft_finetuning_info.num_logging_steps ==
-             0) {
-    log_req_mgr.print("Completed finetuning step %i/%i",
-                      request.peft_finetuning_info.completed_training_steps,
-                      tot_steps);
+  if (request.peft_finetuning_info.last_processed_bwd_layer == INT_MAX) {
+    if (request.peft_finetuning_info.completed_training_steps % ((int)request.dataset.size()) == 0) {
+      log_req_mgr.print("Completed finetuning epoch %i/%i",
+                        request.peft_finetuning_info.completed_training_steps /
+                            ((int)request.dataset.size()),
+                        request.peft_finetuning_info.max_training_epochs);
+      std::cout << request << std::endl;
+    } else if (request.peft_finetuning_info.completed_training_steps % request.peft_finetuning_info.num_logging_steps == 0) {
+      log_req_mgr.print("Completed finetuning step %i/%i",
+                        request.peft_finetuning_info.completed_training_steps,
+                        tot_steps);
+    }
   }
+
   if (request.peft_finetuning_info.completed_training_steps == tot_steps ||
       inference_finished) {
     handle_completed_finetuning_req(old_bc);
