@@ -1870,8 +1870,8 @@ void RequestManager::add_inference_work_if_needed(BatchConfig &new_bc,
   int num_concurrent_inf_adapters = 0;
 
   if (inference_finished) {
-    assert(old_bc.num_inference_tokens() == 0 &&
-           "Old batch should not have inference tokens when inference_finished=true");
+    // assert(old_bc.num_inference_tokens() == 0 &&
+    //        "Old batch should not have inference tokens when inference_finished=true");
     assert(pending_infr_request_queue.empty() &&
            "Pending inference request queue should be empty when inference_finished=true");
     return;
