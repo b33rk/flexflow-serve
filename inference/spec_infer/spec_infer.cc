@@ -94,7 +94,9 @@ void parse_input_args(char **argv,
                       int &spec_batch_size,
                       int &chunked_prefill_buffer_size,
                       std::map<int, double> &batch_size_2_latency_ms_map,
-                      int &max_tokens_per_ssm_spec_batch) {
+                      int &max_tokens_per_ssm_spec_batch,
+                      int &min_tree_depth,
+                      bool &equal_greedy) {
   for (int i = 1; i < argc; i++) {
     // llm model name
     if (!strcmp(argv[i], "-llm-model")) {
@@ -268,6 +270,14 @@ void parse_input_args(char **argv,
       max_tokens_per_ssm_spec_batch = std::stoi(argv[++i]);
       continue;
     }
+    if (!strcmp(argv[i], "--min-tree-depth")) {
+      min_tree_depth = std::stoi(argv[++i]);
+      continue;
+    }
+    if (!strcmp(argv[i], "--equal-greedy")) {
+      equal_greedy = true;
+      continue;
+    }
   }
   if (paths.cache_folder_path.empty()) {
     char const *ff_cache_path = std::getenv("FF_CACHE_PATH");
@@ -279,6 +289,32 @@ void parse_input_args(char **argv,
   wordexp(paths.cache_folder_path.c_str(), &p, 0);
   paths.cache_folder_path = p.we_wordv[0];
   wordfree(&p);
+}
+
+bool is_qwen(FilePaths const &file_paths, ModelMeta const &model_metadata) {
+  auto llm_model_config_path =
+      join_path({file_paths.cache_folder_path,
+                 "configs",
+                 model_metadata.model_names.llm_model_name,
+                 "config.json"});
+  std::ifstream llm_config_file_handle(llm_model_config_path);
+  if (!llm_config_file_handle.good()) {
+    std::cout << "LLM Model config file " << llm_model_config_path
+              << " not found." << std::endl;
+    assert(false);
+  }
+  json llm_model_config = json::parse(llm_config_file_handle,
+                                      /*parser_callback_t */ nullptr,
+                                      /*allow_exceptions */ true,
+                                      /*ignore_comments */ true);
+
+  auto architectures = llm_model_config["architectures"];
+  for (auto const &str : architectures) {
+    if (str == "Qwen2ForCausalLM") {
+      return true;
+    }
+  }
+  return false;
 }
 
 void get_model_meta(FilePaths &file_paths,
@@ -446,6 +482,7 @@ void FlexFlow::top_level_task(Task const *task,
   int expansion_degree = 3;
   int max_tree_depth = 8;
   int max_tree_width = 16;
+  int min_tree_depth = 2;
   RequestManager::DecodingMode decoding_mode =
       RequestManager::SPECULATIVE_DECODING;
   bool spec_sampling = false;
@@ -466,6 +503,7 @@ void FlexFlow::top_level_task(Task const *task,
   int spec_batch_size = 256;
   int chunked_prefill_buffer_size = 128;
   int max_tokens_per_ssm_spec_batch = 256;
+  bool equal_greedy = false;
   std::map<int, double> batch_size_2_latency_ms_map;
   std::string emission_file_path;
 
@@ -507,7 +545,9 @@ void FlexFlow::top_level_task(Task const *task,
                    spec_batch_size,
                    chunked_prefill_buffer_size,
                    batch_size_2_latency_ms_map,
-                   max_tokens_per_ssm_spec_batch);
+                   max_tokens_per_ssm_spec_batch,
+                   min_tree_depth,
+                   equal_greedy);
   if (max_tokens_per_ssm_batch == -1) {
     max_tokens_per_ssm_batch = max_tokens_per_batch;
   }
@@ -516,6 +556,7 @@ void FlexFlow::top_level_task(Task const *task,
   }
 
   get_model_meta(file_paths, model_metadata, use_full_precision);
+  bool qwen = is_qwen(file_paths, model_metadata);
 
   assert(ffconfig.data_parallelism_degree * ffconfig.tensor_parallelism_degree *
              ffconfig.pipeline_parallelism_degree ==
@@ -545,10 +586,22 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_max_tree_depth(max_tree_depth);
   rm->set_max_tree_width(max_tree_width);
   rm->set_verbose(verbose);
+
+  if (qwen) {
+    model_metadata.eos_token_ids.clear();
+    model_metadata.eos_token_ids.push_back(model_metadata.bos_token_id);
+  }
   rm->register_tokenizer(model_metadata.llm_model_type,
                          model_metadata.bos_token_id,
                          model_metadata.eos_token_ids,
                          model_metadata.llm_tokenizer_path);
+  //   std::cout << "bos_token_id: " << model_metadata.bos_token_id <<
+  //   std::endl; std::cout << "eos_token_ids: "; for (auto eos_token_id :
+  //   model_metadata.eos_token_ids) {
+  //     std::cout << eos_token_id << " ";
+  //   }
+  //   std::cout << std::endl;
+  //   exit(1);
   rm->set_decoding_mode(decoding_mode);
   rm->set_slo_violation_early_termination(slo_attainment_early_termination);
   rm->set_baseline_latency(baseline_latency_ms);
@@ -565,6 +618,8 @@ void FlexFlow::top_level_task(Task const *task,
   rm->set_chunked_prefill_buffer_size(chunked_prefill_buffer_size);
   rm->set_max_tokens_per_ssm_spec_batch(max_tokens_per_ssm_spec_batch);
   rm->set_batch_size_2_latency_ms_map(batch_size_2_latency_ms_map);
+  rm->set_min_tree_depth(min_tree_depth);
+  rm->set_equal_greedy(equal_greedy);
 
   // Create LLM model
   FFModel tree_model(ffconfig, ffconfig.cpu_offload);

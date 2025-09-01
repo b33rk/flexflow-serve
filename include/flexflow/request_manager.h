@@ -365,6 +365,10 @@ public:
   void set_batch_size_2_latency_ms_map(
       std::map<int, double> const &spec_batch_latency_ms_map);
   std::map<int, double> &get_batch_size_2_latency_ms_map();
+  void set_min_tree_depth(int min_tree_depth);
+  int get_min_tree_depth();
+  void set_equal_greedy(bool equal_greedy);
+  bool get_equal_greedy();
   double get_request_expected_latency(Request &request);
   Request &get_request_with_guid(RequestGuid guid);
   int register_ssm_model(FFModel *model);
@@ -477,6 +481,7 @@ private:
   double spec_batch_latency_ms = 80;
   std::map<int, double> batch_size_2_latency_ms_map;
   double correction_factor = 1.1;
+  int min_tree_depth = 2;
 
   State request_manager_status;
   BackgroundServerStatus background_server_status;
@@ -502,6 +507,7 @@ private:
   double eval_process_latency_us = 0.0;
   double eval_schedule_latency_us = 0.0;
   double eval_other_latency_us = 0.0; // load pending request, request complete
+  bool equal_greedy = false;          // Equal greedy schedule
 
   std::unique_ptr<Tokenizer> tokenizer_;
   bool verbose;
@@ -619,6 +625,7 @@ private:
   void add_tokens_to_spec_token_tree_old_version(
       InferenceResult const &ssm_inference_result);
   int prune_token_tree(int budget, int batch_size);
+  int prune_token_tree_equal(int budget, int batch_size);
   [[deprecated("Should not be used in chunked branch.")]]
   void prune_token_tree_equal();
   [[deprecated("Should not be used in chunked branch.")]]
@@ -627,6 +634,7 @@ private:
                              int &budget,
                              double num_tokens_to_decode,
                              int num_req_with_slo);
+  void add_tokens_equal(RequestGuid guid, int max_tokens_usage);
   [[deprecated("Should not be used in chunked branch.")]]
   void add_tokens_toward_memory_occupancy(int budget);
   void add_tokens_toward_goodput(int &budget);

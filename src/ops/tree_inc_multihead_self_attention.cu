@@ -201,9 +201,9 @@ void tree_verify_attention(TreeIncMultiHeadSelfAttentionMeta *m,
 
   BatchPrefillHandler *handler = nullptr;
 
-  assert(m->handle.tree_verify_attention_metadata->handler_collections
-                  .count(batch_size) != 0 &&
-          "Handler is not initialized");
+  assert(m->handle.tree_verify_attention_metadata->handler_collections.count(
+             batch_size) != 0 &&
+         "Handler is not initialized");
   handler = static_cast<BatchPrefillHandler *>(
       m->handle.tree_verify_attention_metadata
           ->handler_collections[batch_size]);
@@ -295,6 +295,24 @@ void inference_kernel(TreeIncMultiHeadSelfAttentionMeta *m,
                       DT const *bias_ptr,
                       cudaStream_t stream) {
 
+  //   // Debug: check the input tensor of each request
+  //   cudaDeviceSynchronize();
+  //   int device;
+  //   checkCUDA(cudaGetDevice(&device));
+  //   if (device == 0) {
+  //     for (int i = 0; i < bc->max_requests_per_batch(); i++) {
+  //       if (!bc->request_available[i]) {
+  //         continue;
+  //       }
+  //       std::cout << "request " << i << " : ";
+  //       print_tensor<DT>(input_ptr +
+  //                            bc->requestsInfo[i].first_token_offset_in_batch
+  //                            *
+  //                                m->hidden_size,
+  //                        10,
+  //                        "Before tree attention first 10 element: ");
+  //     }
+  //   }
   //   int device;
   //   checkCUDA(cudaGetDevice(&device));
   //   cudaEvent_t t_start, t_end;
@@ -468,6 +486,23 @@ void inference_kernel(TreeIncMultiHeadSelfAttentionMeta *m,
 
   //   delete[] temp_output;
   // }
+
+  //   // Debug output: check the output tensor of each request
+  //   cudaDeviceSynchronize();
+  //   if (device == 0) {
+  //     for (int i = 0; i < bc->max_requests_per_batch(); i++) {
+  //       if (!bc->request_available[i]) {
+  //         continue;
+  //       }
+  //       std::cout << "request " << i << " : ";
+  //       print_tensor<DT>(output_ptr +
+  //                            bc->requestsInfo[i].first_token_offset_in_batch
+  //                            *
+  //                                m->o_dim,
+  //                        10,
+  //                        "Tree attention first 10 element: ");
+  //     }
+  //   }
 }
 
 } // namespace TreeIncMultiHeadAttention

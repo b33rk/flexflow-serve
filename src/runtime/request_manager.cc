@@ -412,6 +412,16 @@ bool RequestManager::get_capture_finished() {
   return capture_finished;
 }
 
+void RequestManager::set_min_tree_depth(int min_tree_depth_) {
+  assert(min_tree_depth_ > 0 and
+         min_tree_depth_ <= BatchConfig::MAX_TREE_DEPTH and
+         "Invalid min_tree_depth");
+  this->min_tree_depth = min_tree_depth_;
+}
+int RequestManager::get_min_tree_depth() {
+  return min_tree_depth;
+}
+
 void RequestManager::set_batch_size_2_latency_ms_map(
     std::map<int, double> const &batch_size_2_latency_ms_map_) {
   assert(decoding_mode == RequestManager::SPECULATIVE_DECODING and
@@ -499,6 +509,14 @@ void RequestManager::set_eval_overhead_breakdown(
 
 bool RequestManager::get_eval_overhead_breakdown() {
   return eval_overhead_breakdown;
+}
+
+bool RequestManager::get_equal_greedy() {
+  return equal_greedy;
+}
+
+void RequestManager::set_equal_greedy(bool equal_greedy_) {
+  equal_greedy = equal_greedy_;
 }
 
 inline double RequestManager::get_slo_constraint(Request &request) {
@@ -1169,11 +1187,27 @@ void RequestManager::update_token_tree_depth() {
   //               4,
   //           get_max_tree_depth());
 
+  //   ssm_tree_depth =
+  //       max(get_min_tree_depth(),
+  //           min(int(get_spec_batch_size() / (get_num_active_requests() -
+  //                                            prefilling_requests.size() +
+  //                                            28)) -
+  //                   2,
+  //               get_max_tree_depth()));
+
+  //   ssm_tree_depth =
+  //       max(get_min_tree_depth(),
+  //           min(int(get_spec_batch_size() / (get_num_active_requests() -
+  //                                            prefilling_requests.size() +
+  //                                            16)) -
+  //                   2,
+  //               get_max_tree_depth()));
+
   ssm_tree_depth =
-      max(4,
+      max(get_min_tree_depth(),
           min(int(get_spec_batch_size() / (get_num_active_requests() -
-                                           prefilling_requests.size() + 28)) -
-                  2,
+                                           prefilling_requests.size() + 32)) -
+                  1,
               get_max_tree_depth()));
 }
 
@@ -2198,8 +2232,15 @@ BatchConfig RequestManager::prepare_verify_batch_config() {
   // assigned to the speculative token trees. However, the token trees in may
   // not need such many tokens.
   // remaining_spec_budget is the number of tokens assigned but not used.
-  int remaining_spec_budget =
-      prune_token_tree(spec_token_num, spec_token_num + prefill_token_num);
+  int remaining_spec_budget = 0;
+  if (!get_equal_greedy()) {
+    remaining_spec_budget =
+        prune_token_tree(spec_token_num, spec_token_num + prefill_token_num);
+  } else {
+    remaining_spec_budget = prune_token_tree_equal(
+        spec_token_num, spec_token_num + prefill_token_num);
+  }
+
   prefill_token_num = std::min(remaining_spec_budget + prefill_token_num,
                                total_prefill_token_num);
 
@@ -4311,6 +4352,118 @@ int RequestManager::prune_token_tree(int budget, int batch_size) {
   return budget;
 }
 
+int RequestManager::prune_token_tree_equal(int budget, int batch_size) {
+  // Each reqeust has at least one token
+  budget -= (num_available_requests - prefilling_requests.size());
+  assert(budget >= 0);
+
+  // Round the batch size to a multiple of chunked_prefill_buffer_size
+  batch_size = ((batch_size + chunked_prefill_buffer_size - 1) /
+                chunked_prefill_buffer_size) *
+               chunked_prefill_buffer_size;
+  assert(batch_size_2_latency_ms_map.find(batch_size) !=
+         batch_size_2_latency_ms_map.end());
+  double batch_latency_ms = batch_size_2_latency_ms_map[batch_size];
+  double ssm_spec_latency_estimated =
+      ssm_spec_latency_ms / get_max_tree_depth() * ssm_tree_depth;
+  //   // Debug
+  //   std::cout << "[Debug] RequestManager::prune_token_tree() batch_size: "
+  //             << batch_size << " batch_latency_ms: " << batch_latency_ms
+  //             << " ssm_tree_depth: " << ssm_tree_depth
+  //             << " ssm_spec_latency_estimated: " <<
+  //             ssm_spec_latency_estimated
+  //             << std::endl;
+
+  std::vector<std::pair<double, int>> num_tokens_to_decode_2_request_index;
+  num_tokens_to_decode_2_request_index.reserve(get_max_requests_per_batch());
+  for (int request_index = 0; request_index < get_max_requests_per_batch();
+       ++request_index) {
+    if (!request_available[request_index]) {
+      continue;
+    }
+    if (request_in_prompt_phase[request_index]) {
+      continue;
+    }
+    RequestGuid guid = guid_of_requests[request_index];
+    Request &request = all_requests[guid];
+    assert(request.status == Request::RUNNING);
+    if (request.get_slo_ratio() > 999) { // infinity
+      continue;
+    }
+    // TODO: use latency from the map
+    // double num_tokens_to_decode_per_step =
+    //     (ssm_spec_latency_ms + llm_verify_latency_ms) * correction_factor /
+    //     get_slo_constraint(request);
+    double num_tokens_to_decode_per_step =
+        (ssm_spec_latency_estimated + batch_latency_ms) /
+        get_slo_constraint(request);
+    double expected_num_tokens_decoded =
+        request.decode_latency_ms / get_slo_constraint(request);
+    double num_tokens_to_decode =
+        max(1.0,
+            (num_tokens_to_decode_per_step + expected_num_tokens_decoded) *
+                    correction_factor -
+                request.decode_length());
+    num_tokens_to_decode =
+        min(num_tokens_to_decode, (double)ssm_tree_depth + 1);
+    num_tokens_to_decode_2_request_index.push_back(
+        std::make_pair(num_tokens_to_decode, request_index));
+  }
+
+  // Sort the requests by number of tokens to decode in descending order
+  std::sort(num_tokens_to_decode_2_request_index.begin(),
+            num_tokens_to_decode_2_request_index.end(),
+            std::greater<std::pair<double, int>>());
+
+  // Debug
+  std::cout
+      << "[Debug] RequestManager::prune_token_tree() num of active requests : "
+      << num_tokens_to_decode_2_request_index.size() << std::endl;
+  std::cout << "[Debug] RequestManager::prune_token_tree() budget: " << budget
+            << std::endl;
+
+  if (!num_tokens_to_decode_2_request_index.empty()) {
+    for (auto const &num_tokens_to_decode_request_index_pair :
+         num_tokens_to_decode_2_request_index) {
+      int request_index = num_tokens_to_decode_request_index_pair.second;
+      RequestGuid guid = guid_of_requests[request_index];
+      if (budget / num_tokens_to_decode_2_request_index.size() >= 1) {
+        add_tokens_equal(
+            guid, int(budget / num_tokens_to_decode_2_request_index.size()));
+      }
+    }
+  }
+
+  //   assert(budget >= 0);
+  //   if (budget > 0) {
+  //     add_tokens_toward_goodput(budget);
+  //   }
+
+  // Clear the priority queue in each requests
+  for (int request_index = 0; request_index < get_max_requests_per_batch();
+       ++request_index) {
+    if (!request_available[request_index]) {
+      continue;
+    }
+    if (request_in_prompt_phase[request_index]) {
+      continue;
+    }
+    RequestGuid guid = guid_of_requests[request_index];
+    Request &request = all_requests[guid];
+    assert(request.status == Request::RUNNING);
+    std::vector<std::pair<std::shared_ptr<TokenTreeNode>, double>>
+        _prealloc_vector;
+    _prealloc_vector.reserve(BatchConfig::MAX_SPEC_TREE_TOKEN_NUM);
+    request.token_tree_nodes_acc_prob_pair_pq = std::priority_queue<
+        std::pair<std::shared_ptr<TokenTreeNode>, double>,
+        std::vector<std::pair<std::shared_ptr<TokenTreeNode>, double>>,
+        SharedTokenTreeNodePtrDoubleLess>(SharedTokenTreeNodePtrDoubleLess(),
+                                          std::move(_prealloc_vector));
+  }
+
+  return 0;
+}
+
 /* Deprecated */
 /*
 void RequestManager::prune_token_tree_equal() {
@@ -4428,6 +4581,23 @@ void RequestManager::add_tokens_toward_slo(RequestGuid guid,
   }
 }
 
+void RequestManager::add_tokens_equal(RequestGuid guid, int max_tokens_usage) {
+  Request &request = all_requests[guid];
+
+  // The root is already included
+  // In function add_root_to_spec_token_tree
+
+  while (max_tokens_usage > 0) {
+    if (request.token_tree_nodes_acc_prob_pair_pq.empty()) {
+      break;
+    }
+    auto [node_ptr, log_acc_prob] =
+        request.token_tree_nodes_acc_prob_pair_pq.top();
+    request.token_tree_nodes_acc_prob_pair_pq.pop();
+    node_ptr->included = true;
+    max_tokens_usage--;
+  }
+}
 /* Deprecated */
 /*
 void RequestManager::add_tokens_toward_memory_occupancy(int budget) {
