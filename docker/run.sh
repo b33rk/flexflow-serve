@@ -4,19 +4,49 @@ set -euo pipefail
 # Usage: ./run.sh <docker_image_name>
 # Optional environment variables: FF_GPU_BACKEND, cuda_version, hip_version, ATTACH_GPUS, SHM_SIZE
 
+set_cuda_version_version() {
+  # If the user provided a cuda_version, use that.
+  if [[ -n "${cuda_version:-}" ]]; then
+    return 0
+  fi
+
+  # Otherwise, check that nvidia-smi is available.
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "Error: nvidia-smi not found and cuda_version is not set." >&2
+    return 1
+  fi
+
+  # Extract the CUDA version from nvidia-smi output.
+  local nvidia_output cuda_ver
+  nvidia_output=$(nvidia-smi)
+  cuda_ver=$(echo "$nvidia_output" | grep "CUDA Version" | sed -n 's/.*CUDA Version:\s*\([0-9]\+\.[0-9]\+\).*/\1/p')
+  
+  if [[ -z "$cuda_ver" ]]; then
+    echo "Error: Unable to detect CUDA version from nvidia-smi." >&2
+    return 1
+  fi
+
+  export cuda_version="$cuda_ver"
+  return 0
+}
+
 # Cd into directory holding this script
 cd "${BASH_SOURCE[0]%/*}"
 
 # Parse input params
 image=${1:-flexflow}
 FF_GPU_BACKEND=${FF_GPU_BACKEND:-cuda}
-cuda_version=${cuda_version:-"empty"}
 hip_version=${hip_version:-"empty"}
 
 # Parameter controlling whether to attach GPUs to the Docker container
 ATTACH_GPUS=${ATTACH_GPUS:-true}
 gpu_arg=""
 if $ATTACH_GPUS ; then gpu_arg="--gpus all" ; fi
+FORWARD_STREAMLIT_PORT=${FORWARD_STREAMLIT_PORT:-false}
+port_forward_arg=""
+if $FORWARD_STREAMLIT_PORT ; then
+  port_forward_arg+="-p 8501:8501"
+fi
 
 
 # Amount of shared memory to give the Docker container access to
@@ -44,28 +74,8 @@ fi
 gpu_backend_version=""
 
 if [[ "${FF_GPU_BACKEND}" == "cuda" || "${FF_GPU_BACKEND}" == "hip_cuda" ]]; then
-  # Autodetect cuda version if not specified
-  if [[ $cuda_version == "empty" ]]; then
-    # shellcheck disable=SC2015
-    cuda_version=$(command -v nvcc >/dev/null 2>&1 && nvcc --version | grep "release" | awk '{print $NF}' || true)
-    # Change cuda_version eg. V11.7.99 to 11.7
-    cuda_version=${cuda_version:1:4}
-    if [[ -z "$cuda_version" ]]; then
-      echo "Could not detect CUDA version. Please specify one manually by setting the 'cuda_version' env."
-      exit 1
-    fi
-  fi
-  # Check that CUDA version is supported
-  if [[ "$cuda_version" != @(11.1|11.2|11.3|11.4|11.5|11.6|11.7|11.8|12.0|12.1|12.2) ]]; then
-    echo "cuda_version is not supported, please choose among {11.1|11.2|11.3|11.4|11.5|11.6|11.7|11.8|12.0|12.1|12.2}"
-    exit 1
-  fi
-  # Use CUDA 12.2 for all versions greater or equal to 12.2 for now
-  if [[ "$cuda_version" == @(12.3|12.4|12.5|12.6|12.7|12.8|12.9) ]]; then
-    cuda_version=12.2
-  fi
-  # Set cuda version suffix to docker image name
-  echo "Running $image docker image with CUDA $cuda_version"
+  set_cuda_version_version || { echo "Failed to set gpu_backend_version." >&2; exit 1; }
+  echo "Running $image docker image with CUDA: $cuda_version"
   gpu_backend_version="-${cuda_version}"
 fi
 
@@ -120,4 +130,9 @@ if [ -f "$hf_token_path" ]; then
   hf_token_volume+="-v $hf_token_path:/root/.cache/huggingface/token"
 fi
 
-eval docker run -it "$gpu_arg" "--shm-size=${SHM_SIZE}" "${hf_token_volume}" "${image}-${FF_GPU_BACKEND}${gpu_backend_version}:latest"
+ssh_key_volume=""
+ssh_key_path="$HOME/.ssh/id_rsa"
+if [ -f "$ssh_key_path" ] && [ -f "$ssh_key_path.pub" ]; then
+  ssh_key_volume="-v $ssh_key_path:/root/.ssh/id_rsa -v $ssh_key_path.pub:/root/.ssh/id_rsa.pub"
+fi
+eval docker run -it "$gpu_arg" "--shm-size=${SHM_SIZE}" "--cap-add=SYS_PTRACE" "${ssh_key_volume}" "${hf_token_volume}" "${port_forward_arg}" "${image}-${FF_GPU_BACKEND}${gpu_backend_version}:latest"

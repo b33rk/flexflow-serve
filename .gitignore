@@ -195,3 +195,5 @@ core.*
 *.out
 sharegpt.json
 wildchat.json
+
+models/
