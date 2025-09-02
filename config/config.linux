@@ -52,8 +52,8 @@ CUDNN_DIR=${CUDNN_DIR:-"/usr/local/cuda"}
 # otherwise, we will build nccl from source
 NCCL_DIR=${NCCL_DIR:-"/usr/local/cuda"}
 
-# disable Python
-FF_USE_PYTHON=${FF_USE_PYTHON:-OFF}
+# enable Python
+FF_USE_PYTHON=${FF_USE_PYTHON:-ON}
 
 # set Legion networks
 FF_LEGION_NETWORKS=${FF_LEGION_NETWORKS:-}
