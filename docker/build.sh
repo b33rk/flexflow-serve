@@ -12,11 +12,14 @@ get_cuda_docker_image() {
 
   # Determine Ubuntu version: use lsb_release if available, else default to 22.04.
   local ubuntu_version
-  if command -v lsb_release >/dev/null 2>&1; then
-      ubuntu_version=$(lsb_release -rs)
-  else
-      ubuntu_version="22.04"
-  fi
+  # if command -v lsb_release >/dev/null 2>&1; then
+  #     ubuntu_version=$(lsb_release -rs)
+  # else
+  #     ubuntu_version="22.04"
+  # fi
+
+  # temporary fix for cuda 12.4 matching
+  ubuntu_version="22.04"
 
   # Determine CUDA version.
   # If the environment variable 'cuda_version' is set (in "<major>.<minor>" format), use that.
