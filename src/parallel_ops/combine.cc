@@ -477,6 +477,15 @@ void Combine::forward_task_with_type(Task const *task,
                                      std::vector<PhysicalRegion> const &regions,
                                      Context ctx,
                                      Runtime *runtime) {
+  
+  int shard_id = task->index_point.point_data[0];
+  cudaStream_t stream;
+  checkCUDA(get_legion_stream(&stream));
+  cudaEvent_t t_start, t_end;
+  cudaEventCreate(&t_start);
+  cudaEventCreate(&t_end);
+  cudaEventRecord(t_start, stream);
+  
   Domain input_domain = runtime->get_index_space_domain(
       ctx, task->regions[0].region.get_index_space());
   Domain output_domain = runtime->get_index_space_domain(
@@ -489,6 +498,17 @@ void Combine::forward_task_with_type(Task const *task,
       regions[1], task->regions[1], FID_DATA, ctx, runtime);
 
   forward_kernel<DT>(input_ptr, output_ptr, output_domain.get_volume());
+
+  cudaEventRecord(t_end, stream);
+  checkCUDA(cudaEventSynchronize(t_end));
+  float elapsed = 0;
+  checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
+  cudaEventDestroy(t_start);
+  cudaEventDestroy(t_end);
+  if (shard_id == 0) {
+    std::cout << "OPTIME[Combine]= "<< elapsed << " ms" << std::endl;
+  }
+
 }
 
 bool Combine::peft_bwd_task(Task const *task,

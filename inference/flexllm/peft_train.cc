@@ -364,12 +364,12 @@ void FlexFlow::top_level_task(Task const *task,
                    num_layers_per_finetuning_step,
                    temporal_sharing_frequency,
                    run_warmup);
-  assert(peft_finetuning_enabled(ffconfig.peft_support_mode) &&
-         "Cannot train LORA adapter if finetuning is not enabled");
-  assert(!file_paths.dataset_file_path.empty() &&
-         "Cannot train LORA adapter if dataset path is empty");
-  assert(!peft_model_name.empty() &&
-         "PEFT model name should not be left empty");
+  // assert(peft_finetuning_enabled(ffconfig.peft_support_mode) &&
+  //        "Cannot train LORA adapter if finetuning is not enabled");
+  // assert(!file_paths.dataset_file_path.empty() &&
+  //        "Cannot train LORA adapter if dataset path is empty");
+  // assert(!peft_model_name.empty() &&
+  //        "PEFT model name should not be left empty");
 
   if (num_kv_cache_slots == -1) {
     num_kv_cache_slots = max_sequence_length * max_requests_per_batch;
@@ -520,17 +520,17 @@ void FlexFlow::top_level_task(Task const *task,
   rm->start_background_server(&model);
 
   // Add PEFT adapter(s)
-  PEFTModelID *peft_model_id_finetuning =
-      model.register_peft_adapter(peft_config_finetuning);
+  // PEFTModelID *peft_model_id_finetuning =
+  //     model.register_peft_adapter(peft_config_finetuning);
 
-  if (run_warmup) {
-    std::vector<Request> warmup_requests =
-        make_warmup_requests(10, 1000, peft_model_id_finetuning);
-    std::vector<GenerationResult> warmup_result =
-        model.generate(warmup_requests);
-    rm->set_inference_finished(false); // reset inference finished flag
-    std::cout << "----------warmup finished--------------" << std::endl;
-  }
+  // if (run_warmup) {
+  //   std::vector<Request> warmup_requests =
+  //       make_warmup_requests(10, 1000, peft_model_id_finetuning);
+  //   std::vector<GenerationResult> warmup_result =
+  //       model.generate(warmup_requests);
+  //   rm->set_inference_finished(false); // reset inference finished flag
+  //   std::cout << "----------warmup finished--------------" << std::endl;
+  // }
 
   // Run workload
   {
@@ -544,23 +544,23 @@ void FlexFlow::top_level_task(Task const *task,
     }
 
     // Add fine-tuning request
-    assert(!file_paths.dataset_file_path.empty() &&
-           "Dataset file path is required for fine-tuning.");
-    printf("Finetuning request with dataset %s\n",
-           file_paths.dataset_file_path.c_str());
-    Request fine_tuning_req;
-    fine_tuning_req.req_type = RequestType::REQ_FINETUNING;
-    fine_tuning_req.peft_model_id = *peft_model_id_finetuning;
-    fine_tuning_req.peft_finetuning_info.dataset_filepath =
-        file_paths.dataset_file_path;
-    fine_tuning_req.peft_finetuning_info.max_samples = max_finetuning_samples;
-    fine_tuning_req.peft_finetuning_info.max_training_epochs =
-        max_training_epochs;
-    fine_tuning_req.peft_finetuning_info.gradient_accumulation_steps =
-        gradient_accumulation_steps;
-    fine_tuning_req.peft_finetuning_info.num_logging_steps = num_logging_steps;
+    // assert(!file_paths.dataset_file_path.empty() &&
+    //        "Dataset file path is required for fine-tuning.");
+    // printf("Finetuning request with dataset %s\n",
+    //        file_paths.dataset_file_path.c_str());
+    // Request fine_tuning_req;
+    // fine_tuning_req.req_type = RequestType::REQ_FINETUNING;
+    // fine_tuning_req.peft_model_id = *peft_model_id_finetuning;
+    // fine_tuning_req.peft_finetuning_info.dataset_filepath =
+    //     file_paths.dataset_file_path;
+    // fine_tuning_req.peft_finetuning_info.max_samples = max_finetuning_samples;
+    // fine_tuning_req.peft_finetuning_info.max_training_epochs =
+    //     max_training_epochs;
+    // fine_tuning_req.peft_finetuning_info.gradient_accumulation_steps =
+    //     gradient_accumulation_steps;
+    // fine_tuning_req.peft_finetuning_info.num_logging_steps = num_logging_steps;
     std::vector<Request> finetuning_requests;
-    finetuning_requests.push_back(fine_tuning_req);
+    // finetuning_requests.push_back(fine_tuning_req);
 
     std::cout << "----------inference started--------------" << std::endl;
     std::vector<GenerationResult> result =
@@ -598,7 +598,7 @@ void FlexFlow::top_level_task(Task const *task,
                                    run_warmup ? 10 : 0); // num_warmup_requests
   }
 
-  free(peft_model_id_finetuning);
+  // free(peft_model_id_finetuning);
 
   std::cout << "----------inference finished--------------" << std::endl;
 

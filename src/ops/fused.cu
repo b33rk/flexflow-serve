@@ -184,6 +184,17 @@ __host__ void
       printf("\tmy_output_accessor[%i] = output_accessor[%i]\n", i, my_off);
 #endif
     }
+    
+    
+    int shard_id = task->index_point.point_data[0];
+    cudaStream_t stream;
+    checkCUDA(get_legion_stream(&stream));
+    cudaEvent_t t_start, t_end;
+    cudaEventCreate(&t_start);
+    cudaEventCreate(&t_end);
+    cudaEventRecord(t_start, stream);
+    
+
     switch (fused->op_op_type[op]) {
       case OP_CONCAT: {
         assert(fused->op_num_weights[op] == 0);
@@ -620,6 +631,17 @@ __host__ void
         assert(false && "Fusion currently does not support type");
       }
     }
+    cudaEventRecord(t_end, stream);
+    checkCUDA(cudaEventSynchronize(t_end));
+    float elapsed = 0;
+    checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
+    cudaEventDestroy(t_start);
+    cudaEventDestroy(t_end);
+    std::string op_name_without_uid = get_op_name_without_uid(metas->meta[op]);
+    if (shard_id == 0) {
+      std::cout << "OPTIME[" << op_name_without_uid << "]= "<< elapsed << " ms" << std::endl;
+    }
+    
     if (metas->meta[op]->inference_debugging) {
       std::vector<GenericTensorAccessorR> input_accessors_to_save;
       std::vector<GenericTensorAccessorR> weight_accessors_to_save;
