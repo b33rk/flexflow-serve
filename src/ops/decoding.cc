@@ -204,7 +204,6 @@ Decoding::Decoding(FFModel &model,
 
 struct DecodingInitMeta {
   Decoding *decoding;
-  bool is_last_op;
 };
 
 void Decoding::init_inference(FFModel const &ff,
@@ -220,26 +219,8 @@ void Decoding::init_inference(FFModel const &ff,
   size_t machine_view_hash = view->hash();
   set_argumentmap_for_init_inference(ff, argmap, batch_outputs[0]);
 
-  int last_op = ff.operators.size() - 1;
-  assert(ff.operators[last_op]->op_type == OP_ARGMAX ||
-         ff.operators[last_op]->op_type == OP_ARG_TOPK ||
-         ff.operators[last_op]->op_type == OP_SAMPLING ||
-         ff.operators[last_op]->op_type == OP_DECODING);
-  last_op -= 1;
-  while (ff.operators[last_op]->op_type == OP_WEIGHT && last_op > 0) {
-    last_op -= 1;
-  }
-  bool is_last_op = false;
-  if (ff.operators[last_op] == this) {
-    is_last_op = true;
-  } else if (ff.operators[last_op]->op_type == OP_FUSED) {
-    FusedOp *fused_op = static_cast<FusedOp *>(ff.operators[last_op]);
-    is_last_op = fused_op->operators[fused_op->numOperators - 1] == this;
-  }
-
   DecodingInitMeta meta;
   meta.decoding = this;
-  meta.is_last_op = is_last_op;
 
   IndexLauncher launcher(DECODING_INIT_TASK_ID,
                          parallel_is,
@@ -317,7 +298,7 @@ OpMeta *Decoding::init_task(Task const *task,
   assert(task->regions.size() == regions.size());
   DecodingInitMeta const *meta = (DecodingInitMeta *)task->args;
   Decoding const *decoding = meta->decoding;
-  bool is_last_op = meta->is_last_op;
+
   FFHandler handle = *((FFHandler const *)task->local_args);
   Memory gpu_mem = get_proc_mem(Machine::get_machine(), task->target_proc);
   MemoryAllocator gpu_mem_allocator(gpu_mem);
@@ -352,7 +333,7 @@ OpMeta *Decoding::init_task(Task const *task,
   }
   
   DecodingMeta *m =
-      new DecodingMeta(handle, decoding, domain, is_last_op, gpu_mem_allocator);
+      new DecodingMeta(handle, decoding, domain, gpu_mem_allocator);
   std::strcpy(m->op_name, decoding->name);
   m->layer_guid = decoding->layer_guid;
   m->beam_search = decoding->beam_search;
@@ -378,21 +359,11 @@ FutureMap Decoding::inference(FFModel const &ff,
   size_t machine_view_hash = view->hash();
 
   assert(ff.config.computationMode == COMP_MODE_INFERENCE);
-  int last_op = ff.operators.size() - 1;
-  assert(ff.operators[last_op]->op_type == OP_ARGMAX ||
-         ff.operators[last_op]->op_type == OP_ARG_TOPK ||
-         ff.operators[last_op]->op_type == OP_SAMPLING ||
-         ff.operators[last_op]->op_type == OP_DECODING);
-  last_op -= 1;
-  while (ff.operators[last_op]->op_type == OP_WEIGHT && last_op > 0) {
-    last_op -= 1;
-  }
-  bool is_last_op = (ff.operators[last_op] == this);
 
   if (beam_search) {
     IndexLauncher launcher(DECODING_BEAM_INF_TASK_ID,
                            parallel_is,
-                           TaskArgument(&is_last_op, sizeof(bool)),
+                           TaskArgument(nullptr, 0),
                            argmap,
                            Predicate::TRUE_PRED,
                            false /*must*/,
@@ -421,7 +392,7 @@ FutureMap Decoding::inference(FFModel const &ff,
   } else {
     IndexLauncher launcher(DECODING_NORM_INF_TASK_ID,
                            parallel_is,
-                           TaskArgument(&is_last_op, sizeof(bool)),
+                           TaskArgument(nullptr, 0),
                            argmap,
                            Predicate::TRUE_PRED,
                            false /*must*/,
@@ -457,7 +428,6 @@ BeamInferenceResult
                                   Runtime *runtime) {
   assert(regions.size() == 3);
   assert(task->regions.size() == 3);
-  bool is_last_op = *(bool *)task->args;
   BatchConfig const *bc = BatchConfig::from_future(task->futures[0]);
   if (bc->num_tokens == 0) {
     // Directly return for empty batch config
@@ -475,7 +445,7 @@ BeamInferenceResult
   int batch_size = bc->num_active_tokens();
   float loss = 0.0f;
   
-  inference_kernel_wrapper(m, bc, is_last_op, input, softmax_output, argmax_output);
+  inference_kernel_wrapper(m, bc, input, softmax_output, argmax_output);
   
   BeamInferenceResult ir;
   // Copy argmax results from output region
@@ -504,7 +474,6 @@ InferenceResult
                                   Runtime *runtime) {
   assert(regions.size() == 3);
   assert(task->regions.size() == 3);
-  bool is_last_op = *(bool *)task->args;
   DecodingMeta *m = *((DecodingMeta **)task->local_args);
   BatchConfig const *bc = BatchConfig::from_future(task->futures[0]);
   if (bc->num_tokens == 0) {
@@ -522,7 +491,7 @@ InferenceResult
   int batch_size = bc->num_active_tokens();
   float loss = 0.0f;
 
-  inference_kernel_wrapper(m, bc, is_last_op, input, softmax_output, argmax_output);
+  inference_kernel_wrapper(m, bc, input, softmax_output, argmax_output);
 
   if (task->index_point.point_data[0] == 0) {
     int in_dim0 = input.domain.hi()[0] - input.domain.lo()[0] + 1;

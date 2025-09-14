@@ -261,7 +261,6 @@ void store_peft_activations(DecodingMeta *m,
 /*static*/
 void Decoding::inference_kernel_wrapper(DecodingMeta *m,
                                          BatchConfig const *bc,
-                                         bool is_last_op,
                                          GenericTensorAccessorR const &input,
                                          GenericTensorAccessorW const &softmax_output,
                                          GenericTensorAccessorW const &argmax_output) {
@@ -303,7 +302,7 @@ void Decoding::inference_kernel_wrapper(DecodingMeta *m,
     assert(false && "Unsupported data type");
   }
 
-  if (is_last_op && bc->num_finetuning_fwd_requests() > 0) {
+  if (bc->num_finetuning_fwd_requests() > 0) {
     store_peft_token_ids(m, bc);
     // Store softmax activations for PEFT backward pass
     if (input.data_type == DT_HALF) {
@@ -418,12 +417,11 @@ void Decoding::peft_bwd_kernel_wrapper(DecodingMeta *m,
 DecodingMeta::DecodingMeta(FFHandler handler,
                            Decoding const *decoding,
                            Legion::Domain const &input_domain,
-                           bool is_last_op,
                            MemoryAllocator &gpu_mem_allocator)
     : OpMeta(handler, decoding) {
   beam_search = decoding->beam_search;
   
-  if (peft_finetuning_enabled(peft_support_mode) && is_last_op) {
+  if (peft_finetuning_enabled(peft_support_mode)) {
     allocated_peft_buffer_size =
         input_domain.get_volume() * data_type_size(decoding->data_type);
     gpu_mem_allocator.create_legion_instance(

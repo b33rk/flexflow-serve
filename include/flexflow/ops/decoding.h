@@ -95,7 +95,6 @@ public:
                                ffStream_t stream);
   static void inference_kernel_wrapper(DecodingMeta *m,
                                         BatchConfig const *bc,
-                                        bool is_last_op,
                                         GenericTensorAccessorR const &input,
                                         GenericTensorAccessorW const &softmax_output,
                                         GenericTensorAccessorW const &argmax_output);
@@ -119,7 +118,6 @@ public:
   DecodingMeta(FFHandler handler,
                Decoding const *decoding,
                Legion::Domain const &input_domain,
-               bool is_last_op,
                MemoryAllocator &gpu_mem_allocator);
   ~DecodingMeta(void);
   bool beam_search;
