@@ -15,6 +15,7 @@ namespace FlexFlow {
 
 // forward declaration
 class DecodingMeta;
+struct SoftmaxShardedContext;
 
 class Decoding : public Op {
 public:
@@ -91,6 +92,7 @@ public:
                                DT *softmax_output_ptr,
                                int *argmax_output_ptr,
                                int num_classes,
+                               int vocab_offset,
                                float *loss,
                                ffStream_t stream);
   static void inference_kernel_wrapper(DecodingMeta *m,
@@ -125,6 +127,8 @@ public:
   float *d_loss;
   // Temporary buffers 
   int *parent_output_buffer;
+  // Sharded softmax context
+  SoftmaxShardedContext *softmax_context;
   // PEFT related fields
   void *output_grad_ptr = nullptr;
   size_t allocated_peft_buffer_size = 0;

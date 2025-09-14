@@ -3441,7 +3441,7 @@ bool FFModel::need_to_add_combine(int layer_idx) const {
   // argmax/arg_topk not preceded by softmax: add combine before
   // argmax/arg_topk
   if (layer_idx == layers.size() - 1 &&
-      (l->op_type == OP_ARG_TOPK || l->op_type == OP_ARGMAX || l->op_type == OP_DECODING)) {
+      (l->op_type == OP_ARG_TOPK || l->op_type == OP_ARGMAX)) { // || l->op_type == OP_DECODING
     auto const &l_prev = layers[layer_idx - 1];
     if (l_prev->op_type == OP_SOFTMAX) {
       return false;

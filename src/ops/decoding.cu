@@ -18,6 +18,276 @@
 
 namespace FlexFlow {
 
+template<int BLOCK_SIZE>
+__global__ void softmax_argmax_kernel_sharded(
+  const half* __restrict__ input,
+  half* __restrict__ output,
+  float* __restrict__ max_buffer,      // [seq_len] for allreduce
+  int* __restrict__ max_idx_buffer,    // [seq_len] for argmax indices
+  float* __restrict__ sum_buffer,      // [seq_len] for allreduce
+  const int vocab_size_per_shard,
+  const int vocab_offset,              // Starting vocab index for this shard
+  const int seq_len) {
+  
+  const int seq_pos = blockIdx.x;
+  if (seq_pos >= seq_len) return;
+  
+  const int tid = threadIdx.x;
+  const int lane_id = tid % 32;
+  const int warp_id = tid / 32;
+  const int num_warps = BLOCK_SIZE / 32;
+  
+  extern __shared__ char shared_mem_bytes[];
+  float* warp_max = (float*)shared_mem_bytes;
+  int* warp_max_idx = (int*)(warp_max + num_warps);
+  float* warp_sum = (float*)(warp_max_idx + num_warps);
+  
+  // Phase 1: Find local max and its index
+  float thread_max = -INFINITY;
+  int thread_max_idx = 0;
+  
+  for (int i = tid; i < vocab_size_per_shard; i += BLOCK_SIZE) {
+      float val = __half2float(input[seq_pos * vocab_size_per_shard + i]);
+      if (val > thread_max) {
+          thread_max = val;
+          thread_max_idx = vocab_offset + i;  // Global vocab index
+      }
+  }
+  
+  // Warp reduction for max with index
+  #pragma unroll
+  for (int offset = 16; offset > 0; offset /= 2) {
+      float other_max = __shfl_down_sync(0xffffffff, thread_max, offset);
+      int other_idx = __shfl_down_sync(0xffffffff, thread_max_idx, offset);
+      
+      if (other_max > thread_max || (other_max == thread_max && other_idx < thread_max_idx)) {
+          thread_max = other_max;
+          thread_max_idx = other_idx;
+      }
+  }
+  
+  if (lane_id == 0) {
+      warp_max[warp_id] = thread_max;
+      warp_max_idx[warp_id] = thread_max_idx;
+  }
+  __syncthreads();
+  
+  // Final reduction across warps
+  if (tid < num_warps) {
+      thread_max = warp_max[tid];
+      thread_max_idx = warp_max_idx[tid];
+  } else {
+      thread_max = -INFINITY;
+      thread_max_idx = INT_MAX;
+  }
+  
+  if (warp_id == 0) {
+      #pragma unroll
+      for (int offset = 16; offset > 0; offset /= 2) {
+          float other_max = __shfl_down_sync(0xffffffff, thread_max, offset);
+          int other_idx = __shfl_down_sync(0xffffffff, thread_max_idx, offset);
+          
+          if (other_max > thread_max || (other_max == thread_max && other_idx < thread_max_idx)) {
+              thread_max = other_max;
+              thread_max_idx = other_idx;
+          }
+      }
+      
+      if (lane_id == 0) {
+          max_buffer[seq_pos] = thread_max;
+          max_idx_buffer[seq_pos] = thread_max_idx;
+      }
+  }
+}
+
+// Custom reduction operation for max with index
+__device__ void reduce_max_with_idx(float* max_val, int* max_idx, float other_val, int other_idx) {
+    if (other_val > *max_val || (other_val == *max_val && other_idx < *max_idx)) {
+        *max_val = other_val;
+        *max_idx = other_idx;
+    }
+}
+
+template<int BLOCK_SIZE>
+__global__ void softmax_compute_kernel_sharded(
+  const half* __restrict__ input,
+  half* __restrict__ output,
+  const float* __restrict__ max_buffer,  // Global max from allreduce
+  float* __restrict__ sum_buffer,
+  const int vocab_size_per_shard,
+  const int seq_len) {
+  
+  const int seq_pos = blockIdx.x;
+  if (seq_pos >= seq_len) return;
+  
+  const int tid = threadIdx.x;
+  const int lane_id = tid % 32;
+  const int warp_id = tid / 32;
+  const int num_warps = BLOCK_SIZE / 32;
+  
+  extern __shared__ float warp_sum[];
+  
+  float max_val = max_buffer[seq_pos];
+  float thread_sum = 0.0f;
+  
+  // Compute exp(x - max) and local sum
+  for (int i = tid; i < vocab_size_per_shard; i += BLOCK_SIZE) {
+      float val = __half2float(input[seq_pos * vocab_size_per_shard + i]);
+      float exp_val = expf(val - max_val);
+      thread_sum += exp_val;
+      output[seq_pos * vocab_size_per_shard + i] = __float2half(exp_val);
+  }
+  
+  // Warp reduction for sum
+  #pragma unroll
+  for (int offset = 16; offset > 0; offset /= 2) {
+      thread_sum += __shfl_down_sync(0xffffffff, thread_sum, offset);
+  }
+  
+  if (lane_id == 0) warp_sum[warp_id] = thread_sum;
+  __syncthreads();
+  
+  // Final reduction
+  if (tid < num_warps) thread_sum = warp_sum[tid];
+  else thread_sum = 0.0f;
+  
+  if (warp_id == 0) {
+      #pragma unroll
+      for (int offset = 16; offset > 0; offset /= 2) {
+          thread_sum += __shfl_down_sync(0xffffffff, thread_sum, offset);
+      }
+      if (lane_id == 0) sum_buffer[seq_pos] = thread_sum;
+  }
+}
+
+template<int BLOCK_SIZE>
+__global__ void softmax_normalize_kernel_sharded(
+  half* __restrict__ output,
+  const float* __restrict__ sum_buffer,  // Global sum from allreduce
+  const int vocab_size_per_shard,
+  const int seq_len) {
+  
+  const int seq_pos = blockIdx.x;
+  if (seq_pos >= seq_len) return;
+  
+  const int tid = threadIdx.x;
+  float inv_sum = 1.0f / sum_buffer[seq_pos];
+  
+  // Normalize
+  for (int i = tid; i < vocab_size_per_shard; i += BLOCK_SIZE) {
+      float exp_val = __half2float(output[seq_pos * vocab_size_per_shard + i]);
+      output[seq_pos * vocab_size_per_shard + i] = __float2half(exp_val * inv_sum);
+  }
+}
+
+// Kernel to handle custom reduction for max with argmax
+__global__ void reduce_max_with_argmax_kernel(
+  float* max_buffer,
+  int* max_idx_buffer,
+  int seq_len,
+  int n_shards) {
+  
+  int seq_pos = blockIdx.x * blockDim.x + threadIdx.x;
+  if (seq_pos >= seq_len) return;
+  
+  // Each thread handles one sequence position
+  // The buffers contain [shard0_val, shard1_val, ...] for each sequence
+  float global_max = max_buffer[seq_pos * n_shards];
+  int global_idx = max_idx_buffer[seq_pos * n_shards];
+  
+  for (int shard = 1; shard < n_shards; shard++) {
+      float shard_max = max_buffer[seq_pos * n_shards + shard];
+      int shard_idx = max_idx_buffer[seq_pos * n_shards + shard];
+      
+      if (shard_max > global_max || (shard_max == global_max && shard_idx < global_idx)) {
+          global_max = shard_max;
+          global_idx = shard_idx;
+      }
+  }
+  
+  // Write back the global max and index
+  max_buffer[seq_pos] = global_max;
+  max_idx_buffer[seq_pos] = global_idx;
+}
+
+struct SoftmaxShardedContext {
+    float* max_buffer;
+    int* max_idx_buffer;
+    float* sum_buffer;
+    float* all_max_buffer;
+    int* all_idx_buffer;
+    int seq_len;
+    int n_shards;
+};
+
+SoftmaxShardedContext* create_softmax_context(int seq_len, ncclComm_t nccl_comm) {
+    SoftmaxShardedContext* ctx = new SoftmaxShardedContext;
+    ctx->seq_len = seq_len;
+    ncclCommCount(nccl_comm, &ctx->n_shards);
+    
+    cudaMalloc(&ctx->max_buffer, seq_len * sizeof(float));
+    cudaMalloc(&ctx->max_idx_buffer, seq_len * sizeof(int));
+    cudaMalloc(&ctx->sum_buffer, seq_len * sizeof(float));
+    cudaMalloc(&ctx->all_max_buffer, seq_len * ctx->n_shards * sizeof(float));
+    cudaMalloc(&ctx->all_idx_buffer, seq_len * ctx->n_shards * sizeof(int));
+    
+    return ctx;
+}
+
+void softmax_argmax_sharded_with_context(
+  const half* input,
+  half* output,
+  int* argmax_indices,
+  int vocab_size_per_shard,
+  int vocab_offset,
+  SoftmaxShardedContext* ctx,
+  cudaStream_t stream,
+  ncclComm_t nccl_comm) {
+  
+  const int block_size = 256;
+  const int grid_size = ctx->seq_len;
+  size_t shared_mem_size = (block_size / 32) * sizeof(float) * 2 + (block_size / 32) * sizeof(int);
+  
+  // Step 1: Find local max and argmax
+  softmax_argmax_kernel_sharded<block_size><<<grid_size, block_size, shared_mem_size, stream>>>(
+      input, output, ctx->max_buffer, ctx->max_idx_buffer, ctx->sum_buffer, 
+      vocab_size_per_shard, vocab_offset, ctx->seq_len
+  );
+  
+  // Steps 2-5: Same as before but using pre-allocated buffers from context
+  ncclAllReduce(ctx->max_buffer, ctx->max_buffer, ctx->seq_len, ncclFloat32, ncclMax, nccl_comm, stream);
+  
+  ncclAllGather(ctx->max_buffer, ctx->all_max_buffer, ctx->seq_len, ncclFloat32, nccl_comm, stream);
+  ncclAllGather(ctx->max_idx_buffer, ctx->all_idx_buffer, ctx->seq_len, ncclInt32, nccl_comm, stream);
+  
+  int reduce_blocks = (ctx->seq_len + 255) / 256;
+  reduce_max_with_argmax_kernel<<<reduce_blocks, 256, 0, stream>>>(
+      ctx->all_max_buffer, ctx->all_idx_buffer, ctx->seq_len, ctx->n_shards
+  );
+  
+  cudaMemcpyAsync(argmax_indices, ctx->all_idx_buffer, ctx->seq_len * sizeof(int), 
+                  cudaMemcpyDeviceToDevice, stream);
+  
+  softmax_compute_kernel_sharded<block_size><<<grid_size, block_size, shared_mem_size, stream>>>(
+      input, output, ctx->max_buffer, ctx->sum_buffer, vocab_size_per_shard, ctx->seq_len
+  );
+  
+  ncclAllReduce(ctx->sum_buffer, ctx->sum_buffer, ctx->seq_len, ncclFloat32, ncclSum, nccl_comm, stream);
+  
+  softmax_normalize_kernel_sharded<block_size><<<grid_size, block_size, 0, stream>>>(
+      output, ctx->sum_buffer, vocab_size_per_shard, ctx->seq_len
+  );
+}
+
+void destroy_softmax_context(SoftmaxShardedContext* ctx) {
+    cudaFree(ctx->max_buffer);
+    cudaFree(ctx->max_idx_buffer);
+    cudaFree(ctx->sum_buffer);
+    cudaFree(ctx->all_max_buffer);
+    cudaFree(ctx->all_idx_buffer);
+    delete ctx;
+}
+
 // Optimized version using warp primitives
 template<int BLOCK_SIZE, typename DT>
 __global__ void softmax_argmax_kernel(
@@ -207,11 +477,31 @@ void Decoding::inference_kernel(DecodingMeta const *m,
                                 DT *softmax_output_ptr,
                                 int *argmax_output_ptr,
                                 int num_classes,
+                                int vocab_offset,
                                 float *loss,
                                 cudaStream_t stream) {
 
-  softmax_argmax(input_ptr, softmax_output_ptr, argmax_output_ptr, num_classes, bc->num_active_tokens(), stream);
+  // Old non-sharded version (commented out)
+  // softmax_argmax(input_ptr, softmax_output_ptr, argmax_output_ptr, num_classes, bc->num_active_tokens(), stream);
   
+  // New sharded version - only supports half precision for now
+  if constexpr (std::is_same_v<DT, half>) {
+    // Use sharded softmax with NCCL communication
+    int vocab_size_per_shard = num_classes;  // This is already the local shard size
+    
+    softmax_argmax_sharded_with_context(
+        input_ptr,
+        softmax_output_ptr, 
+        argmax_output_ptr,
+        vocab_size_per_shard,
+        vocab_offset,
+        m->softmax_context,
+        stream,
+        m->handle.ncclComm);
+  } else {
+    // Fall back to non-sharded version for non-half types
+    softmax_argmax(input_ptr, softmax_output_ptr, argmax_output_ptr, num_classes, bc->num_active_tokens(), stream);
+  }
 }
 
 void store_peft_token_ids(DecodingMeta *m, BatchConfig const *bc) {
@@ -278,6 +568,7 @@ void Decoding::inference_kernel_wrapper(DecodingMeta *m,
   }
   
   int num_classes = input.domain.hi()[0] - input.domain.lo()[0] + 1;
+  int vocab_offset = input.domain.lo()[0];  // Starting vocab index for this shard
   float loss = 0.0f;
 
   if (input.data_type == DT_HALF) {
@@ -287,6 +578,7 @@ void Decoding::inference_kernel_wrapper(DecodingMeta *m,
                                      softmax_output.get_half_ptr(),
                                      argmax_output.get_int32_ptr(),
                                      num_classes,
+                                     vocab_offset,
                                      &loss,
                                      stream);
   } else if (input.data_type == DT_FLOAT) {
@@ -296,6 +588,7 @@ void Decoding::inference_kernel_wrapper(DecodingMeta *m,
                                       softmax_output.get_float_ptr(),
                                       argmax_output.get_int32_ptr(),
                                       num_classes,
+                                      vocab_offset,
                                       &loss,
                                       stream);
   } else {
@@ -438,12 +731,22 @@ DecodingMeta::DecodingMeta(FFHandler handler,
   d_loss = nullptr; // Not needed for basic decoding
   parent_output_buffer = nullptr; // Only needed for beam search if implemented
   
+  // Create softmax context for sharded computation
+  // Use a reasonable max sequence length based on input domain
+  int max_seq_len = input_domain.get_dim() > 1 ? 
+    (input_domain.hi()[input_domain.get_dim()-1] - input_domain.lo()[input_domain.get_dim()-1] + 1) : 1024;
+  softmax_context = create_softmax_context(max_seq_len, handler.ncclComm);
+  
   std::strcpy(op_name, decoding->name);
 }
 
 DecodingMeta::~DecodingMeta(void) {
   if (reserveInst != Realm::RegionInstance::NO_INST) {
     reserveInst.destroy();
+  }
+  // Destroy softmax context
+  if (softmax_context != nullptr) {
+    destroy_softmax_context(softmax_context);
   }
 }
 
