@@ -136,6 +136,22 @@ Op *Softmax::create_operator_from_layer(
                      layer->name);
 }
 
+static std::string remove_uid(char const *op_name) {
+  std::string op_name_without_uid = std::string(op_name);
+  size_t last_underscore = op_name_without_uid.length();
+  for (int i = op_name_without_uid.length() - 1; i > 0; i--) {
+    if (!(std::isdigit(op_name[i]) || op_name[i] == '_')) {
+      break;
+    } else if (op_name[i] == '_') {
+      last_underscore = i;
+    }
+  }
+  if (last_underscore < op_name_without_uid.length()) {
+    op_name_without_uid.erase(last_underscore);
+  }
+  return op_name_without_uid;
+}
+
 Softmax::Softmax(FFModel &model,
                  LayerID const &_layer_guid,
                  const ParallelTensor _input,
@@ -159,6 +175,10 @@ Softmax::Softmax(FFModel &model,
     dims[i] = _input->dims[numdim - 1 - i];
   }
   outputs[0] = model.create_parallel_tensor(numdim, dims, data_type, this);
+  std::string const &input_label = remove_uid(name) + std::string(" input tensor");
+  _input->print(input_label);
+  std::string const &label = remove_uid(name) + std::string(" output tensor");
+  outputs[0]->print(label);
 }
 
 Softmax::Softmax(FFModel &model,
@@ -482,7 +502,7 @@ void Softmax::inference_task(Task const *task,
       m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
   GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
       m->output_type[0], regions[1], task->regions[1], FID_DATA, ctx, runtime);
-  GenericTensorAccessorW output_grad;
+  // GenericTensorAccessorW output_grad;
   // if (is_last_op) {
   //   output_grad = helperGetGenericTensorAccessorWO(m->output_type[0],
   //                                                  regions[2],
@@ -492,6 +512,20 @@ void Softmax::inference_task(Task const *task,
   //                                                  runtime);
   // }
   inference_kernel_wrapper(m, bc, is_last_op, input, output);
+
+  if (task->index_point.point_data[0] == 0) {
+    int in_dim0 = input.domain.hi()[0] - input.domain.lo()[0] + 1;
+    int in_dim1 = input.domain.hi()[1] - input.domain.lo()[1] + 1;
+    int out_dim0 = output.domain.hi()[0] - output.domain.lo()[0] + 1;
+    int out_dim1 = output.domain.hi()[1] - output.domain.lo()[1] + 1;
+    std::string op_name_without_uid = remove_uid(m->op_name);
+    printf("Softmax(%s): in=[%i, bz=%i/%i] -> out=[%i,bz=%i/%i]\n",
+           op_name_without_uid.c_str(),
+           in_dim0, bc->num_tokens, in_dim1,
+           out_dim0, bc->num_tokens, out_dim1);
+  }
+
+
   if (m->inference_debugging) {
     assert(task->index_point.get_dim() == 1);
     int shard_id = task->index_point.point_data[0];

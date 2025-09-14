@@ -27,6 +27,7 @@
 #include "flexflow/ops/aggregate_spec.h"
 #include "flexflow/ops/arg_topk.h"
 #include "flexflow/ops/argmax.h"
+#include "flexflow/ops/decoding.h"
 #include "flexflow/ops/attention.h"
 #include "flexflow/ops/batch_matmul.h"
 #include "flexflow/ops/batch_norm.h"
@@ -3364,6 +3365,11 @@ Op *FFModel::create_operator_from_layer(
       operators.push_back(op);
       return op;
     }
+    case OP_DECODING: {
+      Op *op = Decoding::create_operator_from_layer(*this, layer, inputs);
+      operators.push_back(op);
+      return op;
+    }
     case OP_GROUP_BY: {
       Op *op = Group_by::create_operator_from_layer(*this, layer, inputs);
       operators.push_back(op);
@@ -3432,10 +3438,10 @@ bool FFModel::need_to_add_combine(int layer_idx) const {
       return false;
     }
   }
-  // argmax/arg_topk not precedent by softmax: add combine before
+  // argmax/arg_topk not preceded by softmax: add combine before
   // argmax/arg_topk
   if (layer_idx == layers.size() - 1 &&
-      (l->op_type == OP_ARG_TOPK || l->op_type == OP_ARGMAX)) {
+      (l->op_type == OP_ARG_TOPK || l->op_type == OP_ARGMAX || l->op_type == OP_DECODING)) {
     auto const &l_prev = layers[layer_idx - 1];
     if (l_prev->op_type == OP_SOFTMAX) {
       return false;
@@ -6715,6 +6721,71 @@ void register_flexflow_internal_tasks(Runtime *runtime,
       runtime
           ->register_task_variant<InferenceResult, ArgMax::inference_task_norm>(
               registrar);
+    }
+  }
+  // Decoding task
+  {
+    TaskVariantRegistrar registrar(DECODING_INIT_TASK_ID, "Decoding Init");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    if (pre_register) {
+      Runtime::preregister_task_variant<OpMeta *, Decoding::init_task>(
+          registrar, "Decoding Init Task");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime->register_task_variant<OpMeta *, Decoding::init_task>(registrar);
+    }
+  }
+  {
+    TaskVariantRegistrar registrar(DECODING_BEAM_INF_TASK_ID,
+                                   "Decoding Beam Inference");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    if (pre_register) {
+      Runtime::preregister_task_variant<BeamInferenceResult,
+                                        Decoding::inference_task_beam>(
+          registrar, "Decoding Inference Task Beam");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime->register_task_variant<BeamInferenceResult,
+                                     Decoding::inference_task_beam>(registrar);
+    }
+  }
+  {
+    TaskVariantRegistrar registrar(DECODING_NORM_INF_TASK_ID,
+                                   "Decoding Norm Inference");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    if (pre_register) {
+      Runtime::preregister_task_variant<InferenceResult,
+                                        Decoding::inference_task_norm>(
+          registrar, "Decoding Inference Task Norm");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime
+          ->register_task_variant<InferenceResult, Decoding::inference_task_norm>(
+              registrar);
+    }
+  }
+  {
+    TaskVariantRegistrar registrar(DECODING_PEFT_BWD_TASK_ID,
+                                   "Decoding PEFT Backward");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    if (pre_register) {
+      Runtime::preregister_task_variant<bool, Decoding::peft_bwd_task>(
+          registrar, "Decoding PEFT Backward Task");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime->register_task_variant<bool, Decoding::peft_bwd_task>(registrar);
     }
   }
   // Transpose task

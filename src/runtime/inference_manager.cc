@@ -489,10 +489,13 @@ std::vector<FinetuningBwdFuture> InferenceManager::peft_bwd(
   // Assert that the last operator must be argmax or sampling
   assert(model->operators[last_op]->op_type == OP_ARGMAX ||
          model->operators[last_op]->op_type == OP_ARG_TOPK ||
-         model->operators[last_op]->op_type == OP_SAMPLING);
-  last_op -= 1;
-  while (model->operators[last_op]->op_type == OP_WEIGHT && last_op > 0) {
+         model->operators[last_op]->op_type == OP_SAMPLING ||
+         model->operators[last_op]->op_type == OP_DECODING);
+  if (model->operators[last_op]->op_type != OP_DECODING) {
     last_op -= 1;
+    while (model->operators[last_op]->op_type == OP_WEIGHT && last_op > 0) {
+      last_op -= 1;
+    }
   }
   for (int o = last_op; o >= 0; o--) {
     Op *op = model->operators[o];

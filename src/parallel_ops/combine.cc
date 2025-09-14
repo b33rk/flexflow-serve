@@ -75,6 +75,22 @@ Combine::Combine(FFModel &model,
               params.combine_degree,
               params.name) {}
 
+static std::string remove_uid(char const *op_name) {
+  std::string op_name_without_uid = std::string(op_name);
+  size_t last_underscore = op_name_without_uid.length();
+  for (int i = op_name_without_uid.length() - 1; i > 0; i--) {
+    if (!(std::isdigit(op_name[i]) || op_name[i] == '_')) {
+      break;
+    } else if (op_name[i] == '_') {
+      last_underscore = i;
+    }
+  }
+  if (last_underscore < op_name_without_uid.length()) {
+    op_name_without_uid.erase(last_underscore);
+  }
+  return op_name_without_uid;
+}
+
 Combine::Combine(FFModel &model,
                  const ParallelTensor _input,
                  int _combine_legion_dim,
@@ -95,6 +111,10 @@ Combine::Combine(FFModel &model,
       numdim, dims, _input->data_type, this);
   // inputs[0]->print("Combine::input");
   // outputs[0]->print("Combine::output");
+  std::string const &input_label = std::string("Combine input tensor");
+  _input->print(input_label);
+  std::string const &label = std::string("Combine output tensor");
+  outputs[0]->print(label);
 }
 
 OpMeta *Combine::init_task(Task const *task,
@@ -487,6 +507,16 @@ void Combine::forward_task_with_type(Task const *task,
       regions[0], task->regions[0], FID_DATA, ctx, runtime);
   DT *output_ptr = helperGetTensorPointerWO<DT>(
       regions[1], task->regions[1], FID_DATA, ctx, runtime);
+
+  if (task->index_point.point_data[0] == 0) {
+    int in_dim0 = input_domain.hi()[0] - input_domain.lo()[0] + 1;
+    int in_dim1 = input_domain.hi()[1] - input_domain.lo()[1] + 1;
+    int out_dim0 = output_domain.hi()[0] - output_domain.lo()[0] + 1;
+    int out_dim1 = output_domain.hi()[1] - output_domain.lo()[1] + 1;
+    printf("Combine: in=[%i,bz=?/%i] -> out=[%i,bz=?/%i]\n",
+           in_dim0, in_dim1,
+           out_dim0, out_dim1);
+  }
 
   forward_kernel<DT>(input_ptr, output_ptr, output_domain.get_volume());
 }
