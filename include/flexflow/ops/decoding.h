@@ -105,9 +105,11 @@ public:
                      BatchConfig const *bc,
                      DT *input_grad_ptr,
                      int num_classes,
+                     int shard_id,
                      ffStream_t stream);
   static void peft_bwd_kernel_wrapper(DecodingMeta *m,
                                      BatchConfig const *bc,
+                                     int shard_id,
                                      GenericTensorAccessorW const &input_grad);
 
 public:

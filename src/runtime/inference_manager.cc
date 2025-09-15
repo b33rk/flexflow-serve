@@ -475,7 +475,7 @@ InferenceResultFuture InferenceManager::inference(FFModel *model,
     }
     fm = op->inference(*model, bc, inputs, outputs);
   }
-  assert(fm.get_future_map_domain().get_volume() == 1);
+  assert(fm.get_future_map_domain().get_volume() == model->config.tensor_parallelism_degree);
   InferenceResultFuture irf = fm.get_future(0);
   return irf;
 };

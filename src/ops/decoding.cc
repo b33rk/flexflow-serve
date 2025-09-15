@@ -185,6 +185,9 @@ Decoding::Decoding(FFModel &model,
     dims[i-1] = inputs[0]->dims[i];  // Shift batch dimensions down
   }
   int argmax_numdim = numdim - 1;  // Remove vocab dimension
+  dims[argmax_numdim - 1].size = inputs[0]->dims[0].degree;
+  dims[argmax_numdim - 1].degree = inputs[0]->dims[0].degree;
+  dims[argmax_numdim - 1].parallel_idx = inputs[0]->dims[0].parallel_idx;
   outputs[1] = model.create_parallel_tensor_legion_ordering(
       argmax_numdim, dims, DT_INT32, this, 1 /*owner_idx*/);
 
@@ -581,7 +584,7 @@ bool Decoding::peft_bwd_task(Task const *task,
   GenericTensorAccessorW input_grad = helperGetGenericTensorAccessorRW(
       m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
 
-  peft_bwd_kernel_wrapper(m, bc, input_grad);
+  peft_bwd_kernel_wrapper(m, bc, task->index_point.point_data[0], input_grad);
   if (m->inference_debugging) {
     assert(task->index_point.get_dim() == 1);
     int shard_id = task->index_point.point_data[0];

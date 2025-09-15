@@ -622,12 +622,13 @@ __global__ void sparse_categorical_crossentropy_loss_peft_backward(
     DT const *output_grad,
     BatchConfig::TokenId const *token_ids,
     int num_tokens,
-    int num_classes) {
+    int num_classes,
+    int shard_id) {
   CUDA_KERNEL_LOOP(i, num_tokens * num_classes) {
     int class_idx = i % num_classes;
     int token_idx = i / num_classes;
     input_grad[i] = output_grad[i];
-    if (class_idx == token_ids[token_idx]) {
+    if (class_idx + shard_id * num_classes == token_ids[token_idx]) {
       input_grad[i] = input_grad[i] - (DT)1.0f;
     }
   }
@@ -638,7 +639,9 @@ void Decoding::peft_bwd_kernel(DecodingMeta const *m,
                                BatchConfig const *bc,
                                DT *input_grad_ptr,
                                int num_classes,
+                               int shard_id,
                                cudaStream_t stream) {
+  printf("peft_bwd_kernel - num_classes: %d, shard_id: %d\n", num_classes, shard_id);
   assert(
       bc->peft_bwd_applies_to_this_layer(m->layer_guid.transformer_layer_id));
   int i = bc->finetuning_request_index();
@@ -664,7 +667,8 @@ void Decoding::peft_bwd_kernel(DecodingMeta const *m,
                 static_cast<DT *>(m->output_grad_ptr),
                 static_cast<BatchConfig::TokenId const *>(m->handle.workSpace),
                 num_bwd_tokens,
-                num_classes);
+                num_classes,
+                shard_id);
   // scale
   scale_kernel<<<GET_BLOCKS(num_bwd_tokens * num_classes),
                  CUDA_NUM_THREADS,
@@ -676,6 +680,7 @@ void Decoding::peft_bwd_kernel(DecodingMeta const *m,
 /*static*/
 void Decoding::peft_bwd_kernel_wrapper(DecodingMeta *m,
                              BatchConfig const *bc,
+                             int shard_id,
                              GenericTensorAccessorW const &input_grad) {
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
@@ -689,10 +694,10 @@ void Decoding::peft_bwd_kernel_wrapper(DecodingMeta *m,
   int num_classes = input_grad.domain.hi()[0] - input_grad.domain.lo()[0] + 1;
   if (m->input_type[0] == DT_FLOAT) {
     Decoding::peft_bwd_kernel<float>(
-        m, bc, input_grad.get_float_ptr(), num_classes, stream);
+        m, bc, input_grad.get_float_ptr(), num_classes, shard_id, stream);
   } else if (m->input_type[0] == DT_HALF) {
     Decoding::peft_bwd_kernel<half>(
-        m, bc, input_grad.get_half_ptr(), num_classes, stream);
+        m, bc, input_grad.get_half_ptr(), num_classes, shard_id, stream);
   } else {
     assert(false && "Unsupported data type");
   }
@@ -773,6 +778,7 @@ template void Decoding::peft_bwd_kernel<half>(
     BatchConfig const *bc,
     half *input_grad_ptr,
     int num_classes,
+    int shard_id,
     cudaStream_t stream);
 
 template void Decoding::peft_bwd_kernel<float>(
@@ -780,6 +786,7 @@ template void Decoding::peft_bwd_kernel<float>(
     BatchConfig const *bc,
     float *input_grad_ptr,
     int num_classes,
+    int shard_id,
     cudaStream_t stream);
 
 } // namespace FlexFlow
