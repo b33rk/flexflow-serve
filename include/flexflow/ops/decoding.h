@@ -25,6 +25,7 @@ public:
            LayerID const &_layer_guid,
            const ParallelTensor input,
            bool beam_search,
+           int tensor_parallelism_degree,
            char const *name);
   Decoding(FFModel &model,
            Params const &params,
@@ -115,6 +116,7 @@ public:
 public:
   LayerID layer_guid;
   bool beam_search;
+  int tensor_parallelism_degree;
 };
 
 class DecodingMeta : public OpMeta {

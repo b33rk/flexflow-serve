@@ -190,22 +190,47 @@ __global__ void reduce_max_with_argmax_kernel(
   int seq_pos = blockIdx.x * blockDim.x + threadIdx.x;
   if (seq_pos >= seq_len) return;
   
+  // Safety check for valid parameters
+  if (n_shards <= 0 || seq_len <= 0) return;
+  
+  // Debug: Print some info for the first few threads
+  if (seq_pos < 3 && blockIdx.x == 0 && threadIdx.x < 3) {
+    printf("DEBUG: seq_pos=%d, seq_len=%d, n_shards=%d\n", seq_pos, seq_len, n_shards);
+  }
+  
   // Each thread handles one sequence position
-  // The buffers contain [shard0_val, shard1_val, ...] for each sequence
-  float global_max = max_buffer[seq_pos * n_shards];
-  int global_idx = max_idx_buffer[seq_pos * n_shards];
+  // ncclAllGather lays out data as [shard0_all_seqs, shard1_all_seqs, ...]
+  // So for seq_pos, shard data is at [shard * seq_len + seq_pos]
+  float global_max = max_buffer[seq_pos];  // shard 0 data
+  int global_idx = max_idx_buffer[seq_pos];
   
   for (int shard = 1; shard < n_shards; shard++) {
-      float shard_max = max_buffer[seq_pos * n_shards + shard];
-      int shard_idx = max_idx_buffer[seq_pos * n_shards + shard];
-      
-      if (shard_max > global_max || (shard_max == global_max && shard_idx < global_idx)) {
-          global_max = shard_max;
-          global_idx = shard_idx;
+      int shard_offset = shard * seq_len + seq_pos;
+      // Additional bounds check to prevent out-of-bounds access
+      if (shard_offset < seq_len * n_shards && shard_offset >= 0) {
+          float shard_max = max_buffer[shard_offset];
+          int shard_idx = max_idx_buffer[shard_offset];
+          
+          // Debug: Print access pattern for first thread
+          if (seq_pos == 0 && shard <= 2) {
+            printf("DEBUG: accessing shard=%d, offset=%d, max=%.3f, idx=%d\n", 
+                   shard, shard_offset, shard_max, shard_idx);
+          }
+          
+          if (shard_max > global_max || (shard_max == global_max && shard_idx < global_idx)) {
+              global_max = shard_max;
+              global_idx = shard_idx;
+          }
+      } else {
+          // Debug: Print out-of-bounds access attempt
+          if (seq_pos < 3) {
+            printf("DEBUG: OOB access attempt: seq_pos=%d, shard=%d, offset=%d, buffer_size=%d\n",
+                   seq_pos, shard, shard_offset, seq_len * n_shards);
+          }
       }
   }
   
-  // Write back the global max and index
+  // Write back the global max and index to the beginning of the buffer
   max_buffer[seq_pos] = global_max;
   max_idx_buffer[seq_pos] = global_idx;
 }
@@ -220,16 +245,32 @@ struct SoftmaxShardedContext {
     int n_shards;
 };
 
-SoftmaxShardedContext* create_softmax_context(int seq_len, ncclComm_t nccl_comm) {
+SoftmaxShardedContext* create_softmax_context(int seq_len, int n_shards) {
     SoftmaxShardedContext* ctx = new SoftmaxShardedContext;
     ctx->seq_len = seq_len;
-    ncclCommCount(nccl_comm, &ctx->n_shards);
+    ctx->n_shards = n_shards;
+    
+    // Debug: Print context creation info
+    printf("DEBUG: Creating softmax context: seq_len=%d, n_shards=%d\n", seq_len, ctx->n_shards);
+    
+    // Validate parameters - n_shards should be reasonable (1-64 typically)
+    if (seq_len <= 0 || ctx->n_shards <= 0 || ctx->n_shards > 64) {
+        printf("ERROR: Invalid parameters in create_softmax_context: seq_len=%d, n_shards=%d\n", 
+               seq_len, ctx->n_shards);
+        printf("ERROR: n_shards should be between 1 and 64, but got %d\n", ctx->n_shards);
+        delete ctx;
+        return nullptr;
+    }
     
     cudaMalloc(&ctx->max_buffer, seq_len * sizeof(float));
     cudaMalloc(&ctx->max_idx_buffer, seq_len * sizeof(int));
     cudaMalloc(&ctx->sum_buffer, seq_len * sizeof(float));
     cudaMalloc(&ctx->all_max_buffer, seq_len * ctx->n_shards * sizeof(float));
     cudaMalloc(&ctx->all_idx_buffer, seq_len * ctx->n_shards * sizeof(int));
+    
+    // Debug: Print buffer sizes
+    printf("DEBUG: Allocated buffers - max/idx/sum: %d elements each, all_max/all_idx: %d elements each\n",
+           seq_len, seq_len * ctx->n_shards);
     
     return ctx;
 }
@@ -244,6 +285,16 @@ void softmax_argmax_sharded_with_context(
   cudaStream_t stream,
   ncclComm_t nccl_comm) {
   
+  // Validate context
+  if (ctx == nullptr) {
+    printf("ERROR: softmax_argmax_sharded_with_context called with null context\n");
+    assert(false);
+    return;
+  }
+  
+  printf("DEBUG: softmax_argmax_sharded_with_context called with seq_len=%d, n_shards=%d\n", 
+         ctx->seq_len, ctx->n_shards);
+  
   const int block_size = 256;
   const int grid_size = ctx->seq_len;
   size_t shared_mem_size = (block_size / 32) * sizeof(float) * 2 + (block_size / 32) * sizeof(int);
@@ -254,9 +305,8 @@ void softmax_argmax_sharded_with_context(
       vocab_size_per_shard, vocab_offset, ctx->seq_len
   );
   
-  // Steps 2-5: Same as before but using pre-allocated buffers from context
-  ncclAllReduce(ctx->max_buffer, ctx->max_buffer, ctx->seq_len, ncclFloat32, ncclMax, nccl_comm, stream);
-  
+  // Steps 2-4: Gather all shard data, then do custom reduction to find global max with argmax
+  // Skip ncclAllReduce since we need to preserve per-shard values for argmax
   ncclAllGather(ctx->max_buffer, ctx->all_max_buffer, ctx->seq_len, ncclFloat32, nccl_comm, stream);
   ncclAllGather(ctx->max_idx_buffer, ctx->all_idx_buffer, ctx->seq_len, ncclInt32, nccl_comm, stream);
   
@@ -268,8 +318,9 @@ void softmax_argmax_sharded_with_context(
   cudaMemcpyAsync(argmax_indices, ctx->all_idx_buffer, ctx->seq_len * sizeof(int), 
                   cudaMemcpyDeviceToDevice, stream);
   
+  // Use the computed global max values (now stored in the beginning of all_max_buffer)
   softmax_compute_kernel_sharded<block_size><<<grid_size, block_size, shared_mem_size, stream>>>(
-      input, output, ctx->max_buffer, ctx->sum_buffer, vocab_size_per_shard, ctx->seq_len
+      input, output, ctx->all_max_buffer, ctx->sum_buffer, vocab_size_per_shard, ctx->seq_len
   );
   
   ncclAllReduce(ctx->sum_buffer, ctx->sum_buffer, ctx->seq_len, ncclFloat32, ncclSum, nccl_comm, stream);
@@ -486,18 +537,25 @@ void Decoding::inference_kernel(DecodingMeta const *m,
   
   // New sharded version - only supports half precision for now
   if constexpr (std::is_same_v<DT, half>) {
-    // Use sharded softmax with NCCL communication
-    int vocab_size_per_shard = num_classes;  // This is already the local shard size
-    
-    softmax_argmax_sharded_with_context(
-        input_ptr,
-        softmax_output_ptr, 
-        argmax_output_ptr,
-        vocab_size_per_shard,
-        vocab_offset,
-        m->softmax_context,
-        stream,
-        m->handle.ncclComm);
+    // Check if softmax context is valid before using sharded version
+    if (m->softmax_context != nullptr) {
+      // Use sharded softmax with NCCL communication
+      int vocab_size_per_shard = num_classes;  // This is already the local shard size
+      
+      softmax_argmax_sharded_with_context(
+          input_ptr,
+          softmax_output_ptr, 
+          argmax_output_ptr,
+          vocab_size_per_shard,
+          vocab_offset,
+          m->softmax_context,
+          stream,
+          m->handle.ncclComm);
+    } else {
+      // Fall back to non-sharded version when context is invalid
+      printf("WARNING: Using non-sharded softmax fallback due to invalid context\n");
+      softmax_argmax(input_ptr, softmax_output_ptr, argmax_output_ptr, num_classes, bc->num_active_tokens(), stream);
+    }
   } else {
     // Fall back to non-sharded version for non-half types
     softmax_argmax(input_ptr, softmax_output_ptr, argmax_output_ptr, num_classes, bc->num_active_tokens(), stream);
@@ -740,7 +798,15 @@ DecodingMeta::DecodingMeta(FFHandler handler,
   // Use a reasonable max sequence length based on input domain
   int max_seq_len = input_domain.get_dim() > 1 ? 
     (input_domain.hi()[input_domain.get_dim()-1] - input_domain.lo()[input_domain.get_dim()-1] + 1) : 1024;
-  softmax_context = create_softmax_context(max_seq_len, handler.ncclComm);
+  // Use tensor parallelism degree as number of shards
+  int n_shards = decoding->tensor_parallelism_degree;
+  softmax_context = create_softmax_context(max_seq_len, n_shards);
+  
+  // Validate that context creation succeeded
+  if (softmax_context == nullptr) {
+    printf("ERROR: Failed to create softmax context in DecodingMeta constructor\n");
+    // Don't assert here, just set to null and handle gracefully
+  }
   
   std::strcpy(op_name, decoding->name);
 }

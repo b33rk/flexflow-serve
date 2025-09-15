@@ -9,6 +9,7 @@ namespace FlexFlow {
 struct DecodingParams {
   LayerID layer_guid;
   bool beam_search;
+  int tensor_parallelism_degree;
   bool is_valid(ParallelTensorShape const &) const;
   char name[MAX_OPNAME];
 };

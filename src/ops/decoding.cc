@@ -43,7 +43,8 @@ using PCG::Node;
 
 /* Params */
 bool operator==(DecodingParams const &lhs, DecodingParams const &rhs) {
-  return lhs.layer_guid == rhs.layer_guid && lhs.beam_search == rhs.beam_search;
+  return lhs.layer_guid == rhs.layer_guid && lhs.beam_search == rhs.beam_search && 
+         lhs.tensor_parallelism_degree == rhs.tensor_parallelism_degree;
 }
 
 void Decoding::serialize(Legion::Serializer &sez) const {
@@ -51,6 +52,7 @@ void Decoding::serialize(Legion::Serializer &sez) const {
   sez.serialize(this->layer_guid.transformer_layer_id);
   sez.serialize(this->layer_guid.model_id);
   sez.serialize(this->beam_search);
+  sez.serialize(this->tensor_parallelism_degree);
   sez.serialize(strlen(this->name));
   sez.serialize(this->name, strlen(this->name));
 }
@@ -68,6 +70,8 @@ Node Decoding::deserialize(FFModel &ff,
   LayerID layer_guid(id, transformer_layer_id, deserialized_model_id);
   bool beam_search;
   dez.deserialize(beam_search);
+  int tensor_parallelism_degree;
+  dez.deserialize(tensor_parallelism_degree);
   size_t name_len;
   char name[MAX_OPNAME] = {0};
   dez.deserialize(name_len);
@@ -76,6 +80,7 @@ Node Decoding::deserialize(FFModel &ff,
   DecodingParams params;
   params.layer_guid = layer_guid;
   params.beam_search = beam_search;
+  params.tensor_parallelism_degree = tensor_parallelism_degree;
   strcpy(params.name, name);
   return ff.get_or_create_node<Decoding>(inputs[0], params);
 }
@@ -88,6 +93,7 @@ DecodingParams Decoding::get_params() const {
   DecodingParams params;
   params.layer_guid = this->layer_guid;
   params.beam_search = this->beam_search;
+  params.tensor_parallelism_degree = this->tensor_parallelism_degree;
   if (strlen(this->name) < MAX_OPNAME) {
     strcpy(params.name, this->name);
   }
@@ -125,6 +131,7 @@ Tensor FFModel::decoding(const Tensor input, bool beam_search, char const *name)
         argmax_numdims, dims, DT_INT32, li, 1, false /*create_grad*/);
   }
   li->add_int_property("beam_search", beam_search);
+  li->add_int_property("tensor_parallelism_degree", config.tensor_parallelism_degree);
   layers.push_back(li);
   return li->outputs[1]; // Return argmax output for compatibility
 }
@@ -136,7 +143,9 @@ Op *Decoding::create_operator_from_layer(
   long long value;
   layer->get_int_property("beam_search", value);
   bool beam_search = (bool)value;
-  return new Decoding(model, layer->layer_guid, inputs[0], beam_search, layer->name);
+  layer->get_int_property("tensor_parallelism_degree", value);
+  int tensor_parallelism_degree = (int)value;
+  return new Decoding(model, layer->layer_guid, inputs[0], beam_search, tensor_parallelism_degree, layer->name);
 }
 
 static std::string remove_uid(char const *op_name) {
@@ -159,6 +168,7 @@ Decoding::Decoding(FFModel &model,
                    LayerID const &_layer_guid,
                    const ParallelTensor _input,
                    bool _beam_search,
+                   int _tensor_parallelism_degree,
                    char const *name)
     : Op(model,
          OP_DECODING,
@@ -168,7 +178,7 @@ Decoding::Decoding(FFModel &model,
          0 /*weights*/,
          2 /*outputs*/,
          _input),
-      beam_search(_beam_search) {
+      beam_search(_beam_search), tensor_parallelism_degree(_tensor_parallelism_degree) {
   layer_guid = _layer_guid;
   int numdim = inputs[0]->num_dims;
   ParallelDim dims[MAX_TENSOR_DIM];
@@ -203,7 +213,7 @@ Decoding::Decoding(FFModel &model,
                    DecodingParams const &params,
                    const ParallelTensor input,
                    char const *name)
-    : Decoding(model, params.layer_guid, input, params.beam_search, params.name) {}
+    : Decoding(model, params.layer_guid, input, params.beam_search, params.tensor_parallelism_degree, params.name) {}
 
 struct DecodingInitMeta {
   Decoding *decoding;
@@ -500,8 +510,8 @@ InferenceResult
     int in_dim0 = input.domain.hi()[0] - input.domain.lo()[0] + 1;
     int in_dim1 = input.domain.hi()[1] - input.domain.lo()[1] + 1;
     int softmax_out_dim0 = softmax_output.domain.hi()[0] - softmax_output.domain.lo()[0] + 1;
-    int softmax_out_dim1 = softmax_output.domain.hi()[1] - softmax_output.domain.lo()[1] + 1;
-    int argmax_out_dim0 = argmax_output.domain.hi()[0] - argmax_output.domain.lo()[0] + 1;
+    int softmax_out_dim1 = softmax_output.domain.hi()[2] - softmax_output.domain.lo()[2] + 1;
+    int argmax_out_dim0 = argmax_output.domain.hi()[1] - argmax_output.domain.lo()[1] + 1;
     std::string op_name_without_uid = remove_uid(m->op_name);
     printf("Decoding(%s): in=[%i, bz=%i/%i] -> softmax_out=[%i,bz=%i/%i], argmax_out=[bz=%i]\n",
            op_name_without_uid.c_str(),
@@ -524,8 +534,10 @@ InferenceResult
   }
 
   // Copy argmax results from output region
-  copy_tensor_dev_to_host<BatchConfig::TokenId>(
-      argmax_output.get_int32_ptr(), ir.token_ids, batch_size);
+  if (task->index_point.point_data[0] == 0) {
+    copy_tensor_dev_to_host<BatchConfig::TokenId>(
+        argmax_output.get_int32_ptr(), ir.token_ids, batch_size);
+  }
 
   return ir;
 }
@@ -616,6 +628,7 @@ size_t hash<FlexFlow::DecodingParams>::operator()(
   size_t key = 0;
   hash_combine(key, params.layer_guid.id);
   hash_combine(key, params.beam_search);
+  hash_combine(key, params.tensor_parallelism_degree);
   return key;
 }
 }; // namespace std
