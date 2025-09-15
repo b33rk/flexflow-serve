@@ -8,6 +8,9 @@ cleanup() {
 
 # Cd into directory holding this script
 cd "${BASH_SOURCE[0]%/*}/.."
+cd build
+source ./set_python_envs.sh
+cd ..
 
 MODEL_NAME=${MODEL_NAME:-"goliaro/llama-3.2-1b-lora"}
 BASE_MODEL_NAME=${BASE_MODEL_NAME:-"unsloth/Llama-3.2-1B-Instruct"}
@@ -43,13 +46,13 @@ mkdir -p ./inference/output
 export LEGION_BACKTRACE=1
 
 # Download test model
-# python ./inference/utils/download_peft_model.py "${MODEL_NAME}"
+python ./inference/utils/download_peft_model.py "${MODEL_NAME}"
 
 if [ "$FULL_PRECISION" = "true" ]; then full_precision_flag="--use-full-precision"; else full_precision_flag=""; fi
 if [ "$FUSION" = "true" ]; then fusion_flag="--fusion"; else fusion_flag=""; fi
 
 # Run PEFT in Huggingface to get ground truth tensors
-# eval python ./tests/peft/hf_finetune.py --peft-model-id "${MODEL_NAME}" --save-peft-tensors "${full_precision_flag}" -lr "${LEARNING_RATE}"
+eval python ./tests/peft/hf_finetune.py --peft-model-id "${MODEL_NAME}" --save-peft-tensors "${full_precision_flag}" -lr "${LEARNING_RATE}"
 
 # Python test
 echo "Python test"

@@ -188,6 +188,8 @@ std::string get_operator_type_name(OperatorType type) {
       return "Sampling";
     case OP_ARGMAX:
       return "ArgMax";
+    case OP_DECODING:
+      return "Decoding";
     // PEFT Ops
     case OP_LORA:
       return "Lora Layer";
