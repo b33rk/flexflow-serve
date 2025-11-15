@@ -117,7 +117,7 @@ RUN pip3 install scipy bitsandbytes datasets accelerate loralib triton peft pyte
 RUN pip3 install streamlit
 # flash-attn
 RUN if [ "$FF_GPU_BACKEND" = "cuda" ]; then \
-        pip3 install flash-attn; \
+        pip3 install flash-attn --no-build-isolation; \
     else \
         echo "Skipping flash-attn installation for FF_GPU_BACKEND=$FF_GPU_BACKEND"; \
     fi
