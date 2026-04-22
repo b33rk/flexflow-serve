@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget sudo binut
         apt-get update -y && \
         apt-get upgrade -y libstdc++6
 
+# Miniconda auto answer TOS for the newest policy
+ENV CONDA_PLUGINS_AUTO_ACCEPT_TOS=true
+
 # Install Python3 with Miniconda
 ARG python_version "latest"
 RUN MINICONDA_SCRIPT_NAME=Miniconda3-latest-Linux-x86_64.sh; \
@@ -56,7 +59,6 @@ ENV MAKEFLAGS "${MAKEFLAGS} -j${N_BUILD_CORES}"
 ENV PATH /opt/conda/bin:$PATH
 ENV CUDNN_DIR /usr/local/cuda
 ENV CUDA_DIR /usr/local/cuda
-ENV CONDA_PLUGINS_AUTO_ACCEPT_TOS=true
 
 # GPU-specific dependencies
 ARG FF_GPU_BACKEND "cuda"
