@@ -56,6 +56,7 @@ ENV MAKEFLAGS "${MAKEFLAGS} -j${N_BUILD_CORES}"
 ENV PATH /opt/conda/bin:$PATH
 ENV CUDNN_DIR /usr/local/cuda
 ENV CUDA_DIR /usr/local/cuda
+ENV CONDA_PLUGINS_AUTO_ACCEPT_TOS=true
 
 # GPU-specific dependencies
 ARG FF_GPU_BACKEND "cuda"
