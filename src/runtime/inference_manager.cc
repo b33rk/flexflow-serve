@@ -666,7 +666,7 @@ void InferenceManager::build_priority_table(FFModel *model) {
         op_with_guid = op_with_guid->inputs[0]->owner_op;
       }
       if (op_with_guid != nullptr &&
-          op_with_guid->layer_guid != LayerID::NO_ID) {
+          !(op_with_guid->layer_guid == LayerID::NO_ID)) {
         transformer_layer_id =
             op_with_guid->layer_guid.transformer_layer_id;
       }
