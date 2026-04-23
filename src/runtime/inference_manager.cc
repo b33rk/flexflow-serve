@@ -655,7 +655,7 @@ void InferenceManager::build_priority_table(FFModel *model) {
     // Resolve NO_ID by walking up inputs, same logic as line 117-125
     // in compile_model_and_allocate_buffer.
     int transformer_layer_id = 0;
-    if (producer->layer_guid != LayerID::NO_ID) {
+    if (!(producer->layer_guid == LayerID::NO_ID)) {
       transformer_layer_id = producer->layer_guid.transformer_layer_id;
     } else {
       // Walk up inputs until we find an op with a valid layer_guid.
