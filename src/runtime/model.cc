@@ -4372,6 +4372,7 @@ struct DefaultConfig {
   const static bool benchmarking = false;
   const static bool inference_debugging = false;
   const static bool enable_peft_finetuning = false;
+  const static bool enable_fadp = false; // adaptive pruning
   constexpr static float learningRate = 0.01f;
   constexpr static float weightDecay = 0.0001f;
   const static size_t workSpaceSize = (size_t)128 * 1024 * 1024; // 128 MB
@@ -4454,6 +4455,7 @@ FFConfig::FFConfig() {
   perform_fusion = false;
   base_optimize_threshold = DefaultConfig::base_optimize_threshold;
   perform_memory_search = false;
+  enable_fadp = DefaultConfig::enable_fadp;
 
   // Parse input arguments
   {
@@ -4692,6 +4694,11 @@ void FFConfig::parse_args(char **argv, int argc) {
     }
     if (!strcmp(argv[i], "--memory-search")) {
       perform_memory_search = true;
+      continue;
+    }
+    // adaptive pruning flag
+    if ((!strcmp(argv[i], "-enable-fadp"))) {
+      enable_fadp = true;
       continue;
     }
   }
