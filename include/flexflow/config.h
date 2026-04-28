@@ -177,6 +177,8 @@ public:
   bool cpu_offload;
   size_t offload_reserve_space_size;
   DataType quantization_type;
+  // FADP fields
+  bool enable_fadp;
   // PEFT related fields
   bool enable_peft, enable_peft_finetuning;
   // Control parallelizable dimensions
