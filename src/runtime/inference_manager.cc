@@ -492,7 +492,7 @@ void InferenceManager::build_priority_table(FFModel *model) {
   }
   // [STAGE0-DBG] Dump full post-fusion operator list
   printf("[FADP][OPS] Post-fusion operator list:\n");
-  for (int i = 0; i < total_ops; i++) {
+  for (int i = 0; i < model->operators.size(); i++) {
       Op *op = model->operators[i];
       printf("[FADP][OPS]   [%3d] %-35s layer_guid=%d\n",
             i,
@@ -502,31 +502,31 @@ void InferenceManager::build_priority_table(FFModel *model) {
                 : op->layer_guid.transformer_layer_id);
   }
 
-// [STAGE0-DBG] Verify that post-fusion op->inputs[] pointers
-// are keys that exist in tensor_buffer.
-// Mismatches here mean apply_fusion() created new ParallelTensor
-// objects instead of reusing originals.
-printf("[FADP][FUSION-CHECK] Checking input pointer validity "
-       "after fusion...\n");
-int mismatch = 0, match = 0;
-for (int i = 0; i < (int)operators.size(); i++) {
-    Op *op = operators[i];
-    for (int j = 0; j < op->numInputs; j++) {
-        ParallelTensor pt = op->inputs[j];
-        if (pt == nullptr) continue;
-        if (tensor_buffer.find(pt) == tensor_buffer.end()) {
-            mismatch++;
-            printf("[FADP][FUSION-CHECK][MISS] op[%d]=%s input[%d]=%p "
-                   "NOT in tensor_buffer\n",
-                   i,
-                   get_operator_type_name(op->op_type).c_str(),
-                   j, (void*)pt);
-        } else {
-            match++;
-        }
-    }
-}
-printf("[FADP][FUSION-CHECK] match=%d mismatch=%d\n", match, mismatch);
+  // [STAGE0-DBG] Verify that post-fusion op->inputs[] pointers
+  // are keys that exist in tensor_buffer.
+  // Mismatches here mean apply_fusion() created new ParallelTensor
+  // objects instead of reusing originals.
+  printf("[FADP][FUSION-CHECK] Checking input pointer validity "
+        "after fusion...\n");
+  int mismatch = 0, match = 0;
+  for (int i = 0; i < model->operators.size(); i++) {
+      Op *op = model->operators[i];
+      for (int j = 0; j < op->numInputs; j++) {
+          ParallelTensor pt = op->inputs[j];
+          if (pt == nullptr) continue;
+          if (tensor_buffer.find(pt) == tensor_buffer.end()) {
+              mismatch++;
+              printf("[FADP][FUSION-CHECK][MISS] op[%d]=%s input[%d]=%p "
+                    "NOT in tensor_buffer\n",
+                    i,
+                    get_operator_type_name(op->op_type).c_str(),
+                    j, (void*)pt);
+          } else {
+              match++;
+          }
+      }
+  }
+  printf("[FADP][FUSION-CHECK] match=%d mismatch=%d\n", match, mismatch);
 
   priority_table.clear();
 
