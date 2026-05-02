@@ -490,6 +490,44 @@ void InferenceManager::build_priority_table(FFModel *model) {
     printf("[FADP] build_priority_table: FADP disabled, skipping.\n");
     return;
   }
+  // [STAGE0-DBG] Dump full post-fusion operator list
+  printf("[FADP][OPS] Post-fusion operator list:\n");
+  for (int i = 0; i < total_ops; i++) {
+      Op *op = model->operators[i];
+      printf("[FADP][OPS]   [%3d] %-35s layer_guid=%d\n",
+            i,
+            get_operator_type_name(op->op_type).c_str(),
+            (op->layer_guid == LayerID::NO_ID)
+                ? -1
+                : op->layer_guid.transformer_layer_id);
+  }
+
+// [STAGE0-DBG] Verify that post-fusion op->inputs[] pointers
+// are keys that exist in tensor_buffer.
+// Mismatches here mean apply_fusion() created new ParallelTensor
+// objects instead of reusing originals.
+printf("[FADP][FUSION-CHECK] Checking input pointer validity "
+       "after fusion...\n");
+int mismatch = 0, match = 0;
+for (int i = 0; i < (int)operators.size(); i++) {
+    Op *op = operators[i];
+    for (int j = 0; j < op->numInputs; j++) {
+        ParallelTensor pt = op->inputs[j];
+        if (pt == nullptr) continue;
+        if (tensor_buffer.find(pt) == tensor_buffer.end()) {
+            mismatch++;
+            printf("[FADP][FUSION-CHECK][MISS] op[%d]=%s input[%d]=%p "
+                   "NOT in tensor_buffer\n",
+                   i,
+                   get_operator_type_name(op->op_type).c_str(),
+                   j, (void*)pt);
+        } else {
+            match++;
+        }
+    }
+}
+printf("[FADP][FUSION-CHECK] match=%d mismatch=%d\n", match, mismatch);
+
   priority_table.clear();
 
   int total_ops = (int)model->operators.size();
@@ -532,31 +570,12 @@ void InferenceManager::build_priority_table(FFModel *model) {
                  op->op_type == OP_ARGMAX  ||
                  op->op_type == OP_ARG_TOPK||
                  op->op_type == OP_SAMPLING);
-    if (skip) { cnt_skipped++; continue; }
-    cnt_candidate++;
 
-    for (int i = 0; i < op->numOutputs; i++) {
-      ParallelTensor pt = op->outputs[i];
-      if (pt == nullptr) continue;
-      if (tensor_buffer.find(pt) == tensor_buffer.end()) {
-        cnt_output_not_in_buf++;
-        // [STAGE0-DBG] Print every miss — this should never happen for
-        // post-fusion boundary tensors.  If it fires repeatedly, the
-        // pt pointer is a new object created during fusion that was
-        // never inserted into tensor_buffer.
-        printf("[FADP][DBG][MISS-OUTPUT] op_idx=%d type=%s output[%d]=%p "
-               "NOT in tensor_buffer\n",
-               op_idx,
-               get_operator_type_name(op->op_type).c_str(),
-               i, (void*)pt);
-        continue;
-      }
-      cnt_output_in_buf++;
-      if (producer_op_idx.find(pt) == producer_op_idx.end()) {
-        producer_op_idx[pt] = op_idx;
-      }
-    }
-
+    /* ---- consumer tracking: run for EVERY operator ----
+     * Even skipped operators (WEIGHT, INPUT, ARGMAX, SAMPLING, ...)
+     * consume intermediate activations.  If we skip them here, their
+     * inputs are never recorded as consumers and every producer tensor
+     * ends up with access_freq == 0. */
     for (int i = 0; i < op->numInputs; i++) {
       ParallelTensor pt = op->inputs[i];
       if (pt == nullptr) continue;
@@ -571,14 +590,35 @@ void InferenceManager::build_priority_table(FFModel *model) {
       }
       cnt_input_in_buf++;
       if (access_freq.find(pt) == access_freq.end()) {
-        access_freq[pt]  = 0;
+        access_freq[pt] = 0;
         last_consumer_op_idx[pt] = op_idx;
       }
       if (last_consumer_op_idx[pt] < op_idx) {
         access_freq[pt]++;
         last_consumer_op_idx[pt] = op_idx;
-      } else if (last_consumer_op_idx[pt] == op_idx && access_freq[pt] == 0) {
+      } else if (last_consumer_op_idx[pt] == op_idx) {
         access_freq[pt]++;
+      }
+    }
+
+    if (skip) { cnt_skipped++; continue; }
+    cnt_candidate++;
+
+    for (int i = 0; i < op->numOutputs; i++) {
+      ParallelTensor pt = op->outputs[i];
+      if (pt == nullptr) continue;
+      if (tensor_buffer.find(pt) == tensor_buffer.end()) {
+        cnt_output_not_in_buf++;
+        printf("[FADP][DBG][MISS-OUTPUT] op_idx=%d type=%s output[%d]=%p "
+               "NOT in tensor_buffer\n",
+               op_idx,
+               get_operator_type_name(op->op_type).c_str(),
+               i, (void*)pt);
+        continue;
+      }
+      cnt_output_in_buf++;
+      if (producer_op_idx.find(pt) == producer_op_idx.end()) {
+        producer_op_idx[pt] = op_idx;
       }
     }
   }
