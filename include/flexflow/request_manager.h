@@ -32,6 +32,19 @@ class RequestManager;
 using tokenizers::Tokenizer;
 using RequestGuid = BatchConfig::RequestGuid;
 
+struct TensorPriorityInfo {
+  float priority_score;
+  float recompute_cost_ms;   // C(n)
+  float size_mb;             // S(t): from m->allocated_peft_buffer_size
+  float layer_criticality;   // L(t): normalized+inverted layer position
+  bool  is_layer_boundary;   // F(t): first sub-op of a transformer layer
+  int   access_freq;         // A(t): backward reads of this activation
+  int   backward_depth;      // D(t): numOperators-1-sub_op_idx
+  int   fused_op_idx;        // position of containing FusedOp in model->operators[]
+  int   sub_op_idx;          // index within FusedOp::operators[] (-1 = standalone)
+  int   transformer_layer_id; // for logging
+};
+
 class InferenceManager {
 public:
   InferenceManager();
@@ -57,9 +70,13 @@ public:
                                             BatchConfigFuture const &bc,
                                             FFHandler *handlers);
 
+  void build_priority_table(FFModel *model);
+
 public:
   std::unordered_map<ParallelTensor, std::vector<ParallelTensor>> tensor_buffer;
   std::unordered_map<FFModel *, FileDataLoader *> model_weights_loaders;
+  // Priority table
+  std::unordered_map<Op*, TensorPriorityInfo> priority_table;
 };
 
 #define REQ_RECEIVED_STEP_IDX -2
