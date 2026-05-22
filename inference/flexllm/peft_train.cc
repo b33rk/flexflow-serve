@@ -304,6 +304,7 @@ void FlexFlow::top_level_task(Task const *task,
   bool enable_peft = false;
   float temperature = 0.0f;
   float topp = 0.0f;
+  float qps = 0.0f;
   int max_requests_per_batch = 1;
   int max_tokens_per_batch = 128;
   int max_sequence_length = 256;
@@ -331,6 +332,7 @@ void FlexFlow::top_level_task(Task const *task,
                    enable_peft,
                    temperature,
                    topp,
+                   qps,
                    max_requests_per_batch,
                    max_tokens_per_batch,
                    max_sequence_length,
