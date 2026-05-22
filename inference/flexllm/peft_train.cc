@@ -49,6 +49,7 @@ void parse_input_args(char **argv,
                       bool &enable_peft,
                       float &temperature,
                       float &topp,
+                      float &qps,
                       int &max_requests_per_batch,
                       int &max_tokens_per_batch,
                       int &max_sequence_length,
@@ -97,6 +98,11 @@ void parse_input_args(char **argv,
     // output file
     if (!strcmp(argv[i], "-output-file")) {
       paths.output_file_path = std::string(argv[++i]);
+      continue;
+    }
+    // arrival rate (queries per second)
+    if (!strcmp(argv[i], "--qps")) {
+      qps = std::stof(argv[++i]);
       continue;
     }
     if (!strcmp(argv[i], "-profiling-folder")) {
@@ -566,7 +572,7 @@ void FlexFlow::top_level_task(Task const *task,
                                    max_requests_per_batch,
                                    max_tokens_per_batch,
                                    num_kv_cache_slots,
-                                   0.0,                  // arrival rate
+                                   qps,                  // arrival rate
                                    run_warmup ? 10 : 0); // num_warmup_requests
   }
 
