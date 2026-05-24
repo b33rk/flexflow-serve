@@ -302,9 +302,18 @@ void InferenceManager::compile_model_and_allocate_buffer(FFModel *model) {
     }
     assert(model->check_operators_integrity(old_operators, &tensor_buffer));
     fprintf(stderr, "%zu operators after fusion...\n", model->operators.size());
+    for (size_t i = 0; i < model->operators.size(); i++) {
+      Op *op = model->operators[i];
+      if (op->op_type == OP_INPUT || op->op_type == OP_WEIGHT) {
+        continue;
+      }
+      fprintf(stderr,
+          "operator[%zu]: type(%s) guid(%lu)\n",
+          i,
+          get_operator_type_name(model->operators[i]->op_type).c_str(),
+          model->operators[i]->op_guid);
+    }
   }
-
-  build_priority_table(model);
 
   // print optimized graph
   for (size_t i = 0; i < model->operators.size(); i++) {
@@ -466,336 +475,10 @@ InferenceResultFuture InferenceManager::inference(FFModel *model,
     }
     fm = op->inference(*model, bc, inputs, outputs);
   }
-  assert(fm.get_future_map_domain().get_volume() == 1);
+  assert(fm.get_future_map_domain().get_volume() == model->config.tensor_parallelism_degree);
   InferenceResultFuture irf = fm.get_future(0);
   return irf;
 };
-// File-scope struct: per-tensor raw scoring data collected before normalization.
-// Named after what it represents conceptually: a candidate activation tensor
-// being evaluated for inclusion in the priority table.
-// Pattern follows PropagationEdgeInfo / DefaultConfig in graph.cc.
-struct ActivationScoringEntry {
-  ParallelTensor tensor;
-  int   op_idx;
-  float recompute_cost;      // C(n): heuristic by op type
-  float size_bytes;          // S(t): raw bytes before normalization
-  int   transformer_layer_id; // L(t): raw, lower = earlier = more critical
-  bool  is_fusion_boundary;  // F(t)
-  int   access_freq_val;     // A(t)
-  int   lifetime_depth;      // D(t): last_consumer_idx - producer_idx
-};
-
-void InferenceManager::build_priority_table(FFModel *model) {
-  if (!model->config.enable_fadp) {
-    printf("[FADP] build_priority_table: FADP disabled, skipping.\n");
-    return;
-  }
-  // [STAGE0-DBG] Dump full post-fusion operator list
-  printf("[FADP][OPS] Post-fusion operator list:\n");
-  for (int i = 0; i < model->operators.size(); i++) {
-      Op *op = model->operators[i];
-      printf("[FADP][OPS]   [%3d] %-35s layer_guid=%d\n",
-            i,
-            get_operator_type_name(op->op_type).c_str(),
-            (op->layer_guid == LayerID::NO_ID)
-                ? -1
-                : op->layer_guid.transformer_layer_id);
-  }
-
-  // [STAGE0-DBG] Verify that post-fusion op->inputs[] pointers
-  // are keys that exist in tensor_buffer.
-  // Mismatches here mean apply_fusion() created new ParallelTensor
-  // objects instead of reusing originals.
-  printf("[FADP][FUSION-CHECK] Checking input pointer validity "
-        "after fusion...\n");
-  int mismatch = 0, match = 0;
-  for (int i = 0; i < model->operators.size(); i++) {
-      Op *op = model->operators[i];
-      for (int j = 0; j < op->numInputs; j++) {
-          ParallelTensor pt = op->inputs[j];
-          if (pt == nullptr) continue;
-          if (tensor_buffer.find(pt) == tensor_buffer.end()) {
-              mismatch++;
-              printf("[FADP][FUSION-CHECK][MISS] op[%d]=%s input[%d]=%p "
-                    "NOT in tensor_buffer\n",
-                    i,
-                    get_operator_type_name(op->op_type).c_str(),
-                    j, (void*)pt);
-          } else {
-              match++;
-          }
-      }
-  }
-  printf("[FADP][FUSION-CHECK] match=%d mismatch=%d\n", match, mismatch);
-
-  priority_table.clear();
-
-  int total_ops = (int)model->operators.size();
-  int max_transformer_layer = model->current_transformer_layer_id;
-
-  // ----------------------------------------------------------------
-  // [STAGE0-DBG] Sanity check entry state before doing any work.
-  // If tensor_buffer is empty here, the function was called too early
-  // (before compile_model_and_allocate_buffer finished) or on the
-  // wrong InferenceManager instance.
-  // ----------------------------------------------------------------
-  printf("[FADP] build_priority_table: %d operators, "
-         "max_transformer_layer=%d, tensor_buffer.size=%zu\n",
-         total_ops, max_transformer_layer, tensor_buffer.size());
-
-  if (tensor_buffer.empty()) {
-    printf("[FADP][ERROR] tensor_buffer is EMPTY — "
-           "build_priority_table called before buffer allocation. "
-           "Ensure compile_model_and_allocate_buffer() completed first.\n");
-    return;
-  }
-
-  // ================================================================
-  // Pass 1: producer / consumer tracking
-  // ================================================================
-  std::unordered_map<ParallelTensor, int> producer_op_idx;
-  std::unordered_map<ParallelTensor, int> last_consumer_op_idx;
-  std::unordered_map<ParallelTensor, int> access_freq;
-
-  // [STAGE0-DBG] op-type census so we know what we're iterating over.
-  int cnt_skipped = 0, cnt_candidate = 0;
-  int cnt_output_in_buf = 0, cnt_output_not_in_buf = 0;
-  int cnt_input_in_buf  = 0, cnt_input_not_in_buf  = 0;
-
-  for (int op_idx = 0; op_idx < total_ops; op_idx++) {
-    Op *op = model->operators[op_idx];
-
-    bool skip = (op->op_type == OP_WEIGHT  ||
-                 op->op_type == OP_INPUT   ||
-                 op->op_type == OP_ARGMAX  ||
-                 op->op_type == OP_ARG_TOPK||
-                 op->op_type == OP_SAMPLING);
-
-    /* ---- consumer tracking: run for EVERY operator ----
-     * Even skipped operators (WEIGHT, INPUT, ARGMAX, SAMPLING, ...)
-     * consume intermediate activations.  If we skip them here, their
-     * inputs are never recorded as consumers and every producer tensor
-     * ends up with access_freq == 0. */
-    for (int i = 0; i < op->numInputs; i++) {
-      ParallelTensor pt = op->inputs[i];
-      if (pt == nullptr) continue;
-      if (tensor_buffer.find(pt) == tensor_buffer.end()) {
-        cnt_input_not_in_buf++;
-        printf("[FADP][DBG][MISS-INPUT] op_idx=%d type=%s input[%d]=%p "
-               "NOT in tensor_buffer\n",
-               op_idx,
-               get_operator_type_name(op->op_type).c_str(),
-               i, (void*)pt);
-        continue;
-      }
-      cnt_input_in_buf++;
-      if (access_freq.find(pt) == access_freq.end()) {
-        access_freq[pt] = 0;
-        last_consumer_op_idx[pt] = op_idx;
-      }
-      if (last_consumer_op_idx[pt] < op_idx) {
-        access_freq[pt]++;
-        last_consumer_op_idx[pt] = op_idx;
-      } else if (last_consumer_op_idx[pt] == op_idx) {
-        access_freq[pt]++;
-      }
-    }
-
-    if (skip) { cnt_skipped++; continue; }
-    cnt_candidate++;
-
-    for (int i = 0; i < op->numOutputs; i++) {
-      ParallelTensor pt = op->outputs[i];
-      if (pt == nullptr) continue;
-      if (tensor_buffer.find(pt) == tensor_buffer.end()) {
-        cnt_output_not_in_buf++;
-        printf("[FADP][DBG][MISS-OUTPUT] op_idx=%d type=%s output[%d]=%p "
-               "NOT in tensor_buffer\n",
-               op_idx,
-               get_operator_type_name(op->op_type).c_str(),
-               i, (void*)pt);
-        continue;
-      }
-      cnt_output_in_buf++;
-      if (producer_op_idx.find(pt) == producer_op_idx.end()) {
-        producer_op_idx[pt] = op_idx;
-      }
-    }
-  }
-
-  // [STAGE0-DBG] Pass 1 summary — this is the critical checkpoint.
-  // Expected (healthy): candidate_ops > 0, output_in_buf > 0,
-  //   producer_map > 0, access_freq > 0.
-  printf("[FADP][PASS1] ops: total=%d skipped=%d candidate=%d\n",
-         total_ops, cnt_skipped, cnt_candidate);
-  printf("[FADP][PASS1] outputs: in_buf=%d NOT_in_buf=%d\n",
-         cnt_output_in_buf, cnt_output_not_in_buf);
-  printf("[FADP][PASS1] inputs:  in_buf=%d NOT_in_buf=%d\n",
-         cnt_input_in_buf, cnt_input_not_in_buf);
-  printf("[FADP][PASS1] producer_map.size=%zu  access_freq.size=%zu\n",
-         producer_op_idx.size(), access_freq.size());
-
-  if (producer_op_idx.empty()) {
-    printf("[FADP][ERROR] No producers found. "
-           "All candidate op outputs are missing from tensor_buffer. "
-           "Check whether apply_fusion() creates new ParallelTensor "
-           "objects for fused op outputs instead of reusing original "
-           "pointers.\n");
-    return;
-  }
-
-  // ================================================================
-  // Pass 2: collect raw scores
-  // ================================================================
-  std::vector<ActivationScoringEntry> candidates;
-  candidates.reserve(producer_op_idx.size());
-
-  int cnt_no_consumer = 0, cnt_eligible = 0;
-
-  for (auto const &[pt, prod_idx] : producer_op_idx) {
-    if (access_freq.find(pt) == access_freq.end() ||
-        access_freq[pt] == 0) {
-      cnt_no_consumer++;
-      // [STAGE0-DBG] Uncomment the next line if you need per-tensor
-      // detail; it can be very verbose on large models.
-      // printf("[FADP][DBG][NO-CONSUMER] op_idx=%d type=%s pt=%p\n",
-      //        prod_idx,
-      //        get_operator_type_name(model->operators[prod_idx]->op_type).c_str(),
-      //        (void*)pt);
-      continue;
-    }
-    cnt_eligible++;
-
-    Op *producer = model->operators[prod_idx];
-
-    float cost = 1.0f;
-    OperatorType ot = producer->op_type;
-    if (ot == OP_FUSED) {
-      cost = 5.0f;
-    } else if (ot == OP_INC_MULTIHEAD_SELF_ATTENTION ||
-               ot == OP_SPEC_INC_MULTIHEAD_SELF_ATTENTION ||
-               ot == OP_TREE_INC_MULTIHEAD_SELF_ATTENTION) {
-      cost = 10.0f;
-    } else if (ot == OP_LINEAR) {
-      cost = 8.0f;
-    } else if (ot == OP_LORA) {
-      cost = 3.0f;
-    } else if (ot == OP_RESIDUAL_LAYERNORM ||
-               ot == OP_ADD_BIAS_RESIDUAL_LAYERNORM ||
-               ot == OP_LAYERNORM) {
-      cost = 2.0f;
-    } else if (ot == OP_RESIDUAL_RMS_NORM || ot == OP_RMS_NORM) {
-      cost = 2.0f;
-    } else if (ot == OP_SIGMOID_SILU_MULTI ||
-               ot == OP_EW_ADD || ot == OP_EW_MUL) {
-      cost = 1.5f;
-    } else if (ot == OP_ALLREDUCE      || ot == OP_PARALLEL_IDENTITY ||
-               ot == OP_COMBINE        || ot == OP_REPLICATE          ||
-               ot == OP_REPARTITION    || ot == OP_REDUCTION) {
-      cost = 0.5f;
-    }
-
-    float size_bytes = (float)pt->get_shape().get_piece_size();
-
-    int transformer_layer_id = 0;
-    if (!(producer->layer_guid == LayerID::NO_ID)) {
-      transformer_layer_id = producer->layer_guid.transformer_layer_id;
-    } else {
-      Op const *op_walk = producer;
-      while (op_walk != nullptr && op_walk->layer_guid == LayerID::NO_ID) {
-        if (op_walk->numInputs != 1) break;
-        op_walk = op_walk->inputs[0]->owner_op;
-      }
-      if (op_walk != nullptr && !(op_walk->layer_guid == LayerID::NO_ID)) {
-        transformer_layer_id = op_walk->layer_guid.transformer_layer_id;
-      }
-    }
-
-    bool is_fusion_boundary = (producer->op_type == OP_FUSED);
-    int  freq  = access_freq.at(pt);
-    int  depth = last_consumer_op_idx.at(pt) - prod_idx;
-
-    candidates.push_back({pt, prod_idx, cost, size_bytes,
-                          transformer_layer_id, is_fusion_boundary,
-                          freq, depth});
-  }
-
-  // [STAGE0-DBG] Pass 2 summary — if cnt_no_consumer == producer_map.size,
-  // every single boundary tensor is consumed only by skipped ops (i.e.
-  // only OP_ARGMAX/SAMPLING sees the last layer output and nothing else
-  // is tracked).  This means the skip list or the consumer loop has a gap.
-  printf("[FADP][PASS2] producers=%zu  no_consumer=%d  eligible=%d\n",
-         producer_op_idx.size(), cnt_no_consumer, cnt_eligible);
-
-  if (candidates.empty()) {
-    printf("[FADP][ERROR] No eligible tensors. "
-           "producers=%zu but ALL have zero consumers tracked.\n"
-           "  -> If no_consumer == producers, the consumer loop is not\n"
-           "     seeing any inputs that match tensor_buffer keys.\n"
-           "  -> Check whether apply_fusion() replaces op->inputs[idx]\n"
-           "     with a pointer NOT in tensor_buffer (model.cc:3100).\n",
-           producer_op_idx.size());
-    return;
-  }
-
-  // ================================================================
-  // Pass 3: normalize and write priority_table
-  // ================================================================
-  float max_cost  = 0.0f, max_size = 0.0f;
-  int   max_freq  = 0,    max_depth = 0;
-  float max_layer = (max_transformer_layer > 0)
-                    ? (float)max_transformer_layer : 1.0f;
-
-  for (auto const &e : candidates) {
-    if (e.recompute_cost    > max_cost)  max_cost  = e.recompute_cost;
-    if (e.size_bytes        > max_size)  max_size  = e.size_bytes;
-    if (e.access_freq_val   > max_freq)  max_freq  = e.access_freq_val;
-    if (e.lifetime_depth    > max_depth) max_depth = e.lifetime_depth;
-  }
-  if (max_cost  < 1e-6f) max_cost  = 1.0f;
-  if (max_size  < 1e-6f) max_size  = 1.0f;
-  if (max_freq  == 0)    max_freq  = 1;
-  if (max_depth == 0)    max_depth = 1;
-
-  for (auto const &e : candidates) {
-    float cn = e.recompute_cost   / max_cost;
-    float st = e.size_bytes       / max_size;
-    float lt = 1.0f - ((float)e.transformer_layer_id / max_layer);
-    float ft = e.is_fusion_boundary ? 1.0f : 0.0f;
-    float at = (float)e.access_freq_val / (float)max_freq;
-    float dt = (float)e.lifetime_depth  / (float)max_depth;
-
-    float score = PRUNE_WEIGHT_C * cn + PRUNE_WEIGHT_S * st
-                + PRUNE_WEIGHT_L * lt + PRUNE_WEIGHT_F * ft
-                + PRUNE_WEIGHT_A * at + PRUNE_WEIGHT_D * dt;
-
-    TensorPriorityInfo info;
-    info.priority_score    = score;
-    info.recompute_cost_ms = e.recompute_cost;
-    info.size_mb           = e.size_bytes / (1024.0f * 1024.0f);
-    info.layer_criticality = lt;
-    info.is_fusion_boundary= e.is_fusion_boundary;
-    info.access_freq       = e.access_freq_val;
-    info.lifetime_depth    = e.lifetime_depth;
-    info.op_index          = e.op_idx;
-
-    priority_table[e.tensor] = info;
-
-    printf("[FADP][PRIORITY] op_idx=%-3d type=%-30s score=%.4f "
-           "C=%.3f S=%.3f L=%.3f F=%d A=%.3f D=%.3f "
-           "size_mb=%.3f layer=%d fused=%s\n",
-           e.op_idx,
-           get_operator_type_name(model->operators[e.op_idx]->op_type).c_str(),
-           score, cn, st, lt, (int)ft, at, dt,
-           info.size_mb,
-           e.transformer_layer_id,
-           e.is_fusion_boundary ? "YES" : "no");
-  }
-
-  printf("[FADP] build_priority_table: complete. "
-         "%zu tensors scored (out of %zu in tensor_buffer).\n",
-         priority_table.size(), tensor_buffer.size());
-}
 
 std::vector<FinetuningBwdFuture> InferenceManager::peft_bwd(
     FFModel *model, int index, BatchConfigFuture const &bc) {
@@ -806,10 +489,13 @@ std::vector<FinetuningBwdFuture> InferenceManager::peft_bwd(
   // Assert that the last operator must be argmax or sampling
   assert(model->operators[last_op]->op_type == OP_ARGMAX ||
          model->operators[last_op]->op_type == OP_ARG_TOPK ||
-         model->operators[last_op]->op_type == OP_SAMPLING);
-  last_op -= 1;
-  while (model->operators[last_op]->op_type == OP_WEIGHT && last_op > 0) {
+         model->operators[last_op]->op_type == OP_SAMPLING ||
+         model->operators[last_op]->op_type == OP_DECODING);
+  if (model->operators[last_op]->op_type != OP_DECODING) {
     last_op -= 1;
+    while (model->operators[last_op]->op_type == OP_WEIGHT && last_op > 0) {
+      last_op -= 1;
+    }
   }
   for (int o = last_op; o >= 0; o--) {
     Op *op = model->operators[o];

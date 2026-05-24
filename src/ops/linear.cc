@@ -117,6 +117,22 @@ Tensor FFModel::dense(const Tensor input,
   return li->outputs[0];
 }
 
+static std::string remove_uid(char const *op_name) {
+  std::string op_name_without_uid = std::string(op_name);
+  size_t last_underscore = op_name_without_uid.length();
+  for (int i = op_name_without_uid.length() - 1; i > 0; i--) {
+    if (!(std::isdigit(op_name[i]) || op_name[i] == '_')) {
+      break;
+    } else if (op_name[i] == '_') {
+      last_underscore = i;
+    }
+  }
+  if (last_underscore < op_name_without_uid.length()) {
+    op_name_without_uid.erase(last_underscore);
+  }
+  return op_name_without_uid;
+}
+
 Op *Linear::create_operator_from_layer(
     FFModel &model,
     Layer const *layer,
@@ -226,6 +242,9 @@ Linear::Linear(FFModel &model,
   this->in_channels =
       _input->dims[dimension_names.at(LinearParams::INPUT_CHANNEL)].size;
 
+  std::string const &input_label = remove_uid(name) + std::string(" input tensor");
+  inputs[0]->print(input_label);
+
   ParallelTensorShape input_shape = this->inputs[0]->get_shape();
   ParallelTensorShape output_shape, kernel_shape, bias_shape;
   LinearParams params = this->get_params();
@@ -263,6 +282,9 @@ Linear::Linear(FFModel &model,
         kernel_initializer,
         CHOSEN_SYNC_TYPE);
 
+    std::string const &weight_label = remove_uid(name) + std::string(" weight tensor");
+    weights[KERNEL_IDX]->print(weight_label);
+
     if (use_bias) {
       Initializer *bias_initializer = new ZeroInitializer();
 
@@ -275,12 +297,18 @@ Linear::Linear(FFModel &model,
                                                        bias_initializer,
                                                        CHOSEN_SYNC_TYPE);
       add_bias_only_once = _input->dims[0].degree > 1;
+
+      std::string const &bias_label = remove_uid(name) + std::string(" bias tensor");
+      weights[BIAS_IDX]->print(bias_label);
     }
   }
 
   // Create the output tensor
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       output_shape.num_dims, output_shape.dims, _data_type, this);
+
+  std::string const &label = remove_uid(name) + std::string(" output tensor");
+  outputs[0]->print(label);
 
   // assert(check_output_input_weight_parallel_dims(allocate_weights));
 }
@@ -623,7 +651,7 @@ void Linear::inference_task(Task const *task,
   assert((weight.domain.hi()[1] - weight.domain.lo()[1] + 1) == out_dim);
   assert(weight.domain.get_volume() == in_dim * out_dim);
 
-  int batch_size = bc->num_active_tokens();
+  // int batch_size = bc->num_active_tokens();
   GenericTensorAccessorR bias;
   if (m->use_bias &&
       !(m->add_bias_only_once && task->index_point.point_data[0] != 0)) {
@@ -642,8 +670,18 @@ void Linear::inference_task(Task const *task,
                            weight.ptr,
                            bias.ptr,
                            in_dim,
-                           out_dim,
-                           batch_size);
+                           out_dim);
+  if (task->index_point.point_data[0] == 0) {
+    std::string op_name_without_uid = get_op_name_without_uid(m);
+    printf("\t%s: w=[%i,%i].T @ in=[%i, bz=%i] -> out=[%i,bz=%i]\n",
+           op_name_without_uid.c_str(),
+           in_dim,
+           out_dim,
+           in_dim,
+           bc->num_tokens,
+           out_dim,
+           bc->num_tokens);
+  }
   if (m->inference_debugging) {
     assert(task->index_point.get_dim() == 1);
     int shard_id = task->index_point.point_data[0];

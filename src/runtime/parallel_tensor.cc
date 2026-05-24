@@ -554,6 +554,10 @@ void ParallelTensorBase::print(std::string const &name) const {
   for (int i = 0; i < num_dims; i++) {
     printf("%d ", dims[i].parallel_idx);
   }
+  printf("] is_replica_dim[");
+  for (int i = 0; i < num_dims; i++) {
+    printf("%d ", dims[i].is_replica_dim ? 1 : 0);
+  }
   printf("]\n");
 }
 

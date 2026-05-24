@@ -32,37 +32,9 @@ class RequestManager;
 using tokenizers::Tokenizer;
 using RequestGuid = BatchConfig::RequestGuid;
 
-
 class InferenceManager {
 public:
   InferenceManager();
-
-  struct TensorPriorityInfo {
-    float priority_score;
-    float recompute_cost_ms;  // C(n)
-    float size_mb;            // S(t)
-    float layer_criticality;  // L(t)
-    bool  is_fusion_boundary; // F(t)
-    int   access_freq;        // A(t)
-    int   lifetime_depth;     // D(t)
-    int   op_index;           // position in model->operators[]
-  };
-  
-  // Thresholds for adaptive pruning
-  constexpr static float LOAD_LOW_WATERMARK    = 0.50f;
-  constexpr static float LOAD_HIGH_WATERMARK   = 0.90f;
-  constexpr static float PRUNE_THRESHOLD_HIGH   = 0.70f;
-  constexpr static float PRUNE_THRESHOLD_MEDIUM = 0.40f;
-  constexpr static float PRUNE_THRESHOLD_LOW    = 0.00f;
-  
-  // Priority score component weights, must sum to 1.0
-  constexpr static float PRUNE_WEIGHT_C = 0.30f; // recompute cost
-  constexpr static float PRUNE_WEIGHT_S = 0.20f; // tensor size
-  constexpr static float PRUNE_WEIGHT_L = 0.20f; // layer criticality
-  constexpr static float PRUNE_WEIGHT_F = 0.15f; // fusion boundary
-  constexpr static float PRUNE_WEIGHT_A = 0.10f; // access frequency
-  constexpr static float PRUNE_WEIGHT_D = 0.05f; // lifetime depth
-
   static InferenceManager *get_inference_manager();
   void compile_model_and_allocate_buffer(FFModel *model);
   void init_operators_inference(FFModel *model);
@@ -84,15 +56,10 @@ public:
   void load_inference_metadata_batch_config(FFModel *model,
                                             BatchConfigFuture const &bc,
                                             FFHandler *handlers);
-  void build_priority_table(FFModel *model);
-  void restore_activations(FFModel *model,
-                          int batch_index,
-                          BatchConfigFuture const &bc);
 
 public:
   std::unordered_map<ParallelTensor, std::vector<ParallelTensor>> tensor_buffer;
   std::unordered_map<FFModel *, FileDataLoader *> model_weights_loaders;
-  std::unordered_map<ParallelTensor, TensorPriorityInfo> priority_table;
 };
 
 #define REQ_RECEIVED_STEP_IDX -2
@@ -201,6 +168,11 @@ public:
     SERVING = 1002,
     TERMINATED = 1003,
   };
+  enum PeftTemporalSharingState {
+    INFERENCE = 0,
+    FINETUNING_FWD = 1,
+    FINETUNING_BWD = 2,
+  };
   using TokenId = BatchConfig::TokenId;
 
   RequestManager();
@@ -223,7 +195,8 @@ public:
   void set_max_sequence_length(int max_seq_length);
 
   void push_spec_infer_tree_width(int tree_width);
-  void set_enable_peft_finetuning(bool enable_peft_finetuning_);
+  void set_peft_support_mode(PeftSupportMode peft_support_mode_);
+  void update_peft_temporal_sharing_state(void);
   void set_inference_finished(bool finished = true);
   int register_ssm_model(FFModel *model);
   void register_tokenizer(ModelType model_type,
@@ -242,6 +215,9 @@ public:
   int get_num_transformer_layers();
   void set_num_layers_per_finetuning_step(int num_layers_per_finetuning_step);
   int get_num_layers_per_finetuning_step();
+  void set_temporal_sharing_frequency(int temporal_sharing_frequency);
+  int get_temporal_sharing_frequency();
+
   void initBitMask(BatchConfig::BitMask &bitmask, int initLength);
   void appendPendingRequest(BatchConfig::BitMask &bitmask, int initLength);
   void appendBitMask(BatchConfig::BitMask &bitmask,
@@ -322,6 +298,9 @@ public:
   BatchConfig prepare_next_bwd_batch(BatchConfig &new_bc);
   BatchConfig prepare_next_fwd_batch(BatchConfig const &old_bc,
                                      InferenceResult const &result);
+  void add_inference_work_if_needed(BatchConfig &new_bc,
+                                    BatchConfig const &old_bc);
+  void check_new_bc(BatchConfig const &new_bc);
   BatchConfigFuture
       prepare_next_batch(BatchConfigFuture const &old_bc,
                          InferenceResultFuture const &result,
@@ -440,10 +419,15 @@ private:
   int max_lora_rank = 32;
   int max_concurrent_adapters = 0;
   // peft benchmarking
-  bool enable_peft_finetuning = false;
+  PeftSupportMode peft_support_mode = PEFT_DISABLED;
+  PeftTemporalSharingState peft_temporal_sharing_state =
+      PeftTemporalSharingState::INFERENCE;
+  int peft_temporal_sharing_inf_step = 0;
+  BatchConfig ts_saved_old_batch;
   bool inference_finished = false;
   int num_transformer_layers = 0;
   int num_layers_per_finetuning_step = 0;
+  int temporal_sharing_frequency = 10;
 
   // tree width in each speculative step, if not specified 1
   std::vector<int> spec_infer_tree_width;

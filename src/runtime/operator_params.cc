@@ -5,6 +5,7 @@
 #include "flexflow/ops/arg_topk.h"
 #include "flexflow/ops/argmax.h"
 #include "flexflow/ops/attention.h"
+#include "flexflow/ops/decoding.h"
 #include "flexflow/ops/batch_matmul.h"
 #include "flexflow/ops/batch_norm.h"
 #include "flexflow/ops/beam_topk.h"
@@ -150,6 +151,8 @@ tl::optional<OperatorParameters> get_op_parameters(Op const *op) {
       return ((Sampling *)op)->get_params();
     case OP_ARGMAX:
       return ((ArgMax *)op)->get_params();
+    case OP_DECODING:
+      return ((Decoding *)op)->get_params();
 
       // TODO: implement the get_params() function for the operators below and
       // uncomment the lines below

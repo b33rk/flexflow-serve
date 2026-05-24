@@ -18,6 +18,11 @@ get_cuda_docker_image() {
       ubuntu_version="22.04"
   fi
 
+  # Downgrade to 22.04 for now
+  if [[ "$ubuntu_version" == "24.04" ]]; then
+    ubuntu_version="22.04"
+  fi
+
   # Determine CUDA version.
   # If the environment variable 'cuda_version' is set (in "<major>.<minor>" format), use that.
   # Otherwise, use nvidia-smi to extract the CUDA version.

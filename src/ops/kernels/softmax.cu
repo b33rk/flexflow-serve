@@ -27,17 +27,10 @@ SoftmaxMeta::SoftmaxMeta(FFHandler handler,
                          bool is_last_op,
                          MemoryAllocator &gpu_mem_allocator)
     : OpMeta(handler, softmax) {
-  checkCUDNN(cudnnCreateTensorDescriptor(&inputTensor));
-  checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
-      inputTensor, input_domain, softmax->data_type));
-  checkCUDNN(cudnnCreateTensorDescriptor(&outputTensor));
-  checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
-      outputTensor, input_domain, softmax->data_type));
   dim = softmax->dim;
   profiling = softmax->profiling;
   inference_debugging = softmax->inference_debugging;
-  enable_peft_finetuning = softmax->enable_peft_finetuning;
-  if (enable_peft_finetuning && is_last_op) {
+  if (peft_finetuning_enabled(peft_support_mode) && is_last_op) {
     allocated_peft_buffer_size =
         input_domain.get_volume() * data_type_size(softmax->data_type);
     gpu_mem_allocator.create_legion_instance(
@@ -57,79 +50,13 @@ namespace Softmax {
 void forward_kernel_wrapper(SoftmaxMeta const *m,
                             GenericTensorAccessorR const &input,
                             GenericTensorAccessorW const &output) {
-  cudaStream_t stream;
-  checkCUDA(get_legion_stream(&stream));
-  cudaEvent_t t_start, t_end;
-  if (m->profiling) {
-    cudaEventCreate(&t_start);
-    cudaEventCreate(&t_end);
-    cudaEventRecord(t_start, stream);
-  }
-  if (m->output_type[0] == DT_FLOAT) {
-    Internal::forward_kernel(
-        m, input.get_float_ptr(), output.get_float_ptr(), stream);
-  } else if (m->output_type[0] == DT_HALF) {
-    Internal::forward_kernel(
-        m, input.get_half_ptr(), output.get_half_ptr(), stream);
-  } else {
-    assert(false && "Unsupported data type");
-  }
-  if (m->profiling) {
-    cudaEventRecord(t_end, stream);
-    checkCUDA(cudaEventSynchronize(t_end));
-    // print_tensor<float>(acc_input.ptr, acc_input.rect.volume(),
-    // "[Softmax:forward:input]"); print_tensor<float>(acc_output.ptr,
-    // acc_output.rect.volume(), "[Softmax:forward:output]");
-    float elapsed = 0;
-    checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
-    cudaEventDestroy(t_start);
-    cudaEventDestroy(t_end);
-    log_measure.debug(
-        "%s [Softmax] forward time = %.2fms\n", m->op_name, elapsed);
-  }
+  assert(false && "Not supported");
 }
 
 void backward_kernel_wrapper(SoftmaxMeta const *m,
                              GenericTensorAccessorW const &input_grad,
                              GenericTensorAccessorR const &output_grad) {
-  cudaStream_t stream;
-  checkCUDA(get_legion_stream(&stream));
-
-  cudaEvent_t t_start, t_end;
-  if (m->profiling) {
-    cudaEventCreate(&t_start);
-    cudaEventCreate(&t_end);
-    cudaEventRecord(t_start, stream);
-  }
-  assert(input_grad.domain == output_grad.domain);
-  if (m->output_type[0] == DT_FLOAT) {
-    Internal::backward_kernel(m,
-                              input_grad.get_float_ptr(),
-                              output_grad.get_float_ptr(),
-                              output_grad.domain.get_volume(),
-                              stream);
-  } else if (m->output_type[0] == DT_HALF) {
-    Internal::backward_kernel(m,
-                              input_grad.get_half_ptr(),
-                              output_grad.get_half_ptr(),
-                              output_grad.domain.get_volume(),
-                              stream);
-  } else {
-    assert(false && "Unsupported data type");
-  }
-  if (m->profiling) {
-    cudaEventRecord(t_end, stream);
-    checkCUDA(cudaEventSynchronize(t_end));
-    // print_tensor<float>(acc_output_grad.ptr, acc_output_grad.rect.volume(),
-    // "[Softmax:backward:output_grad]");
-    // print_tensor<float>(acc_input_grad.ptr, acc_input_grad.rect.volume(),
-    // "[Softmax:backward:input_grad]");
-    float elapsed = 0;
-    checkCUDA(cudaEventElapsedTime(&elapsed, t_start, t_end));
-    cudaEventDestroy(t_start);
-    cudaEventDestroy(t_end);
-    log_measure.debug("Softmax backward time = %.2fms\n", elapsed);
-  }
+  assert(false && "Not supported");
 }
 
 void inference_kernel_wrapper(SoftmaxMeta *m,
@@ -144,6 +71,9 @@ void inference_kernel_wrapper(SoftmaxMeta *m,
     cudaEventCreate(&t_start);
     cudaEventCreate(&t_end);
     cudaEventRecord(t_start, stream);
+  }
+  if (bc->num_active_tokens() <= 0) {
+    return;
   }
   int num_classes = output.domain.hi()[0] - output.domain.lo()[0] + 1;
   if (m->output_type[0] == DT_FLOAT) {
@@ -224,36 +154,202 @@ void peft_bwd_kernel_wrapper(SoftmaxMeta const *m,
 }
 
 namespace Internal {
-template <typename DT>
-void forward_kernel(SoftmaxMeta const *m,
-                    DT const *input_ptr,
-                    DT *output_ptr,
-                    cudaStream_t stream) {
-  checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
 
-  float alpha = 1.0f, beta = 0.0f;
-  checkCUDNN(cudnnSoftmaxForward(m->handle.dnn,
-                                 CUDNN_SOFTMAX_ACCURATE,
-                                 CUDNN_SOFTMAX_MODE_CHANNEL,
-                                 &alpha,
-                                 m->inputTensor,
-                                 input_ptr,
-                                 &beta,
-                                 m->outputTensor,
-                                 output_ptr));
+// Optimized version using warp primitives
+template<int BLOCK_SIZE>
+__global__ void softmax_argmax_kernel(
+  const half* __restrict__ input,
+  half* __restrict__ output,
+  // int* __restrict__ argmax_indices,
+  const int vocab_size,
+  const int seq_len) {
+  
+  const int seq_pos = blockIdx.x;
+  if (seq_pos >= seq_len) return;
+  
+  const int tid = threadIdx.x;
+  const int lane_id = tid % 32;
+  const int warp_id = tid / 32;
+  const int num_warps = BLOCK_SIZE / 32;
+  
+  // Shared memory
+  extern __shared__ char shared_mem_bytes[];
+  float* warp_max = (float*)shared_mem_bytes;
+  int* warp_max_idx = (int*)(warp_max + num_warps);
+  float* warp_sum = (float*)(warp_max_idx + num_warps);
+  
+  // Phase 1: Find max
+  float thread_max = -INFINITY;
+  int thread_max_idx = 0;
+  
+  for (int vocab_idx = tid; vocab_idx < vocab_size; vocab_idx += BLOCK_SIZE) {
+      float val = __half2float(input[seq_pos * vocab_size + vocab_idx]);
+      if (val > thread_max) {
+          thread_max = val;
+          thread_max_idx = vocab_idx;
+      }
+  }
+  
+  // Warp-level reduction for max
+  #pragma unroll
+  for (int offset = 16; offset > 0; offset /= 2) {
+      float other_max = __shfl_down_sync(0xffffffff, thread_max, offset);
+      int other_idx = __shfl_down_sync(0xffffffff, thread_max_idx, offset);
+      
+      if (other_max > thread_max || (other_max == thread_max && other_idx < thread_max_idx)) {
+          thread_max = other_max;
+          thread_max_idx = other_idx;
+      }
+  }
+  
+  // Store warp results
+  if (lane_id == 0) {
+      warp_max[warp_id] = thread_max;
+      warp_max_idx[warp_id] = thread_max_idx;
+  }
+  __syncthreads();
+  
+  // Final reduction across warps
+  if (tid < num_warps) {
+      thread_max = warp_max[tid];
+      thread_max_idx = warp_max_idx[tid];
+  } else {
+      thread_max = -INFINITY;
+      thread_max_idx = INT_MAX;
+  }
+  
+  if (warp_id == 0) {
+      #pragma unroll
+      for (int offset = 16; offset > 0; offset /= 2) {
+          float other_max = __shfl_down_sync(0xffffffff, thread_max, offset);
+          int other_idx = __shfl_down_sync(0xffffffff, thread_max_idx, offset);
+          
+          if (other_max > thread_max || (other_max == thread_max && other_idx < thread_max_idx)) {
+              thread_max = other_max;
+              thread_max_idx = other_idx;
+          }
+      }
+      
+      if (lane_id == 0) {
+          warp_max[0] = thread_max;
+          warp_max_idx[0] = thread_max_idx;
+      }
+  }
+  __syncthreads();
+  
+  float max_val = warp_max[0];
+  int max_idx = warp_max_idx[0];
+  
+  // Phase 2: Compute exp and sum
+  float thread_sum = 0.0f;
+  
+  for (int vocab_idx = tid; vocab_idx < vocab_size; vocab_idx += BLOCK_SIZE) {
+      float val = __half2float(input[seq_pos * vocab_size + vocab_idx]);
+      float exp_val = expf(val - max_val);
+      thread_sum += exp_val;
+      output[seq_pos * vocab_size + vocab_idx] = __float2half(exp_val);
+  }
+  
+  // Warp-level reduction for sum
+  #pragma unroll
+  for (int offset = 16; offset > 0; offset /= 2) {
+      thread_sum += __shfl_down_sync(0xffffffff, thread_sum, offset);
+  }
+  
+  if (lane_id == 0) {
+      warp_sum[warp_id] = thread_sum;
+  }
+  __syncthreads();
+  
+  // Final reduction
+  if (tid < num_warps) {
+      thread_sum = warp_sum[tid];
+  } else {
+      thread_sum = 0.0f;
+  }
+  
+  if (warp_id == 0) {
+      #pragma unroll
+      for (int offset = 16; offset > 0; offset /= 2) {
+          thread_sum += __shfl_down_sync(0xffffffff, thread_sum, offset);
+      }
+      
+      if (lane_id == 0) {
+          warp_sum[0] = thread_sum;
+      }
+  }
+  __syncthreads();
+  
+  float total_sum = warp_sum[0];
+  float inv_sum = 1.0f / total_sum;
+  
+  // Phase 3: Normalize
+  for (int vocab_idx = tid; vocab_idx < vocab_size; vocab_idx += BLOCK_SIZE) {
+      float exp_val = __half2float(output[seq_pos * vocab_size + vocab_idx]);
+      output[seq_pos * vocab_size + vocab_idx] = __float2half(exp_val * inv_sum);
+  }
+  
+  // Store argmax
+  // if (tid == 0) {
+  //     argmax_indices[seq_pos] = max_idx;
+  // }
+}
+
+// Wrapper function
+void softmax_argmax(
+  const half* input,
+  half* output,
+  // int* argmax_indices,
+  int vocab_size,
+  int seq_len,
+  cudaStream_t stream) {
+
+  const int block_size = 256;
+  const int grid_size = seq_len;  // One block per sequence position
+  
+  
+  // Use optimized kernel for larger vocabularies
+  size_t shared_mem_size_opt = (block_size / 32) * sizeof(float) * 2 + (block_size / 32) * sizeof(int);
+  softmax_argmax_kernel<block_size><<<grid_size, block_size, shared_mem_size_opt, stream>>>(
+      input, output, /*argmax_indices,*/ vocab_size, seq_len
+  );  
 }
 
 template <typename DT>
-void backward_kernel(SoftmaxMeta const *m,
-                     DT *input_grad_ptr,
-                     DT const *output_grad_ptr,
-                     size_t num_elements,
-                     cudaStream_t stream) {
-  checkCUDA(cudaMemcpyAsync(input_grad_ptr,
-                            output_grad_ptr,
-                            num_elements * sizeof(DT),
-                            cudaMemcpyDeviceToDevice,
-                            stream));
+void inference_kernel_spatial_sharing(SoftmaxMeta const *m,
+                                    BatchConfig const *bc,
+                                    DT const *input_ptr,
+                                    DT *output_ptr,
+                                    int num_classes,
+                                    cudaStream_t main_stream) {
+  // launch finetuning fwd tokens kernel if there are any finetuning fwd tokens
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    checkCUDA(cudaEventRecord(m->handle.peft_fwd_can_start, main_stream)); 
+    checkCUDA(cudaStreamWaitEvent(m->handle.peft_fwd_stream, m->handle.peft_fwd_can_start, 0));
+
+    softmax_argmax((const half*)input_ptr + num_classes * bc->num_inference_tokens(), 
+                  (half*)output_ptr + num_classes * bc->num_inference_tokens(), 
+                  num_classes, 
+                  bc->num_finetuning_fwd_tokens(), 
+                  m->handle.peft_fwd_stream);
+
+    checkCUDA(cudaEventRecord(m->handle.peft_fwd_done, m->handle.peft_fwd_stream));
+  }
+
+  // launch inference kernel if there are inference tokens
+  if (bc->num_inference_tokens() > 0) {
+
+    softmax_argmax(
+        (const half*)input_ptr, 
+        (half*)output_ptr, 
+        num_classes, 
+        bc->num_inference_tokens(), 
+        main_stream);
+  }
+
+  if (bc->num_finetuning_fwd_tokens() > 0) {
+    checkCUDA(cudaStreamWaitEvent(main_stream, m->handle.peft_fwd_done, 0));
+  }
 }
 
 template <typename DT>
@@ -263,26 +359,11 @@ void inference_kernel(SoftmaxMeta const *m,
                       DT *output_ptr,
                       int num_classes,
                       cudaStream_t stream) {
-  checkCUDNN(cudnnSetStream(m->handle.dnn, stream));
-
-  float alpha = 1.0f, beta = 0.0f;
-  cudnnDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
-  checkCUDNN(cudnnSetTensor4dDescriptor(m->outputTensor,
-                                        CUDNN_TENSOR_NCHW,
-                                        cudnn_data_type,
-                                        bc->num_active_tokens(),
-                                        num_classes,
-                                        1,
-                                        1));
-  checkCUDNN(cudnnSoftmaxForward(m->handle.dnn,
-                                 CUDNN_SOFTMAX_ACCURATE,
-                                 CUDNN_SOFTMAX_MODE_CHANNEL,
-                                 &alpha,
-                                 m->outputTensor,
-                                 input_ptr,
-                                 &beta,
-                                 m->outputTensor,
-                                 output_ptr));
+  if (m->peft_support_mode == SPATIAL_SHARING || m->peft_support_mode == SPATIAL_SHARING_LIMITED) {
+    inference_kernel_spatial_sharing(m, bc, input_ptr, output_ptr, num_classes, stream);
+    return;
+  }
+  softmax_argmax((const half*)input_ptr, (half*)output_ptr, num_classes, bc->num_active_tokens(), stream);
 }
 
 template <typename DT>
@@ -291,7 +372,7 @@ void store_peft_activations(SoftmaxMeta *m,
                             int num_classes,
                             DT *output_ptr,
                             cudaStream_t stream) {
-  assert(m->enable_peft_finetuning);
+  assert(peft_finetuning_enabled(m->peft_support_mode));
   assert(m->output_grad_ptr != nullptr);
 
   int num_ft_tokens = bc->num_finetuning_fwd_tokens();

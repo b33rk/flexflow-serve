@@ -107,6 +107,22 @@ bool operator==(ArgMaxParams const &lhs, ArgMaxParams const &rhs) {
   return lhs.beam_search == rhs.beam_search;
 }
 
+static std::string remove_uid(char const *op_name) {
+  std::string op_name_without_uid = std::string(op_name);
+  size_t last_underscore = op_name_without_uid.length();
+  for (int i = op_name_without_uid.length() - 1; i > 0; i--) {
+    if (!(std::isdigit(op_name[i]) || op_name[i] == '_')) {
+      break;
+    } else if (op_name[i] == '_') {
+      last_underscore = i;
+    }
+  }
+  if (last_underscore < op_name_without_uid.length()) {
+    op_name_without_uid.erase(last_underscore);
+  }
+  return op_name_without_uid;
+}
+
 ArgMax::ArgMax(FFModel &model,
                const ParallelTensor _input,
                bool _beam_search,
@@ -136,6 +152,10 @@ ArgMax::ArgMax(FFModel &model,
     outputs[1] = model.create_parallel_tensor_legion_ordering(
         numdim, dims, DT_INT32, this, 1 /*owner_idx*/);
   }
+  std::string const &input_label = std::string("Argmax input tensor");
+  _input->print(input_label);
+  std::string const &label = std::string("Argmax output tensor");
+  outputs[0]->print(label);
 }
 
 ArgMax::ArgMax(FFModel &model, ArgMax const &other, const ParallelTensor input)
@@ -248,7 +268,6 @@ OpMeta *ArgMax::init_task(Task const *task,
                                  gpu_mem_allocator);
   m->profiling = s->profiling;
   m->inference_debugging = s->inference_debugging;
-  m->enable_peft_finetuning = s->enable_peft_finetuning;
   m->beam_search = s->beam_search;
   std::strcpy(m->op_name, s->name);
   m->layer_guid = s->layer_guid;
@@ -355,8 +374,7 @@ BeamInferenceResult
   GenericTensorAccessorW parent = helperGetGenericTensorAccessorWO(
       DT_INT32, regions[2], task->regions[2], FID_DATA, ctx, runtime);
   float loss = 0.0f;
-  ArgMax::forward_kernel_wrapper(
-      m, bc, input, indices, parent, batch_size, &loss);
+  ArgMax::inference_kernel_wrapper(m, bc, input, indices, parent, &loss);
   BeamInferenceResult ir;
   copy_tensor_dev_to_host<BatchConfig::TokenId>(
       indices.get_int32_ptr(), ir.token_ids, batch_size);
@@ -397,8 +415,19 @@ InferenceResult
   int batch_size = bc->num_active_tokens();
   float loss = 0.0f;
 
-  ArgMax::forward_kernel_wrapper(
-      m, bc, input, indices, parent, batch_size, &loss);
+  ArgMax::inference_kernel_wrapper(m, bc, input, indices, parent, &loss);
+
+  if (task->index_point.point_data[0] == 0) {
+    int in_dim0 = input.domain.hi()[0] - input.domain.lo()[0] + 1;
+    int in_dim1 = input.domain.hi()[1] - input.domain.lo()[1] + 1;
+    int out_dim0 = indices.domain.hi()[0] - indices.domain.lo()[0] + 1;
+    int out_dim1 = indices.domain.hi()[1] - indices.domain.lo()[1] + 1;
+    std::string op_name_without_uid = remove_uid(m->op_name);
+    printf("Argmax(%s): in=[%i, bz=%i/%i] -> out=[%i,bz=%i/%i]\n",
+           op_name_without_uid.c_str(),
+           in_dim0, bc->num_tokens, in_dim1,
+           out_dim0, bc->num_tokens, out_dim1);
+  }
 
   InferenceResult ir;
   ir.finetuning_loss = loss;

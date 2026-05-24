@@ -24,6 +24,7 @@
 #include "flexflow/ops/beam_topk.h"
 #include "flexflow/ops/cast.h"
 #include "flexflow/ops/concat.h"
+#include "flexflow/ops/decoding.h"
 #include "flexflow/ops/conv_2d.h"
 #include "flexflow/ops/dropout.h"
 #include "flexflow/ops/element_binary.h"
@@ -3055,6 +3056,10 @@ void FFModel::deserialize_graph_optimal_view(
       }
       case OP_ARGMAX: {
         node = ArgMax::deserialize(*this, dez, inputs, num_inputs);
+        break;
+      }
+      case OP_DECODING: {
+        node = Decoding::deserialize(*this, dez, inputs, num_inputs);
         break;
       }
       case OP_GROUP_BY: {

@@ -27,6 +27,7 @@
 #include "flexflow/ops/aggregate_spec.h"
 #include "flexflow/ops/arg_topk.h"
 #include "flexflow/ops/argmax.h"
+#include "flexflow/ops/decoding.h"
 #include "flexflow/ops/attention.h"
 #include "flexflow/ops/batch_matmul.h"
 #include "flexflow/ops/batch_norm.h"
@@ -127,7 +128,7 @@ Op::Op(FFModel &model,
       numInputs(_numInputs), numWeights(_numWeights), numOutputs(_numOutputs),
       profiling(model.config.profiling),
       inference_debugging(model.config.inference_debugging),
-      enable_peft_finetuning(model.config.enable_peft_finetuning) {
+      peft_support_mode(model.config.peft_support_mode) {
   for (int i = 0; i < MAX_NUM_INPUTS; i++) {
     inputs[i] = NULL;
   }
@@ -176,7 +177,7 @@ Op::Op(FFModel &model,
       numInputs(_numInputs), numWeights(_numWeights), numOutputs(_numOutputs),
       profiling(model.config.profiling),
       inference_debugging(model.config.inference_debugging),
-      enable_peft_finetuning(model.config.enable_peft_finetuning) {
+      peft_support_mode(model.config.peft_support_mode) {
   std::string pcname;
   if (_name == NULL) {
     pcname = get_operator_type_name(op_type);
@@ -1501,7 +1502,7 @@ bool Op::get_weight_parameter(TNParameter tnp,
 OpMeta::OpMeta(FFHandler _handle, Op const *op)
     : handle(_handle), profiling(op->profiling),
       inference_debugging(op->inference_debugging),
-      enable_peft_finetuning(op->enable_peft_finetuning),
+      peft_support_mode(op->peft_support_mode),
       layer_guid(op->layer_guid) {
   for (int i = 0; i < op->numInputs; i++) {
     trainable_inputs[i] = op->trainable_inputs[i];
@@ -3364,6 +3365,11 @@ Op *FFModel::create_operator_from_layer(
       operators.push_back(op);
       return op;
     }
+    case OP_DECODING: {
+      Op *op = Decoding::create_operator_from_layer(*this, layer, inputs);
+      operators.push_back(op);
+      return op;
+    }
     case OP_GROUP_BY: {
       Op *op = Group_by::create_operator_from_layer(*this, layer, inputs);
       operators.push_back(op);
@@ -3432,10 +3438,10 @@ bool FFModel::need_to_add_combine(int layer_idx) const {
       return false;
     }
   }
-  // argmax/arg_topk not precedent by softmax: add combine before
+  // argmax/arg_topk not preceded by softmax: add combine before
   // argmax/arg_topk
   if (layer_idx == layers.size() - 1 &&
-      (l->op_type == OP_ARG_TOPK || l->op_type == OP_ARGMAX)) {
+      (l->op_type == OP_ARG_TOPK || l->op_type == OP_ARGMAX)) { // || l->op_type == OP_DECODING
     auto const &l_prev = layers[layer_idx - 1];
     if (l_prev->op_type == OP_SOFTMAX) {
       return false;
@@ -4371,8 +4377,7 @@ struct DefaultConfig {
   const static bool profiling = false;
   const static bool benchmarking = false;
   const static bool inference_debugging = false;
-  const static bool enable_peft_finetuning = false;
-  const static bool enable_fadp = false; // adaptive pruning
+  const static PeftSupportMode peft_support_mode = PEFT_DISABLED;
   constexpr static float learningRate = 0.01f;
   constexpr static float weightDecay = 0.0001f;
   const static size_t workSpaceSize = (size_t)128 * 1024 * 1024; // 128 MB
@@ -4412,7 +4417,6 @@ FFConfig::FFConfig() {
   log_instance_creation = DefaultConfig::log_instance_creation;
   benchmarking = DefaultConfig::benchmarking;
   inference_debugging = DefaultConfig::inference_debugging;
-  enable_peft_finetuning = DefaultConfig::enable_peft_finetuning;
   learningRate = DefaultConfig::learningRate;
   weightDecay = DefaultConfig::weightDecay;
   workSpaceSize = DefaultConfig::workSpaceSize;
@@ -4427,7 +4431,7 @@ FFConfig::FFConfig() {
   cpu_offload = DefaultConfig::cpuOffload;
   offload_reserve_space_size = DefaultConfig::offloadReserveSpaceSize;
   // PEFT related fields
-  enable_peft = DefaultConfig::enablePeft;
+  peft_support_mode = DefaultConfig::peft_support_mode;
   quantization_type = DT_NONE;
   only_data_parallel = DefaultConfig::onlyDataParallel;
   data_parallelism_degree = 1;
@@ -4455,7 +4459,6 @@ FFConfig::FFConfig() {
   perform_fusion = false;
   base_optimize_threshold = DefaultConfig::base_optimize_threshold;
   perform_memory_search = false;
-  enable_fadp = DefaultConfig::enable_fadp;
 
   // Parse input arguments
   {
@@ -4553,10 +4556,6 @@ void FFConfig::parse_args(char **argv, int argc) {
     }
     if ((!strcmp(argv[i], "--8bit-quantization"))) {
       quantization_type = DT_INT8;
-      continue;
-    }
-    if ((!strcmp(argv[i], "-enable-peft"))) {
-      enable_peft = true;
       continue;
     }
     if ((!strcmp(argv[i], "--only-data-parallel"))) {
@@ -4694,11 +4693,6 @@ void FFConfig::parse_args(char **argv, int argc) {
     }
     if (!strcmp(argv[i], "--memory-search")) {
       perform_memory_search = true;
-      continue;
-    }
-    // adaptive pruning flag
-    if ((!strcmp(argv[i], "-enable-fadp"))) {
-      enable_fadp = true;
       continue;
     }
   }
@@ -6727,6 +6721,71 @@ void register_flexflow_internal_tasks(Runtime *runtime,
       runtime
           ->register_task_variant<InferenceResult, ArgMax::inference_task_norm>(
               registrar);
+    }
+  }
+  // Decoding task
+  {
+    TaskVariantRegistrar registrar(DECODING_INIT_TASK_ID, "Decoding Init");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    if (pre_register) {
+      Runtime::preregister_task_variant<OpMeta *, Decoding::init_task>(
+          registrar, "Decoding Init Task");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime->register_task_variant<OpMeta *, Decoding::init_task>(registrar);
+    }
+  }
+  {
+    TaskVariantRegistrar registrar(DECODING_BEAM_INF_TASK_ID,
+                                   "Decoding Beam Inference");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    if (pre_register) {
+      Runtime::preregister_task_variant<BeamInferenceResult,
+                                        Decoding::inference_task_beam>(
+          registrar, "Decoding Inference Task Beam");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime->register_task_variant<BeamInferenceResult,
+                                     Decoding::inference_task_beam>(registrar);
+    }
+  }
+  {
+    TaskVariantRegistrar registrar(DECODING_NORM_INF_TASK_ID,
+                                   "Decoding Norm Inference");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    if (pre_register) {
+      Runtime::preregister_task_variant<InferenceResult,
+                                        Decoding::inference_task_norm>(
+          registrar, "Decoding Inference Task Norm");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime
+          ->register_task_variant<InferenceResult, Decoding::inference_task_norm>(
+              registrar);
+    }
+  }
+  {
+    TaskVariantRegistrar registrar(DECODING_PEFT_BWD_TASK_ID,
+                                   "Decoding PEFT Backward");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    if (pre_register) {
+      Runtime::preregister_task_variant<bool, Decoding::peft_bwd_task>(
+          registrar, "Decoding PEFT Backward Task");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime->register_task_variant<bool, Decoding::peft_bwd_task>(registrar);
     }
   }
   // Transpose task

@@ -188,6 +188,8 @@ std::string get_operator_type_name(OperatorType type) {
       return "Sampling";
     case OP_ARGMAX:
       return "ArgMax";
+    case OP_DECODING:
+      return "Decoding";
     // PEFT Ops
     case OP_LORA:
       return "Lora Layer";
@@ -246,6 +248,31 @@ std::ostream &operator<<(std::ostream &s, OperatorType op_type) {
   s << get_operator_type_name(op_type);
 
   return s;
+}
+
+const char* peftSupportModeToString(const PeftSupportMode mode) {
+  switch(mode) {
+    case PEFT_DISABLED:                   return "PEFT_DISABLED";
+    case PEFT_INFERENCE_ONLY:             return "PEFT_INFERENCE_ONLY";
+    case COSERVING:                       return "COSERVING";
+    case TEMPORAL_SHARING:                return "TEMPORAL_SHARING";
+    case SPATIAL_SHARING:                 return "SPATIAL_SHARING";
+    case SPATIAL_SHARING_LIMITED:         return "SPATIAL_SHARING_LIMITED";
+    case TEMPORAL_SHARING_LIMITED:        return "TEMPORAL_SHARING_LIMITED";
+    case SPATIAL_SHARING_SEPARATE_TASKS:  return "SPATIAL_SHARING_SEPARATE_TASKS";
+    default:                              return "UNKNOWN";
+  }
+}
+bool peft_finetuning_enabled(const PeftSupportMode peft_support_mode) {
+  return peft_support_mode == COSERVING ||
+         peft_support_mode == TEMPORAL_SHARING ||
+         peft_support_mode == SPATIAL_SHARING ||
+         peft_support_mode == SPATIAL_SHARING_LIMITED ||
+         peft_support_mode == TEMPORAL_SHARING_LIMITED ||
+         peft_support_mode == SPATIAL_SHARING_SEPARATE_TASKS;
+}
+bool peft_enabled(const PeftSupportMode peft_support_mode) {
+  return peft_support_mode != PEFT_DISABLED;
 }
 
 }; // namespace FlexFlow

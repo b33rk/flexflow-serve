@@ -168,6 +168,10 @@ enum TaskIDs {
   ARGMAX_INIT_TASK_ID,
   ARGMAX_BEAM_INF_TASK_ID,
   ARGMAX_NORM_INF_TASK_ID,
+  DECODING_INIT_TASK_ID,
+  DECODING_BEAM_INF_TASK_ID,
+  DECODING_NORM_INF_TASK_ID,
+  DECODING_PEFT_BWD_TASK_ID,
   TRANSPOSE_INIT_TASK_ID,
   TRANSPOSE_FWD_TASK_ID,
   TRANSPOSE_BWD_TASK_ID,
@@ -375,6 +379,7 @@ class BeamTopK;
 class SpecIncMultiHeadSelfAttention;
 class Sampling;
 class ArgMax;
+class Decoding;
 class Combine;
 class Repartition;
 class Reduction;
@@ -720,6 +725,7 @@ public:
                    bool speculative_decoding,
                    char const *name = NULL);
   Tensor argmax(const Tensor input, bool beam_search, char const *name = NULL);
+  Tensor decoding(const Tensor input, bool beam_search, char const *name = NULL);
   Tensor sampling(const Tensor input, float top_p, char const *name = NULL);
   Tensor multihead_attention(const Tensor query,
                              const Tensor key,
@@ -1221,6 +1227,8 @@ public:
                          Sampling *>,
       std::unordered_map<std::pair<ParallelTensorShape, ArgMaxParams>,
                          ArgMax *>,
+      std::unordered_map<std::pair<ParallelTensorShape, DecodingParams>,
+                         Decoding *>,
       std::unordered_map<
           std::pair<ParallelTensorShape, SpecIncMultiHeadSelfAttentionParams>,
           SpecIncMultiHeadSelfAttention *>,
