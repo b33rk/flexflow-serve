@@ -560,7 +560,9 @@ void FlexFlow::top_level_task(Task const *task,
         gradient_accumulation_steps;
     fine_tuning_req.peft_finetuning_info.num_logging_steps = num_logging_steps;
     std::vector<Request> finetuning_requests;
-    finetuning_requests.push_back(fine_tuning_req);
+    if (std::getenv("INFERENCE_ONLY") == nullptr) {
+        finetuning_requests.push_back(fine_tuning_req);
+    }
 
     std::cout << "----------inference started--------------" << std::endl;
     std::vector<GenerationResult> result =
