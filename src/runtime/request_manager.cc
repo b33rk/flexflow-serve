@@ -1377,7 +1377,7 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
     // Record request start time
     InferenceReqProfileInfo inf_profile_info;
     inf_profile_info.request_guid = new_request.guid;
-    inf_profile_info.prompt_length = request.initial_len;
+    inf_profile_info.prompt_length = new_request.initial_len;
     inf_profile_info.decoding_step_idx = REQ_START_TIME_STEP_IDX;
     inf_profile_info.timestamp = Realm::Clock::current_time_in_microseconds();
     inf_req_profile_infos.push_back(inf_profile_info);
