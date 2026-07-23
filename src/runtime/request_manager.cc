@@ -993,6 +993,12 @@ void RequestManager::record_decoding_req_profiling_info(
   }
   RequestGuid guid = old_fwd_bc.requestsInfo[req_idx].request_guid;
   Request &request = all_requests[guid];
+
+  // profiling prefill chunking
+  if (old_fwd_bc.requestsInfo[req_idx].prompt_phase) {
+    request.num_prefill_iterations++;
+  }
+
   int processed_tokens =
       old_fwd_bc.requestsInfo[req_idx].first_token_depth_in_request +
       old_fwd_bc.requestsInfo[req_idx].num_tokens_in_batch;
@@ -1011,6 +1017,8 @@ void RequestManager::record_decoding_req_profiling_info(
     //   std::cout << "request.tokens.size(): " << request.tokens.size() <<
     //   std::endl;
     // }
+    inf_profile_info.num_prefill_iterations = request.num_prefill_iterations;
+    inf_profile_info.prompt_length = request.initial_len;
     assert(inf_profile_info.decoding_step_idx >= 0);
     inf_profile_info.timestamp = Realm::Clock::current_time_in_microseconds();
     inf_req_profile_infos.push_back(inf_profile_info);
@@ -1369,6 +1377,7 @@ void RequestManager::add_new_inf_req(BatchConfig &new_bc,
     // Record request start time
     InferenceReqProfileInfo inf_profile_info;
     inf_profile_info.request_guid = new_request.guid;
+    inf_profile_info.prompt_length = request.initial_len;
     inf_profile_info.decoding_step_idx = REQ_START_TIME_STEP_IDX;
     inf_profile_info.timestamp = Realm::Clock::current_time_in_microseconds();
     inf_req_profile_infos.push_back(inf_profile_info);
@@ -1798,14 +1807,19 @@ void RequestManager::record_step_profile_info(BatchConfig const &old_bc) {
   step_profile_info.num_finetuning_bwd_tokens =
       old_bc.num_finetuning_bwd_tokens();
   if (step_profile_info.num_finetuning_bwd_tokens > 0) {
+    int ft_idx = old_bc.finetuning_request_index()
     step_profile_info.num_bwd_layers =
         old_bc.requestsInfo[old_bc.finetuning_request_index()]
             .peft_bwd_last_layer -
         old_bc.requestsInfo[old_bc.finetuning_request_index()]
             .peft_bwd_first_layer +
         1;
+
+    RequestGuid ft_guid = old_bc.requestsInfo[ft_idx].request_guid;
+    step_profile_info.bwd_window_id = all_requests[ft_guid].peft_finetuning_info.completed_training_steps;
   } else {
     step_profile_info.num_bwd_layers = 0;
+    step_profile_info.bwd_window_id = -1;
   }
   step_profile_infos.push_back(step_profile_info);
 }
@@ -2090,7 +2104,7 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
            "warmup_requests,"
         << "run_idx,step_idx,is_warmup_step,timestamp,num_inference_requests,"
            "num_prefilling_tokens,num_decoding_tokens,num_finetuning_fwd_"
-           "tokens,num_finetuning_bwd_tokens,num_bwd_layers\n";
+           "tokens,num_finetuning_bwd_tokens,num_bwd_layers,bwd_window_id\n";
     for (size_t i = 0; i < step_profile_infos.size(); i++) {
       StepProfileInfo &step_profile_info = step_profile_infos[i];
       StepInfoOutputFile << llm_model_name << "," << dataset_name << ","
@@ -2107,7 +2121,9 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
                          << step_profile_info.num_decoding_tokens << ","
                          << step_profile_info.num_finetuning_fwd_tokens << ","
                          << step_profile_info.num_finetuning_bwd_tokens << ","
-                         << step_profile_info.num_bwd_layers << "\n";
+                         << step_profile_info.num_bwd_layers << ",";
+                         << step_profile_info.num_bwd_layers << ","
+                         << step_profile_info.bwd_window_id << "\n";
     }
     StepInfoOutputFile.close();
   } else {
@@ -2132,7 +2148,8 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
         << "llm_model_name,dataset_name,tensor_parallelism_degree,max_requests_"
            "per_batch,max_tokens_per_batch,num_kv_cache_slots,qps,num_"
            "warmup_requests,"
-        << "request_guid,is_warmup_request,timestamp,decoding_step_idx\n";
+        << "request_guid,is_warmup_request,timestamp,decoding_step_idx,"
+           "num_prefill_iterations,prompt_length\n";
     for (int i = 0; i < inf_req_profile_infos.size(); i++) {
       InferenceReqProfileInfo &inf_profile_info = inf_req_profile_infos[i];
       RequestInfoOutputFile
@@ -2142,7 +2159,9 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
           << "," << num_warmup_requests << "," << inf_profile_info.request_guid
           << "," << all_requests[inf_profile_info.request_guid].warmup << ","
           << inf_profile_info.timestamp << ","
-          << inf_profile_info.decoding_step_idx << "\n";
+          << inf_profile_info.decoding_step_idx << ","
+          << inf_profile_info.num_prefill_iterations << ","
+          << inf_profile_info.prompt_length << "\n";
     }
     RequestInfoOutputFile.close();
   } else {

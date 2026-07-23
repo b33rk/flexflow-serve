@@ -75,6 +75,7 @@ struct StepProfileInfo {
   int num_finetuning_fwd_tokens;
   int num_finetuning_bwd_tokens;
   int num_bwd_layers;
+  int bwd_window_id = -1;
   long long timestamp;
 };
 
@@ -82,6 +83,8 @@ struct InferenceReqProfileInfo {
   RequestGuid request_guid;
   int decoding_step_idx;
   long long timestamp;
+  int num_prefill_iterations;
+  int prompt_length;
 };
 struct Request {
   enum Status {
@@ -141,6 +144,9 @@ struct Request {
   Request() = default;
   static Request from_other(Request const &other);
   friend std::ostream &operator<<(std::ostream &os, Request const &req);
+
+  // prefill profiling field
+  int num_prefill_iterations = 0;
 };
 
 // store the result of beam search
