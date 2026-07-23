@@ -1807,7 +1807,7 @@ void RequestManager::record_step_profile_info(BatchConfig const &old_bc) {
   step_profile_info.num_finetuning_bwd_tokens =
       old_bc.num_finetuning_bwd_tokens();
   if (step_profile_info.num_finetuning_bwd_tokens > 0) {
-    int ft_idx = old_bc.finetuning_request_index()
+    int ft_idx = old_bc.finetuning_request_index();
     step_profile_info.num_bwd_layers =
         old_bc.requestsInfo[old_bc.finetuning_request_index()]
             .peft_bwd_last_layer -
@@ -2121,7 +2121,7 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
                          << step_profile_info.num_decoding_tokens << ","
                          << step_profile_info.num_finetuning_fwd_tokens << ","
                          << step_profile_info.num_finetuning_bwd_tokens << ","
-                         << step_profile_info.num_bwd_layers << ",";
+                         << step_profile_info.num_bwd_layers << ","
                          << step_profile_info.num_bwd_layers << ","
                          << step_profile_info.bwd_window_id << "\n";
     }
