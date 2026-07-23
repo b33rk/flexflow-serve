@@ -2195,7 +2195,7 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
     std::to_string(max_tokens_per_batch) + "_num_kv_cache_slots_" +
     std::to_string(num_kv_cache_slots) + "_qps_" + std::to_string(qps) +
       "_num_warmup_requests_" + std::to_string(num_warmup_requests) + ".csv";
-  std::cout << "Opening the output file: "
+  std::cout << "Opening the output file (step request): "
             << step_request_composition_output_filepath << std::endl;
   std::ofstream StepRequestCompositionOutputFile(
       step_request_composition_output_filepath);
