@@ -1793,6 +1793,24 @@ void RequestManager::record_step_profile_info(BatchConfig const &old_bc) {
                    all_requests[old_bc.requestsInfo[i].request_guid].warmup &&
                "Inconsistent warmup status in the batch");
       }
+
+      // record step request info
+      StepRequestInfo step_request_info;
+      step_request_info.run_idx = step_profile_info.run_idx;
+      step_request_info.step_idx = step_profile_info.step_idx;
+      step_request_info.request_guid = old_bc.requestsInfo[i].request_guid;
+      step_request_info.batch_config_request_id =
+          old_bc.requestsInfo[i].batch_config_request_id;
+      step_request_info.finetuning_request =
+          old_bc.requestsInfo[i].finetuning_request;
+      step_request_info.finetuning_backward_phase =
+          old_bc.requestsInfo[i].finetuning_backward_phase;
+      step_request_info.prompt_phase = old_bc.requestsInfo[i].prompt_phase;
+      step_request_info.num_tokens_in_batch =
+          old_bc.requestsInfo[i].num_tokens_in_batch;
+      step_request_info.first_token_depth_in_request =
+          old_bc.requestsInfo[i].first_token_depth_in_request;
+      step_request_infos.push_back(step_request_info);
     }
   }
   step_profile_info.num_inference_requests =
@@ -2167,6 +2185,48 @@ void RequestManager::save_profiling_info_to_csv(std::string output_folder,
   } else {
     std::cout << "Unable to open the output file: "
               << request_info_output_filepath << std::endl;
+    assert(false);
+  }
+  std::string step_request_composition_output_filepath =
+    output_folder + "/" + "step_request_composition_" + dataset_name + "_" +
+    llm_model_name_safe + "_tensor_parallelism_" +
+    std::to_string(tensor_parallelism_degree) + "_max_requests_per_batch_" +
+    std::to_string(max_requests_per_batch) + "_max_tokens_per_batch_" +
+    std::to_string(max_tokens_per_batch) + "_num_kv_cache_slots_" +
+    std::to_string(num_kv_cache_slots) + "_qps_" + std::to_string(qps) +
+      "_num_warmup_requests_" + std::to_string(num_warmup_requests) + ".csv";
+  std::cout << "Opening the output file: "
+            << step_request_composition_output_filepath << std::endl;
+  std::ofstream StepRequestCompositionOutputFile(
+      step_request_composition_output_filepath);
+  if (StepRequestCompositionOutputFile.is_open()) {
+    StepRequestCompositionOutputFile
+        << "llm_model_name,dataset_name,tensor_parallelism_degree,max_requests_"
+          "per_batch,max_tokens_per_batch,num_kv_cache_slots,qps,num_"
+          "warmup_requests,"
+        << "run_idx,step_idx,request_guid,batch_config_request_id,"
+          "finetuning_request,finetuning_backward_phase,prompt_phase,"
+          "num_tokens_in_batch,first_token_depth_in_request\n";
+    for (size_t i = 0; i < step_request_infos.size(); i++) {
+      StepRequestInfo &step_request_info = step_request_infos[i];
+      StepRequestCompositionOutputFile
+          << llm_model_name << "," << dataset_name << ","
+          << tensor_parallelism_degree << "," << max_requests_per_batch << ","
+          << max_tokens_per_batch << "," << num_kv_cache_slots << "," << qps
+          << "," << num_warmup_requests << "," << step_request_info.run_idx
+          << "," << step_request_info.step_idx << ","
+          << step_request_info.request_guid << ","
+          << step_request_info.batch_config_request_id << ","
+          << step_request_info.finetuning_request << ","
+          << step_request_info.finetuning_backward_phase << ","
+          << step_request_info.prompt_phase << ","
+          << step_request_info.num_tokens_in_batch << ","
+          << step_request_info.first_token_depth_in_request << "\n";
+    }
+    StepRequestCompositionOutputFile.close();
+  } else {
+    std::cout << "Unable to open the output file: "
+              << step_request_composition_output_filepath << std::endl;
     assert(false);
   }
 }

@@ -79,6 +79,18 @@ struct StepProfileInfo {
   long long timestamp;
 };
 
+struct StepRequestInfo {
+  int run_idx;
+  int step_idx;
+  RequestGuid request_guid;
+  int batch_config_request_id;
+  bool finetuning_request;
+  bool finetuning_backward_phase;
+  bool prompt_phase;
+  int num_tokens_in_batch;
+  int first_token_depth_in_request;
+};
+
 struct InferenceReqProfileInfo {
   RequestGuid request_guid;
   int decoding_step_idx;
@@ -472,6 +484,7 @@ private:
   Legion::Future background_server_handler;
 
   std::vector<StepProfileInfo> step_profile_infos;
+  std::vector<StepRequestInfo> step_request_infos;
   std::vector<InferenceReqProfileInfo> inf_req_profile_infos;
   int step_idx = 0;
 
