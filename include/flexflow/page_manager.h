@@ -70,6 +70,23 @@ public:
     int num_tokens_in_last_used_page;
   };
 
+  struct KVSpaceCheck {
+    bool enough;
+    int free_pages;
+    int pages_needed;
+  };
+
+  int get_num_free_pages() const;
+  int get_num_active_requests() const;
+
+  KVSpaceCheck check_space_to_add_request(
+    int num_prompt_tokens,
+    int num_prompt_tokens_in_first_batch,
+    int max_tokens_per_batch) const;
+
+  KVSpaceCheck check_space_to_append_tokens(
+    std::vector<std::pair<RequestGuid, int>> tokens_per_request) const;
+
   friend std::ostream &operator<<(std::ostream &os, PageManager const &pm);
 
 private:

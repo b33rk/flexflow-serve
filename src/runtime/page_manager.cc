@@ -54,6 +54,57 @@ int PageManager::get_tokens_per_page() const {
   return kPagesize;
 }
 
+int PageManager::get_num_free_pages() const {
+  return static_cast<int>(free_pages.size());
+}
+
+int PageManager::get_num_active_requests() const {
+  return static_cast<int>(active_requests.size());
+}
+
+PageManager::KVSpaceCheck PageManager::check_space_to_add_request(
+    int num_prompt_tokens,
+    int num_prompt_tokens_in_first_batch,
+    int max_tokens_per_batch) const {
+
+  assert(num_prompt_tokens > 0 && num_prompt_tokens_in_first_batch > 0);
+  assert(num_prompt_tokens_in_first_batch <= num_prompt_tokens);
+
+  int new_pages_needed = round_up_pages(num_prompt_tokens);
+
+  int num_expected_prefill_steps =
+      ceilDiv(num_prompt_tokens - num_prompt_tokens_in_first_batch,
+              max_tokens_per_batch - (int)active_requests.size());
+
+  for (auto const &req_info_pair : requests_info) {
+    PerRequestPageInfo const &req_info = req_info_pair.second;
+
+    if (req_info.num_used_pages < req_info.page_indices.size()) {
+      std::cout << *this << std::endl;
+      assert(false && "Attempting to add a request with another unfinished "
+                      "prefill present in the batch");
+    }
+
+    int available_slots =
+        kPagesize - req_info.num_tokens_in_last_used_page +
+        ((int)req_info.page_indices.size() - req_info.num_used_pages) *
+            kPagesize;
+
+    if (num_expected_prefill_steps > available_slots) {
+      new_pages_needed +=
+          round_up_pages(num_expected_prefill_steps - available_slots);
+    }
+  }
+
+  int free = static_cast<int>(free_pages.size());
+
+  return {
+      free >= new_pages_needed,
+      free,
+      new_pages_needed
+  };
+}
+
 int PageManager::get_num_pages_used_by_req(
     RequestGuid const &request_guid) const {
   assert(requests_info.find(request_guid) != requests_info.end());
